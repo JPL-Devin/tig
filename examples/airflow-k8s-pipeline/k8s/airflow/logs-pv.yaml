@@ -1,0 +1,44 @@
+# Manually provisioned ReadWriteMany hostPath PV + PVC for Airflow log
+# persistence. minikube's default 'standard' storageClass (minikube-hostpath)
+# only supports ReadWriteOnce, so the chart's auto-provisioned logs PVC would
+# hang unbound. Single-node minikube shares one filesystem across all pods, so
+# a hostPath volume can safely be mounted RWX by scheduler, webserver,
+# triggerer, and every KubernetesExecutor task pod at once.
+#
+# The node path /mnt/airflow-logs is backed by a `minikube mount` of the repo's
+# ./airflow-logs dir (uid 50000 = airflow), so logs are also visible on the host.
+#
+#   minikube mount ./airflow-logs:/mnt/airflow-logs --uid 50000 --gid 0 &
+#
+# An empty storageClassName ("") on both PV and PVC disables dynamic
+# provisioning and binds them directly to each other.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: airflow-logs-host
+  labels:
+    app: airflow-logs
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /mnt/airflow-logs
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs-host
+  namespace: tig-airflow
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: airflow-logs-host

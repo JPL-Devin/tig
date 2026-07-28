@@ -1,0 +1,286 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vicar-wrappers
+  namespace: tig-airflow
+data:
+  rad_wrapper.sh: |
+    #!/bin/bash
+    # Wrapper for marsrad task (FDR → RAS radiometric correction)
+    set -e
+
+    # Args: <s3_endpoint> <bucket> <input_key> <output_key> <run_id>
+    S3_ENDPOINT="$1"
+    BUCKET="$2"
+    INPUT_KEY="$3"
+    OUTPUT_KEY="$4"
+    RUN_ID="$5"
+
+    export AWS_ACCESS_KEY_ID=test
+    export AWS_SECRET_ACCESS_KEY=test
+    export AWS_DEFAULT_REGION=us-west-2
+    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    export MARS_CONFIG_PATH=/usr/local/vicar/mars_calib
+
+    WORKDIR="/tmp/work/${RUN_ID}"
+    mkdir -p "$WORKDIR"
+    cd "$WORKDIR"
+
+    echo "=== marsrad wrapper ==="
+    echo "Input: s3://${BUCKET}/${INPUT_KEY}"
+    echo "Output: s3://${BUCKET}/${OUTPUT_KEY}"
+
+    # Download input FDR
+    echo "Downloading input..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${INPUT_KEY}" input.vic
+
+    # Run marsrad (marsrad may exit non-zero even on success; check output file existence like demo)
+    echo "Running marsrad (FDR → RAS)..."
+    marsrad inp=input.vic out=output_ras.vic || true
+
+    # Fall back to FDR if RAS not produced (matches demo-mesh-m20-exact.sh behavior)
+    if [ ! -f output_ras.vic ]; then
+      echo "⚠ WARNING: marsrad failed to produce output, using FDR image as-is"
+      cp input.vic output_ras.vic
+    fi
+
+    # Upload output
+    echo "Uploading output..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp output_ras.vic "s3://${BUCKET}/${OUTPUT_KEY}"
+
+    echo "✓ marsrad complete"
+  correlate_wrapper.sh: |
+    #!/bin/bash
+    # Wrapper for stereo correlation (marsecorr + marscor3), per direction.
+    #
+    # The DAG passes the RAS pair already in the correct order for this direction:
+    #   correlate_left  (l2r): FIRST=left  SECOND=right -> refined disparity for left eye
+    #   correlate_right (r2l): FIRST=right SECOND=left  -> refined disparity for right eye
+    # We feed the pair to marsecorr/marscor3 in the ORDER RECEIVED (do NOT hardcode).
+    set -e
+
+    # Args: <s3_endpoint> <bucket> <first_ras_key> <second_ras_key> <disparity_output_key> <run_id> <eye>
+    S3_ENDPOINT="$1"
+    BUCKET="$2"
+    FIRST_RAS_KEY="$3"
+    SECOND_RAS_KEY="$4"
+    DISPARITY_OUTPUT_KEY="$5"
+    RUN_ID="$6"
+    EYE="$7"  # "left" or "right"
+
+    export AWS_ACCESS_KEY_ID=test
+    export AWS_SECRET_ACCESS_KEY=test
+    export AWS_DEFAULT_REGION=us-west-2
+    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    export MARS_CONFIG_PATH=/usr/local/vicar/mars_calib
+
+    WORKDIR="/tmp/work/${RUN_ID}/correlate_${EYE}"
+    mkdir -p "$WORKDIR"
+    cd "$WORKDIR"
+
+    echo "=== correlate wrapper (${EYE} eye) ==="
+    echo "First RAS:  s3://${BUCKET}/${FIRST_RAS_KEY}"
+    echo "Second RAS: s3://${BUCKET}/${SECOND_RAS_KEY}"
+    echo "Disparity out: s3://${BUCKET}/${DISPARITY_OUTPUT_KEY}"
+
+    # Download RAS inputs (named by pair position, not by eye)
+    echo "Downloading inputs..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${FIRST_RAS_KEY}" first.vic
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${SECOND_RAS_KEY}" second.vic
+
+    # marsecorr (initial disparity seed) - may exit non-zero even on success (exit<=1 ok)
+    echo "Running marsecorr (initial correlation)..."
+    marsecorr inp=\( first.vic second.vic \) out=disparity_init.img -STAT pyrlevel=1 search=4 band=2 min_range=0.25 || true
+
+    # marscor3 (refinement). Per demo semantics marscor3 exits 1 EXACTLY on success.
+    echo "Running marscor3 (refinement)..."
+    marscor3 \( first.vic second.vic \) disparity.img \
+      in_disp=disparity_init.img \
+      template=11 search=31 quality=0.6 \
+      -gores gore_q=0.6 gore_pass=5 -gore_rev \
+      disp_pyr=1 -amoeba ftol=.001 band=2 \
+      -multipass -GAUSSFILTER -SCALING -DECIMATION -TILING -STAT \
+      -omp_on SCALING_THRESH=1 || true
+
+    # disparity.img is required downstream - hard fail if not produced
+    if [ ! -f disparity.img ]; then
+      echo "✗ ERROR: correlation (${EYE}) failed to produce disparity.img"
+      exit 1
+    fi
+
+    # Upload per-eye disparity
+    echo "Uploading disparity..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp disparity.img "s3://${BUCKET}/${DISPARITY_OUTPUT_KEY}"
+
+    echo "✓ correlate (${EYE}) complete"
+  xyz_wrapper.sh: |
+    #!/bin/bash
+    # Wrapper for XYZ generation (marsxyz + marsrfilt + m20filter + marsfilter + marsmask), per eye.
+    #
+    # The DAG passes the RAS pair already ordered for THIS eye:
+    #   xyz_left : FIRST=left  SECOND=right  DISP=left-disparity  -> left XYM
+    #   xyz_right: FIRST=right SECOND=left   DISP=right-disparity -> right XYM
+    # marsxyz is fed the pair in the ORDER RECEIVED (first = this eye's camera).
+    set -e
+
+    # Args: <s3_endpoint> <bucket> <first_ras_key> <second_ras_key> <disparity_key> <xym_output_key> <run_id> <eye>
+    S3_ENDPOINT="$1"
+    BUCKET="$2"
+    FIRST_RAS_KEY="$3"
+    SECOND_RAS_KEY="$4"
+    DISPARITY_KEY="$5"
+    XYM_OUTPUT_KEY="$6"
+    RUN_ID="$7"
+    EYE="$8"  # "left" or "right"
+
+    export AWS_ACCESS_KEY_ID=test
+    export AWS_SECRET_ACCESS_KEY=test
+    export AWS_DEFAULT_REGION=us-west-2
+    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    export MARS_CONFIG_PATH=/usr/local/vicar/mars_calib
+
+    WORKDIR="/tmp/work/${RUN_ID}/xyz_${EYE}"
+    mkdir -p "$WORKDIR"
+    cd "$WORKDIR"
+
+    echo "=== xyz wrapper (${EYE} eye) ==="
+    echo "First RAS:  s3://${BUCKET}/${FIRST_RAS_KEY}"
+    echo "Second RAS: s3://${BUCKET}/${SECOND_RAS_KEY}"
+    echo "Disparity:  s3://${BUCKET}/${DISPARITY_KEY}"
+    echo "XYM out:    s3://${BUCKET}/${XYM_OUTPUT_KEY}"
+
+    # Download inputs (named by pair position; first.vic is THIS eye's camera)
+    echo "Downloading inputs..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${FIRST_RAS_KEY}" first.vic
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${SECOND_RAS_KEY}" second.vic
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${DISPARITY_KEY}" disparity.img
+
+    # marsxyz — pair in order received (first = this eye). Exits non-zero on success; check file.
+    echo "Running marsxyz..."
+    marsxyz \( first.vic second.vic \) pointcloud.xyz disp=disparity.img \
+      error=0.05 abserr=0.15 lined=4000 avgline=20 zlimit=\(-300 300\) spike_range=0.04 outlier=0.5 || true
+    if [ ! -f pointcloud.xyz ]; then
+      echo "✗ ERROR: marsxyz (${EYE}) produced no pointcloud.xyz"
+      exit 1
+    fi
+
+    # marsrfilt (rover hardware filter)
+    echo "Running marsrfilt (rover hardware filter)..."
+    marsrfilt inp=pointcloud.xyz out=pointcloud_filtered.xyz || {
+      echo "⚠ marsrfilt failed, using unfiltered XYZ"
+      cp pointcloud.xyz pointcloud_filtered.xyz
+    }
+
+    # m20filter (kinematic mask) uses THIS eye's camera image = first.vic, then marsfilter + marsmask.
+    # Fallbacks at each step guarantee pointcloud_masked.xym always exists (matches demo).
+    echo "Running m20filter (kinematic mask)..."
+    m20filter inp=first.vic out=m20_mask.xml || true
+
+    if [ ! -f m20_mask.xml ]; then
+      echo "⚠ m20filter failed, skipping kinematic masking"
+      cp pointcloud_filtered.xyz pointcloud_masked.xym
+    else
+      echo "Applying mask to XYZ (marsfilter)..."
+      marsfilter inp=pointcloud_filtered.xyz out=mask_image.img extra=m20_mask.xml || true
+      if [ ! -f mask_image.img ]; then
+        echo "⚠ marsfilter failed, skipping masking"
+        cp pointcloud_filtered.xyz pointcloud_masked.xym
+      else
+        echo "Creating masked point cloud (marsmask)..."
+        marsmask inp=pointcloud_filtered.xyz out=pointcloud_masked.xym mask=mask_image.img || true
+        if [ ! -f pointcloud_masked.xym ]; then
+          echo "⚠ marsmask failed, using unmasked XYZ"
+          cp pointcloud_filtered.xyz pointcloud_masked.xym
+        fi
+      fi
+    fi
+
+    # Upload per-eye XYM
+    echo "Uploading XYM..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp pointcloud_masked.xym "s3://${BUCKET}/${XYM_OUTPUT_KEY}"
+
+    echo "✓ xyz complete (${EYE} eye)"
+  mesh_wrapper.sh: |
+    #!/bin/bash
+    # Wrapper for mesh generation (marsmesh + vicario), per eye.
+    #
+    # The DAG passes the per-eye RAS basename so marsmesh names all sibling products
+    # (.obj/.mtl/.lbl/.iv) with the proper M20 RAS product name, and the .obj's
+    # internal mtllib/usemtl references resolve to <RAS_BASE>.mtl. Mesh outputs keep
+    # the RAS token (e.g. NLM_..._M777RAS_....obj), matching reference fixtures.
+    set -e
+
+    # Args: <s3_endpoint> <bucket> <xym_key> <ras_key> <ods_prefix> <ras_base> <run_id> <eye>
+    S3_ENDPOINT="$1"
+    BUCKET="$2"
+    XYM_KEY="$3"
+    RAS_KEY="$4"        # this eye's RAS image (texture skin)
+    ODS_PREFIX="$5"     # e.g. output/sol/01835/ids/rdr/ncam
+    RAS_BASE="$6"       # e.g. NLM_1835_0829848458M777RAS_N0874924NCAM00230_0A02LLJ01
+    RUN_ID="$7"
+    EYE="$8"  # "left" or "right"
+
+    export AWS_ACCESS_KEY_ID=test
+    export AWS_SECRET_ACCESS_KEY=test
+    export AWS_DEFAULT_REGION=us-west-2
+    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    export MARS_CONFIG_PATH=/usr/local/vicar/mars_calib
+
+    WORKDIR="/tmp/work/${RUN_ID}/mesh_${EYE}"
+    mkdir -p "$WORKDIR"
+    cd "$WORKDIR"
+
+    echo "=== mesh wrapper (${EYE} eye) ==="
+    echo "XYM:  s3://${BUCKET}/${XYM_KEY}"
+    echo "RAS:  s3://${BUCKET}/${RAS_KEY}"
+    echo "Out:  s3://${BUCKET}/${ODS_PREFIX}/${RAS_BASE}.{obj,mtl,png,lbl,iv}"
+
+    # Download inputs
+    echo "Downloading inputs..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${XYM_KEY}" pointcloud.xym
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "s3://${BUCKET}/${RAS_KEY}" "${RAS_BASE}.VIC"
+
+    # marsmesh — out named by RAS_BASE so .obj/.mtl/.lbl/.iv siblings all inherit it,
+    # and the .obj mtllib/usemtl point at ${RAS_BASE}.mtl. Per demo, marsmesh exits 1
+    # EXACTLY on success; we check .obj existence instead of trusting the exit code.
+    echo "Running marsmesh..."
+    marsmesh inp=pointcloud.xym out="${RAS_BASE}.obj" in_skin="${RAS_BASE}.VIC" \
+      x_subsample=1 y_subsample=1 \
+      range_min=0.2 range_mid=100 range_max=100 \
+      lod_levels=10 max_angle=87.5 \
+      res_min=3000 res_max=500000 density=1 \
+      -adaptive || true
+
+    # .obj is the required output - hard fail if not produced
+    if [ ! -f "${RAS_BASE}.obj" ]; then
+      echo "✗ ERROR: marsmesh (${EYE}) failed to produce ${RAS_BASE}.obj"
+      exit 1
+    fi
+
+    # vicario (texture conversion) -> <RAS_BASE>.png ; tolerant of non-zero exit
+    echo "Running vicario (texture conversion)..."
+    vicario "${RAS_BASE}.VIC" "${RAS_BASE}.png" || true
+
+    # Upload outputs. .obj required; .mtl/.png/.lbl/.iv conditional (best-effort).
+    echo "Uploading outputs..."
+    aws --endpoint-url="$S3_ENDPOINT" s3 cp "${RAS_BASE}.obj" "s3://${BUCKET}/${ODS_PREFIX}/${RAS_BASE}.obj"
+    for ext in mtl png lbl iv; do
+      if [ -f "${RAS_BASE}.${ext}" ]; then
+        aws --endpoint-url="$S3_ENDPOINT" s3 cp "${RAS_BASE}.${ext}" "s3://${BUCKET}/${ODS_PREFIX}/${RAS_BASE}.${ext}"
+      else
+        echo "⚠ ${RAS_BASE}.${ext} not produced, skipping"
+      fi
+    done
+
+    # Optional .glb (best-effort). The VICAR image also ships an unrelated `obj2gltf`
+    # TAE program that rejects these args, so failures here are non-fatal.
+    if command -v obj2gltf &> /dev/null; then
+      echo "Generating .glb (best-effort)..."
+      if obj2gltf -i "${RAS_BASE}.obj" -o "${RAS_BASE}.glb" > /dev/null 2>&1 && [ -f "${RAS_BASE}.glb" ]; then
+        aws --endpoint-url="$S3_ENDPOINT" s3 cp "${RAS_BASE}.glb" "s3://${BUCKET}/${ODS_PREFIX}/${RAS_BASE}.glb"
+      else
+        echo "⚠ obj2gltf unavailable/incompatible, skipping .glb"
+      fi
+    fi
+
+    echo "✓ mesh complete (${EYE} eye): ${RAS_BASE}.obj"
