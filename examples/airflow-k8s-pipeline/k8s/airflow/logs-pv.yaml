@@ -15,9 +15,9 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: airflow-logs-host
+  name: tig-airflow-logs-host
   labels:
-    app: airflow-logs
+    app: tig-airflow-logs
 spec:
   capacity:
     storage: 20Gi
@@ -32,7 +32,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: airflow-logs-host
+  name: tig-airflow-logs-host
   namespace: tig-airflow
 spec:
   accessModes:
@@ -41,4 +41,4 @@ spec:
   resources:
     requests:
       storage: 20Gi
-  volumeName: airflow-logs-host
+  volumeName: tig-airflow-logs-host

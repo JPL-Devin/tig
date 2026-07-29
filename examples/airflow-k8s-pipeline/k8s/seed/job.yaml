@@ -32,7 +32,7 @@ spec:
           defaultMode: 0755
       - name: sample-data
         hostPath:
-          path: /mnt/ncam
+          path: /mnt/sample-data
           type: Directory
 ---
 apiVersion: v1
