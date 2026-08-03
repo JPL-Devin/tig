@@ -1,0 +1,41 @@
+[project]
+name = "tig-cli"
+version = "0.1.0"
+description = "TIG CLI for running VICAR commands via Docker"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.0.0",
+    "docker>=6.0.0",
+]
+authors = [
+    {name = "NASA AMMOS", email = "ammos@jpl.nasa.gov"}
+]
+readme = "README.md"
+license = {text = "Apache-2.0"}
+
+[project.scripts]
+tig = "tig_cli.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=tig_cli --cov-report=term-missing"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]

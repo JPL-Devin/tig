@@ -1,0 +1,171 @@
+# Multi-stage Dockerfile to build GeoCal from source with patched GDAL detection
+# Patches ac_gdal.m4 to use gdal-config instead of AC_RUN_IFELSE
+
+ARG BASE_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
+
+# ============================================================================
+# Builder stage
+# ============================================================================
+FROM ${BASE_IMAGE} as builder
+
+# Install bzip2 and build deps
+RUN dnf install -y bzip2 wget git ncompress autoconf automake libtool m4 patch && dnf clean all
+
+# Install micromamba
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C / bin/micromamba && \
+    mkdir -p /opt/conda
+
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV PATH="/opt/conda/bin:${PATH}"
+
+# Install build tools and deps via conda-forge
+RUN /bin/micromamba install -y -c conda-forge \
+    gxx_linux-64 \
+    gcc_linux-64 \
+    gfortran_linux-64 \
+    make \
+    cmake \
+    swig \
+    gdal \
+    libgdal \
+    boost-cpp \
+    gsl \
+    fftw \
+    python=3.9 \
+    numpy \
+    scipy \
+    -p /opt/conda && \
+    /bin/micromamba clean -afy
+
+# Set conda compilers
+ENV CC="/opt/conda/bin/x86_64-conda-linux-gnu-gcc"
+ENV CXX="/opt/conda/bin/x86_64-conda-linux-gnu-g++"
+ENV FC="/opt/conda/bin/x86_64-conda-linux-gnu-gfortran"
+ENV LD_LIBRARY_PATH="/opt/conda/lib:${LD_LIBRARY_PATH}"
+
+WORKDIR /build
+
+# Build CSPICE
+RUN echo "=== Building CSPICE ===" && \
+    curl -k -L https://naif.jpl.nasa.gov/pub/naif/toolkit/C/PC_Linux_GCC_64bit/packages/cspice.tar.Z | uncompress | tar -x && \
+    cd cspice/src/cspice && \
+    sed -i 's/-c /-fPIC -c /g' mkprodct.csh && \
+    ./mkprodct.csh && \
+    cd ../.. && \
+    mkdir -p /usr/local/cspice && \
+    cp -r include lib /usr/local/cspice/
+
+# Build Blitz++
+RUN echo "=== Building Blitz++ ===" && \
+    wget https://github.com/blitzpp/blitz/archive/refs/tags/1.0.2.tar.gz -O blitz-1.0.2.tar.gz && \
+    tar xzf blitz-1.0.2.tar.gz && \
+    cd blitz-1.0.2 && \
+    mkdir build && cd build && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_CXX_STANDARD=14 \
+        -DBUILD_TESTING=OFF \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && \
+    make -j$(nproc) && \
+    make install
+
+# Clone GeoCal and patch GDAL detection
+ARG GEOCAL_VERSION=e4c3cb071f3063352bd35b3048ddad1c077e10db
+RUN echo "=== Cloning GeoCal ===" && \
+    git clone https://github.com/Cartography-jpl/geocal.git && \
+    cd geocal && \
+    git checkout ${GEOCAL_VERSION}
+
+# Apply patch to fix GDAL version detection (use gdal-config instead of AC_RUN_IFELSE)
+RUN cd /build/geocal && \
+    sed -i '81,92d' config/m4/ac_gdal.m4 && \
+    sed -i '81i\	        AC_MSG_CHECKING([GDAL version via gdal-config])' config/m4/ac_gdal.m4 && \
+    sed -i '82i\		# Use gdal-config --version instead of runtime test' config/m4/ac_gdal.m4 && \
+    sed -i '83i\		# This avoids AC_RUN_IFELSE which fails in Docker builds' config/m4/ac_gdal.m4 && \
+    sed -i '84i\		if test -x "$GDAL_PREFIX/bin/gdal-config"; then' config/m4/ac_gdal.m4 && \
+    sed -i '85i\		   gdal_version=`$GDAL_PREFIX/bin/gdal-config --version`' config/m4/ac_gdal.m4 && \
+    sed -i '86i\		fi' config/m4/ac_gdal.m4 && \
+    sed -i '87i\		AC_MSG_RESULT([${gdal_version}])' config/m4/ac_gdal.m4
+
+# Regenerate configure script with patched m4
+RUN cd /build/geocal && \
+    ./bootstrap
+
+# Configure and build GeoCal
+RUN cd /build/geocal && \
+    mkdir build && cd build && \
+    ../configure \
+        --prefix=/usr/local/geocal \
+        --with-spice=/usr/local/cspice \
+        --with-vicar-rtl=/usr/local/vicar/dev \
+        --with-blitz=/usr/local \
+        --with-boost=/opt/conda \
+        --with-gdal=/opt/conda \
+        --without-mspi-shared \
+        --without-afids \
+        --without-afids-data \
+        --without-carto \
+        --without-hdf5 \
+        --disable-static \
+        --without-documentation \
+        PYTHON=/opt/conda/bin/python3.9 \
+        GDAL_CONFIG=/opt/conda/bin/gdal-config && \
+    make -j$(nproc) && \
+    make install
+
+# ============================================================================
+# Runtime stage
+# ============================================================================
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="Terrain Intelligence Generator + GeoCal"
+LABEL org.opencontainers.image.description="TIG with GeoCal geometric calibration and bundle adjustment capabilities"
+LABEL org.opencontainers.image.version="5.0-geocal"
+LABEL org.opencontainers.image.source="https://github.com/NASA-AMMOS/tig"
+
+# Install runtime deps
+RUN dnf install -y bzip2 && dnf clean all
+
+# Install micromamba for runtime
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C / bin/micromamba && \
+    mkdir -p /opt/conda
+
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV PATH="/opt/conda/bin:${PATH}"
+
+# Install runtime libs from conda-forge
+RUN /bin/micromamba install -y -c conda-forge \
+    gdal \
+    boost-cpp \
+    gsl \
+    fftw \
+    python=3.9 \
+    numpy \
+    scipy \
+    matplotlib \
+    -p /opt/conda && \
+    /bin/micromamba clean -afy
+
+# Copy built artifacts from builder
+COPY --from=builder /usr/local/cspice /usr/local/cspice
+COPY --from=builder /usr/local/include/blitz /usr/local/include/blitz
+COPY --from=builder /usr/local/lib/libblitz.* /usr/local/lib/
+COPY --from=builder /usr/local/geocal /usr/local/geocal
+
+# Set up environment
+ENV PATH="/opt/conda/bin:/usr/local/geocal/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/conda/lib:/usr/local/geocal/lib:/usr/local/lib:${LD_LIBRARY_PATH}"
+ENV PYTHONPATH="/usr/local/geocal/lib/python3.9/site-packages:${PYTHONPATH}"
+
+# Update library cache
+RUN ldconfig
+
+# Verify
+RUN echo "=== VICAR RTL ===" && \
+    ls -la /usr/local/vicar/dev/p2/lib/x86-64-linx/*.a | head -3 && \
+    echo "=== GeoCal ===" && \
+    ls -la /usr/local/geocal/lib/ | head -10
+
+WORKDIR /work
+
+CMD ["/bin/bash"]
