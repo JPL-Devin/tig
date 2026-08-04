@@ -1,0 +1,127 @@
+# Airflow Helm values for M20 IDS Pipeline
+# Deploy with: helm install airflow apache-airflow/airflow -f values.yaml
+
+# Executor: KubernetesExecutor for per-task pods
+executor: "KubernetesExecutor"
+
+# Static webserver secret key (Flask session signing). Without this the chart
+# generates a new random key each deploy, causing avoidable webserver restarts
+# and logout churn. The referenced Secret must exist BEFORE install — create it
+# from k8s/airflow/webserver-secret.yaml (see that file for the generator cmd).
+webserverSecretKeySecretName: ids-webserver-secret-key
+
+# DAGs location (mount from external git or local path)
+dags:
+  persistence:
+    enabled: false
+  gitSync:
+    enabled: false
+  # For local dev: mount from host path via minikube mount
+  # minikube mount ./dags:/mnt/dags &
+  # Then configure extraVolumes/extraVolumeMounts below
+
+# Airflow image
+images:
+  airflow:
+    repository: apache/airflow
+    tag: 2.7.3-python3.11
+
+# Environment variables
+env:
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "False"
+  - name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG
+    value: "True"
+  - name: AIRFLOW__API__AUTH_BACKENDS
+    value: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+
+# Reusable dags hostPath volume (minikube mount ./dags:/mnt/dags)
+# Chart extraVolumes are PER-COMPONENT (top-level extraVolumes is ignored),
+# so scheduler/webserver/workers each mount the dags volume individually.
+_dagsVolume: &dagsVolume
+  name: dags
+  hostPath:
+    path: /mnt/dags
+    type: Directory
+_dagsMount: &dagsMount
+  name: dags
+  mountPath: /opt/airflow/dags
+  readOnly: true
+
+# Web UI
+webserver:
+  replicas: 1
+  # On a CPU-constrained single-node minikube (esp. while VICAR task pods are
+  # running) gunicorn can take >60s to fork its workers and bind :8080. The
+  # chart's default startup probe (failureThreshold=6, period=10s = ~60s) then
+  # kills it in a restart loop. Widen the startup window.
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 20
+  service:
+    type: ClusterIP
+    ports:
+      - name: airflow-ui
+        port: 8080
+        targetPort: airflow-ui
+  defaultUser:
+    enabled: true
+    username: admin
+    password: admin
+    role: Admin
+    email: admin@example.com
+  extraVolumes:
+    - *dagsVolume
+  extraVolumeMounts:
+    - *dagsMount
+
+# Scheduler
+scheduler:
+  replicas: 1
+  extraVolumes:
+    - *dagsVolume
+  extraVolumeMounts:
+    - *dagsMount
+
+# Database (PostgreSQL) - use chart's embedded postgres defaults
+# NOTE: bitnami/postgresql:11 was removed from Docker Hub; legacy tags moved to bitnamilegacy org
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: "11"
+
+# Disable components not needed for demo
+redis:
+  enabled: false
+statsd:
+  enabled: false
+pgbouncer:
+  enabled: false
+flower:
+  enabled: false
+
+# KubernetesExecutor worker pod template (runs the airflow task that launches KPO pods).
+# NOTE: do NOT add a manual /opt/airflow/logs mount here — the executor injects
+# its own log volume into every task pod, and a duplicate mountPath makes K8s
+# reject the pod ("mountPath ... must be unique", 422). Log persistence is
+# handled by logs.persistence below, which the chart wires into task pods.
+workers:
+  persistence:
+    enabled: false
+  extraVolumes:
+    - *dagsVolume
+  extraVolumeMounts:
+    - *dagsMount
+
+# Log persistence via a hostPath-backed RWX PV/PVC (see k8s/airflow/logs-pv.yaml).
+# minikube 'standard' storageClass is RWO-only, so we bind an existing manually
+# created ReadWriteMany hostPath claim instead of provisioning one. The chart
+# mounts this at /opt/airflow/logs on scheduler/webserver/triggerer AND injects
+# it into every KubernetesExecutor task pod, so task logs survive pod deletion.
+logs:
+  persistence:
+    enabled: true
+    existingClaim: tig-airflow-logs-host
