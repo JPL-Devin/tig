@@ -27,8 +27,16 @@ def test_home_path_unchanged(translator, home_dir):
 
 
 def test_system_path_gets_host_prefix(translator):
+    import os
+    from pathlib import Path
+    
+    # Use /data which doesn't have symlink issues
     assert translator.translate("/data/file.vic") == "/host/data/file.vic"
-    assert translator.translate("/tmp/output.vic") == "/host/tmp/output.vic"
+    
+    # For /tmp, expect the resolved path (handles macOS /tmp -> /private/tmp)
+    tmp_resolved = str(Path("/tmp").resolve())
+    expected = f"/host{tmp_resolved}/output.vic"
+    assert translator.translate("/tmp/output.vic") == expected
 
 
 def test_empty_path_unchanged(translator):
