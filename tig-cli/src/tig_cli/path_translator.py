@@ -1,7 +1,11 @@
 """Path translation for host-to-container path mapping."""
 import os
+import re
 from pathlib import Path
 from typing import List
+
+# VICAR parameter names (``INP=``), optionally written as CLI-style flags.
+KEYWORD_RE = re.compile(r"^-{0,2}[A-Za-z_][A-Za-z0-9_.-]*$")
 
 
 class PathTranslator:
@@ -47,6 +51,38 @@ class PathTranslator:
         # Absolute path outside home - add /host prefix
         return f"/host{resolved}"
 
+    def translate_arg(self, arg: str) -> str:
+        """Translate a single command argument.
+
+        Besides bare paths, this understands VICAR's keyword syntax
+        (``INP=/data/img.vic``) and parenthesized value lists
+        (``INP=(/data/a.vic,/data/b.vic)``). Values that are not absolute
+        paths - flags, numbers, sizes such as ``SIZE=(1,1,500,500)`` - are
+        left alone, since ``translate`` only rewrites absolute paths.
+
+        Args:
+            arg: Command argument, possibly containing paths
+
+        Returns:
+            Argument with any absolute paths translated
+        """
+        if os.path.isabs(arg) or "=" not in arg:
+            return self.translate(arg)
+
+        keyword, sep, value = arg.partition("=")
+        if not KEYWORD_RE.match(keyword):
+            return self.translate(arg)
+
+        return f"{keyword}{sep}{self._translate_value(value)}"
+
+    def _translate_value(self, value: str) -> str:
+        """Translate the value side of a ``keyword=value`` argument."""
+        if value.startswith("(") and value.endswith(")"):
+            items = value[1:-1].split(",")
+            return "(" + ",".join(self.translate(item) for item in items) + ")"
+
+        return self.translate(value)
+
     def translate_args(self, args: List[str]) -> List[str]:
         """Translate a list of arguments.
 
@@ -56,7 +92,7 @@ class PathTranslator:
         Returns:
             List of arguments with paths translated
         """
-        return [self.translate(arg) for arg in args]
+        return [self.translate_arg(arg) for arg in args]
 
     def get_container_cwd(self, host_cwd: str) -> str:
         """Map host CWD to container CWD.

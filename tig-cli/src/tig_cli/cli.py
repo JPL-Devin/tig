@@ -1,9 +1,10 @@
 """CLI entry point for the tig command."""
+import signal
 import sys
 
 import click
 
-from .container import ContainerManager, get_container_image
+from .container import ContainerManager, TigError, get_container_image
 
 
 class DynamicHelpCommand(click.Command):
@@ -39,12 +40,32 @@ class DynamicHelpCommand(click.Command):
     default=False,
     help="Disable automatic host→container path translation (for debugging).",
 )
+@click.version_option(package_name="tig-cli")
 def main(vicar_tool, args, writable_path, disable_path_translation):
     image = get_container_image()
-    manager = ContainerManager(image, disable_path_translation=disable_path_translation)
+    try:
+        manager = ContainerManager(
+            image, disable_path_translation=disable_path_translation
+        )
+    except TigError as e:
+        raise click.ClickException(str(e)) from e
+
+    def terminate(signum, frame):
+        manager.stop_container()
+        sys.exit(128 + signum)
+
+    previous_handlers = {
+        sig: signal.signal(sig, terminate)
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    }
+
     try:
         manager.start_container(writable_paths=list(writable_path))
         exit_code = manager.execute_vicar_command(vicar_tool, list(args))
         sys.exit(exit_code)
+    except TigError as e:
+        raise click.ClickException(str(e)) from e
     finally:
         manager.stop_container()
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
