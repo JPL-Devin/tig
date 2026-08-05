@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import docker
@@ -18,6 +19,10 @@ DEFAULT_IMAGE = "ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensourc
 IMAGE_PLATFORM = "linux/amd64"
 
 CONTAINER_PREFIX = "tig-vicar"
+
+# Retries for the create/adopt race between concurrent invocations.
+CREATE_ATTEMPTS = 3
+CREATE_RETRY_DELAY = 0.2
 
 # Where calibration files (VISOR / mars_calibration_*) are mounted, matching
 # the layout VICAR's MARS programs expect.
@@ -198,26 +203,49 @@ class ContainerManager:
         run_kwargs = self._run_kwargs(volumes)
         self.container_name = self._container_name_for(run_kwargs)
 
-        existing = self._get_container(self.container_name)
-        if existing is not None:
-            if self._reusable(existing):
-                if existing.status != "running":
-                    existing.start()
-                self.container = existing
-                return
-            existing.remove(force=True)
+        # Concurrent invocations share the name, so creating and adopting race
+        # against each other; both outcomes are fine, but either can lose once.
+        for attempt in reversed(range(CREATE_ATTEMPTS)):
+            existing = self._get_container(self.container_name)
+            if existing is not None:
+                if self._reusable(existing):
+                    try:
+                        self._adopt(existing)
+                        return
+                    except docker.errors.APIError:
+                        if not attempt:
+                            raise
+                        time.sleep(CREATE_RETRY_DELAY)
+                        continue
+                self._remove(existing)
 
+            try:
+                self.container = self.client.containers.run(
+                    name=self.container_name, **run_kwargs
+                )
+                return
+            except docker.errors.ImageNotFound as e:
+                raise TigError(f"Image not found: {self.image}") from e
+            except docker.errors.APIError as e:
+                if e.status_code == 409 and attempt:
+                    time.sleep(CREATE_RETRY_DELAY)
+                    continue
+                raise TigError(
+                    f"Failed to start container from image {self.image}: "
+                    f"{e.explanation or e}"
+                ) from e
+
+    def _adopt(self, container: Any) -> None:
+        """Use an existing container, starting it if it is stopped."""
+        if container.status != "running":
+            container.start()
+        self.container = container
+
+    def _remove(self, container: Any) -> None:
         try:
-            self.container = self.client.containers.run(
-                name=self.container_name, **run_kwargs
-            )
-        except docker.errors.ImageNotFound as e:
-            raise TigError(f"Image not found: {self.image}") from e
-        except docker.errors.APIError as e:
-            raise TigError(
-                f"Failed to start container from image {self.image}: "
-                f"{e.explanation or e}"
-            ) from e
+            container.remove(force=True)
+        except docker.errors.NotFound:
+            pass
 
     def _get_container(self, name: str) -> Optional[Any]:
         try:
@@ -240,6 +268,8 @@ class ContainerManager:
             try:
                 container.remove(force=True)
                 removed += 1
+            except docker.errors.NotFound:
+                pass
             except docker.errors.APIError:
                 pass
         self.container = None
@@ -313,11 +343,15 @@ class ContainerManager:
             self.command = None
 
     def signal_command(self, signum: int) -> None:
-        """Forward a signal to the running docker exec client."""
+        """Forward a signal to the running docker exec client.
+
+        Deliberately does not wait: this runs from a signal handler while the
+        main flow already holds Popen's waitpid lock, so a nested wait() could
+        not observe the exit and would just stall.
+        """
         if self.command is None:
             return
         try:
             self.command.send_signal(signum)
-            self.command.wait(timeout=10)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        except ProcessLookupError:
             pass

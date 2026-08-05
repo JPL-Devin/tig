@@ -274,6 +274,43 @@ def test_ensure_container_image_not_found_is_user_facing(home_dir):
         manager.ensure_container([])
 
 
+def test_ensure_container_adopts_container_created_concurrently(home_dir):
+    """Two tig commands starting at once must not collide on the name."""
+    client = make_client()
+    winner = MagicMock(status="running")
+    winner.image.id = "sha256:image"
+    conflict = docker.errors.APIError("Conflict", response=MagicMock(status_code=409))
+    client.containers.run.side_effect = conflict
+
+    def get(name):
+        # Absent on the first look, present once the other process created it.
+        client.containers.get.side_effect = None
+        client.containers.get.return_value = winner
+        raise docker.errors.NotFound("absent")
+
+    client.containers.get.side_effect = get
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    assert manager.container is winner
+
+
+def test_ensure_container_tolerates_concurrent_removal(home_dir):
+    """A container removed by another process mid-replacement is not fatal."""
+    client = make_client(image_id="sha256:new")
+    existing = MagicMock(status="running")
+    existing.image.id = "sha256:old"
+    existing.remove.side_effect = docker.errors.NotFound("gone")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    client.containers.run.assert_called_once()
+
+
 def test_ensure_container_api_error_is_user_facing(home_dir):
     client = make_client()
     client.containers.run.side_effect = docker.errors.APIError("denied")
@@ -430,12 +467,23 @@ def test_execute_vicar_command_without_translation(mock_popen, home_dir):
 
 def test_signal_command_forwards_to_the_running_client(home_dir):
     manager = make_manager(home_dir)
-    manager.command = MagicMock()
+    command = MagicMock()
+    manager.command = command
 
     manager.signal_command(15)
 
-    manager.command.send_signal.assert_called_once_with(15)
-    manager.command.wait.assert_called_once()
+    command.send_signal.assert_called_once_with(15)
+    # Waiting here would deadlock against the wait() the main flow is in.
+    command.wait.assert_not_called()
+
+
+def test_signal_command_tolerates_an_exited_client(home_dir):
+    manager = make_manager(home_dir)
+    manager.command = MagicMock(
+        send_signal=MagicMock(side_effect=ProcessLookupError)
+    )
+
+    manager.signal_command(15)  # should not raise
 
 
 def test_signal_command_without_running_command(home_dir):
