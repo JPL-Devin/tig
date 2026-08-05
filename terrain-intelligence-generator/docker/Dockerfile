@@ -95,7 +95,12 @@ ENV V2TOP=/usr/local/vicar/dev
 ENV WORKSPACE=/usr/local/vicar
 ENV VICSYS=DEVELOPMENT
 ENV SHELL=/bin/bash
-ENV PATH="${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/tae53/bin/x86_64_linx:${PATH}"
+# /usr/local/bin first: it holds the wrappers that set up each program's
+# environment and normalize VICAR's exit codes. Without it ahead of the
+# program directories, `gen` and friends resolve to the raw binary and behave
+# differently from the MARS and GUI programs, which have no other directory on
+# PATH and so always go through their wrapper.
+ENV PATH="/usr/local/bin:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/tae53/bin/x86_64_linx:${PATH}"
 ENV LD_LIBRARY_PATH="${V2TOP}/olb/x86-64-linx:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/mars/lib/x86-64-linx"
 
 # Enable PowerTools (CodeReady Builder) for additional packages
@@ -161,6 +166,10 @@ COPY --from=builder /vicar/external ${WORKSPACE}/external
 # Copy Java vicario JAR and create wrapper script
 COPY --chown=root:root vicario.jar /usr/local/bin/vicario.jar
 
+# Shared exit-code translation used by every generated wrapper below
+COPY --chown=root:root vicar-run /usr/local/libexec/vicar-run
+RUN chmod +x /usr/local/libexec/vicar-run
+
 # Create vicario wrapper script that uses Java in headless mode
 RUN echo '#!/bin/bash' > /usr/local/bin/vicario && \
     echo '# vicario wrapper - calls Java vicario in headless mode (no X11 required)' >> /usr/local/bin/vicario && \
@@ -222,10 +231,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
                     echo "export PATH=${V2TOP}/p2/lib/$ARCH_DIR:${V2TOP}/tae53/bin/$TAE_ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
-                    echo "$cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
-                    echo "exit_code=\$?" >> /usr/local/bin/$cmdname; \
-                    echo "# VICAR commands often return non-zero on success, treat 0-2 as success" >> /usr/local/bin/$cmdname; \
-                    echo "if [ \$exit_code -le 2 ]; then exit 0; else exit \$exit_code; fi" >> /usr/local/bin/$cmdname; \
+                    echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     WRAPPER_COUNT=$((WRAPPER_COUNT + 1)); \
                 fi; \
@@ -246,10 +252,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
                     echo "export PATH=${V2TOP}/tae53/bin/$TAE_ARCH_DIR:${V2TOP}/tae53/bin/all:\$PATH" >> /usr/local/bin/$cmdname; \
-                    echo "$cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
-                    echo "exit_code=\$?" >> /usr/local/bin/$cmdname; \
-                    echo "# VICAR commands often return non-zero on success, treat 0-2 as success" >> /usr/local/bin/$cmdname; \
-                    echo "if [ \$exit_code -le 2 ]; then exit 0; else exit \$exit_code; fi" >> /usr/local/bin/$cmdname; \
+                    echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     TAE_COUNT=$((TAE_COUNT + 1)); \
                 fi; \
@@ -270,10 +273,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
                     echo "export PATH=${V2TOP}/mars/lib/$ARCH_DIR:${V2TOP}/p2/lib/$ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
-                    echo "$cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
-                    echo "exit_code=\$?" >> /usr/local/bin/$cmdname; \
-                    echo "# VICAR commands often return non-zero on success, treat 0-2 as success" >> /usr/local/bin/$cmdname; \
-                    echo "if [ \$exit_code -le 2 ]; then exit 0; else exit \$exit_code; fi" >> /usr/local/bin/$cmdname; \
+                    echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     MARS_COUNT=$((MARS_COUNT + 1)); \
                 fi; \
@@ -297,10 +297,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "# X11 app-defaults (.xres) so Motif widget labels resolve instead of showing placeholder resource names" >> /usr/local/bin/$cmdname; \
                     echo "export XFILESEARCHPATH=\"${V2TOP}/gui/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/p2/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/mars/lib/$ARCH_DIR/%N%S.xres:/usr/lib/X11/%L/%T/%N%C%S:/usr/lib/X11/%l/%T/%N%C%S:/usr/lib/X11/%T/%N%C%S:/usr/lib/X11/%L/%T/%N%S:/usr/lib/X11/%l/%T/%N%S:/usr/lib/X11/%T/%N%S\${XFILESEARCHPATH:+:\$XFILESEARCHPATH}\"" >> /usr/local/bin/$cmdname; \
                     echo "export XBMLANGPATH=\"%D:${V2TOP}/p2/lib/$ARCH_DIR/%B\"" >> /usr/local/bin/$cmdname; \
-                    echo "$cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
-                    echo "exit_code=\$?" >> /usr/local/bin/$cmdname; \
-                    echo "# VICAR commands often return non-zero on success, treat 0-2 as success" >> /usr/local/bin/$cmdname; \
-                    echo "if [ \$exit_code -le 2 ]; then exit 0; else exit \$exit_code; fi" >> /usr/local/bin/$cmdname; \
+                    echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     GUI_COUNT=$((GUI_COUNT + 1)); \
                 fi; \
@@ -321,7 +318,7 @@ RUN ARCH_DIR="x86-64-linx" && \
     echo "export WORKSPACE=${WORKSPACE}" >> /etc/profile.d/vicar.sh && \
     echo "export VICSYS=DEVELOPMENT" >> /etc/profile.d/vicar.sh && \
     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /etc/profile.d/vicar.sh && \
-    echo "export PATH=${V2TOP}/tae53/bin:${V2TOP}/bin:\$PATH" >> /etc/profile.d/vicar.sh && \
+    echo "export PATH=/usr/local/bin:${V2TOP}/tae53/bin:${V2TOP}/bin:\$PATH" >> /etc/profile.d/vicar.sh && \
     echo "# X11 app-defaults (.xres) so Motif GUI (xvd) widget labels resolve instead of showing placeholder resource names" >> /etc/profile.d/vicar.sh && \
     echo "export XFILESEARCHPATH=\"${V2TOP}/gui/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/p2/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/mars/lib/$ARCH_DIR/%N%S.xres:/usr/lib/X11/%L/%T/%N%C%S:/usr/lib/X11/%l/%T/%N%C%S:/usr/lib/X11/%T/%N%C%S:/usr/lib/X11/%L/%T/%N%S:/usr/lib/X11/%l/%T/%N%S:/usr/lib/X11/%T/%N%S\${XFILESEARCHPATH:+:\$XFILESEARCHPATH}\"" >> /etc/profile.d/vicar.sh && \
     echo "export XBMLANGPATH=\"%D:${V2TOP}/p2/lib/$ARCH_DIR/%B\"" >> /etc/profile.d/vicar.sh && \

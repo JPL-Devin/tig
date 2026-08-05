@@ -1,0 +1,48 @@
+#!/bin/bash
+# Run a VICAR program and translate its exit code into shell conventions.
+#
+# VICAR programs return 1 on a successful run, so `set -e`, `&&` chains and
+# CI steps all read a normal run as a failure. They also return 1 when TAE
+# rejects the invocation (missing parameter, unknown keyword), so the code
+# alone cannot separate success from a typo -- the only signal is the
+# [TAE-...] diagnostic VICAR prints on stdout.
+#
+# Codes this produces:
+#   0     the program ran
+#   1     TAE rejected the invocation
+#   255   the program called abend()
+#   >128  killed by a signal
+#   other passed through unchanged
+#
+# Usage: vicar-run /path/to/program [args...]
+
+program=$1
+shift
+
+normalize() {
+    # VICAR's success code is 1; anything higher is a genuine failure.
+    if [ "$1" -le 1 ]; then
+        exit 0
+    fi
+    exit "$1"
+}
+
+if [ -t 1 ]; then
+    # On a terminal, stream output straight through instead of piping it, so
+    # TAE prompts and Motif tools keep working. The diagnostic is on screen,
+    # so the user can see what the exit code cannot say.
+    "$program" "$@"
+    normalize $?
+fi
+
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+
+"$program" "$@" | tee "$log"
+exit_code=${PIPESTATUS[0]}
+
+if [ "$exit_code" -le 1 ] && grep -q '\[TAE-\|\*\* ABEND called \*\*' "$log"; then
+    exit 1
+fi
+
+normalize "$exit_code"
