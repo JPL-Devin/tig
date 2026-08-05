@@ -50,7 +50,10 @@ tig label /data/scenes/image.vic
 | Option | Description |
 | --- | --- |
 | `--writable-path PATH` | Mount an additional host directory read-write inside the container. May be repeated. |
+| `--calibration-path PATH` | Host directory with MARS/VISOR calibration files. Defaults to `$MARS_CONFIG_PATH`. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
+| `--status` | List the containers tig has created, then exit. |
+| `--shutdown` | Remove the containers tig has created, then exit. |
 | `--help` | Show help, including the currently active container image. |
 | `--version` | Show the installed tig-cli version. |
 
@@ -68,6 +71,36 @@ Set the `CONTAINER_IMAGE` environment variable to use a different VICAR image:
 ```bash
 export CONTAINER_IMAGE=ghcr.io/my-org/custom-vicar:latest
 tig marsmap input.vic output.vic
+```
+
+## Container reuse
+
+The container is created on first use and then reused, so a pipeline of many
+VICAR commands starts one container instead of one per command:
+
+```bash
+tig --status     # tig-vicar-1783dae8b4c9  running  ghcr.io/.../opensource
+tig --shutdown   # Removed 1 container(s).
+```
+
+The container name is a digest of the image and mount configuration, so
+changing `--writable-path`, `--calibration-path`, `CONTAINER_IMAGE` or the
+directory you work from gets its own container rather than silently reusing one
+that lacks the mount you asked for. Re-pulling a moving tag such as
+`:opensource` also replaces the container instead of reusing the old image.
+
+Interrupting a command (Ctrl-C, `SIGTERM`) stops that command and leaves the
+container up for the next one; `tig --shutdown` removes it.
+
+## MARS / VISOR calibration files
+
+VICAR's MARS programs need mission calibration data, which is not in the image.
+Point tig at it and it is mounted read-only and exported as `MARS_CONFIG_PATH`
+inside the container:
+
+```bash
+export MARS_CONFIG_PATH=/data/mars_calibration_m20
+tig marsmap INP=/data/in.vic OUT=out.vic
 ```
 
 ## How path translation works
