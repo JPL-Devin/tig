@@ -934,3 +934,41 @@ def test_signal_command_tolerates_an_exited_client(home_dir):
 
 def test_signal_command_without_running_command(home_dir):
     make_manager(home_dir).signal_command(15)  # should not raise
+
+# --- list_tools ---
+
+def test_list_tools_returns_sorted_unique_names(home_dir):
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(
+            return_value=Mock(output=b"marsmesh\nmarsmap\nmarsmap\n")
+        )
+    )
+
+    assert manager.list_tools() == ["marsmap", "marsmesh"]
+
+
+def test_list_tools_ignores_directory_headers(home_dir):
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(
+            return_value=Mock(output=b"/usr/local/bin:\nmarsmap\n\n")
+        )
+    )
+
+    assert manager.list_tools() == ["marsmap"]
+
+
+def test_list_tools_without_a_container(home_dir):
+    with pytest.raises(TigError):
+        make_manager(home_dir).list_tools()
+
+
+def test_list_tools_reports_a_docker_failure(home_dir):
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(side_effect=docker.errors.APIError("boom"))
+    )
+
+    with pytest.raises(TigError):
+        manager.list_tools()

@@ -1,394 +1,167 @@
 # Terrain Intelligence Generator - Demo Commands
 
-Complete demonstration of the terrain-intelligence-generator Docker image functionality using direct Docker commands. This guide covers all core VICAR capabilities without requiring additional tooling.
-
-For a native-like command experience with docker-compose, see [vicar-native-toolkit/DEMO_COMMANDS.md](./vicar-native-toolkit/DEMO_COMMANDS.md).
+A tour of the TIG image's core capabilities, run from your own shell with
+[`tig`](../../tig-cli/README.md). Every command below executes inside the
+container; files land in the directory you ran from.
 
 ## Prerequisites
 
 - Docker Engine 20.10+ or Docker Desktop
-- Access to the terrain-intelligence-generator image
-
-## Image Availability
-
-The demos use the open-source terrain-intelligence-generator image:
+- Python 3.9+
 
 ```bash
-# Check if image is available locally
-docker images | grep terrain-intelligence-generator
-
-# If not available, pull from GitHub Container Registry
-docker pull ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
-
-# Or build from source (see TERRAIN-INTELLIGENCE-GENERATOR.md)
+pip install tig-cli
 ```
+
+The image (`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`)
+is pulled automatically on first use.
 
 ---
 
-## Demo Steps - Direct Docker Usage
-
-**Note for SELinux systems (Fedora, RHEL, CentOS):** If using volume mounts and getting "Permission denied" errors, add `:Z` flag: `-v /path/to/dir:/workspace:Z`
-
-### Step 1: Start Long-Running Container
-
-Using a long-running container (sidecar pattern) provides better performance than `docker run` per command.
+## Step 1: Generate test images
 
 ```bash
-# Start container in background
-docker run -d \
-  --name vicar-demo \
-  ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource \
-  tail -f /dev/null
+mkdir -p ~/vicar-demo && cd ~/vicar-demo
 
-# Verify container is running
-docker ps | grep vicar-demo
+tig gen test.vic 64 64
+tig gen large.vic 512 512
+ls -lh *.vic
 ```
 
-### Step 2: Test Basic VICAR Commands
-
-Generate test images using the `gen` command:
-
-```bash
-# Generate small test image (64x64 pixels)
-docker exec vicar-demo bash -c 'cd /tmp && gen test.vic 64 64'
-
-# Verify file created
-docker exec vicar-demo ls -lh /tmp/test.vic
-
-# Generate larger test image (512x512 pixels)
-docker exec vicar-demo bash -c 'cd /tmp && gen large.vic 512 512'
-
-# Check both files
-docker exec vicar-demo bash -c 'cd /tmp && ls -lh *.vic'
-```
-
-**Expected Output:**
+**Expected output:**
 ```
 Beginning VICAR task GEN
 GEN Version 2019-05-28
 GEN task completed
 ```
 
-### Step 3: Test Image Operations
+The first command starts the container; later ones reuse it, so they return in
+well under a second. Note that VICAR tools often exit non-zero even on success,
+so avoid chaining them with `&&` in scripts.
 
-Test core VICAR image manipulation commands:
-
-```bash
-# Copy image
-docker exec vicar-demo bash -c 'cd /tmp && copy test.vic test_copy.vic'
-
-# Stretch image contrast
-docker exec vicar-demo bash -c 'cd /tmp && stretch test.vic stretched.vic'
-
-# List all created files
-docker exec vicar-demo bash -c 'cd /tmp && ls -lh *.vic'
-```
-
-**Expected Output:**
-- `copy`: Should complete with "COPY VERSION" message
-- `stretch`: Shows histogram statistics and auto-stretch parameters
-
-### Step 4: Test vicario Converter
-
-The `vicario` tool converts VICAR images to common formats (PNG/JPEG/TIFF):
+## Step 2: Image operations
 
 ```bash
-# Convert to PNG
-docker exec vicar-demo vicario /tmp/test.vic /tmp/test.png
-
-# Convert to JPEG
-docker exec vicar-demo vicario /tmp/test.vic /tmp/test.jpg
-
-# Convert to TIFF
-docker exec vicar-demo vicario /tmp/test.vic /tmp/test.tiff
-
-# Verify all conversions
-docker exec vicar-demo bash -c 'cd /tmp && ls -lh test.*'
+tig copy test.vic test_copy.vic
+tig stretch test.vic stretched.vic
+tig label test.vic
+tig hist test.vic
 ```
 
-**Expected Output:**
-```
-Converting /tmp/test.vic to intermediate format...
-Reading pixel data...
-   Image dimensions: 64 x 64
-Writing .PNG file...
-✅ Success: /tmp/test.png (99 bytes)
-   Dimensions: 64 x 64
-```
+`copy` prints a "COPY VERSION" banner; `stretch` prints histogram statistics and
+the auto-stretch parameters it chose.
 
-### Step 5: Verify MARS Commands
-
-MARS (Multi-mission Advanced Research and Science Software) tools for terrain processing:
+## Step 3: Format conversion with vicario
 
 ```bash
-# List all MARS commands (should show 74 total)
-docker exec vicar-demo bash -c 'ls /usr/local/bin | grep "^mars"'
-
-# Count MARS commands
-docker exec vicar-demo bash -c 'ls /usr/local/bin | grep "^mars" | wc -l'
-
-# Check specific MARS commands exist
-docker exec vicar-demo bash -c 'which marsmap && which marscorr && which marsxyz'
+tig vicario test.vic test.png
+tig vicario test.vic test.jpg
+tig vicario test.vic test.tiff
+ls -lh test.*
 ```
 
-**Expected Output:**
-- 74 MARS commands total
-- Includes: marsmap, marscorr, marsxyz, marsautotie, marsdisparity, etc.
-
-### Step 6: Check All Available Commands
-
-```bash
-# Count total wrapper commands (should be 545)
-docker exec vicar-demo bash -c 'ls /usr/local/bin | wc -l'
-
-# List first 20 commands
-docker exec vicar-demo bash -c 'ls /usr/local/bin | head -20'
-
-# List sample of common VICAR commands
-docker exec vicar-demo bash -c 'ls /usr/local/bin | grep -E "^(gen|copy|stretch)$"'
+**Expected output:**
+```
+Image write Done
+JConvertIIO
+0) inp = test.vic
+1) out = test.png
+2) format = png
+3) oform = byte
+4) rescale = true
 ```
 
-**Expected Output:**
-- 545 total commands available
-- Includes wrappers for all VICAR p2, TAE, and MARS programs
+See the [vicario reference](../reference/vicario.md) for the full option set.
 
-### Step 7: Check Environment and Data
-
-Verify the VICAR environment and VISOR data availability:
+## Step 4: MARS terrain commands
 
 ```bash
-# Check environment variables
-docker exec vicar-demo bash -c 'echo "V2TOP=$V2TOP" && echo "WORKSPACE=$WORKSPACE" && echo "VICSYS=$VICSYS"'
-
-# Check VISOR calibration data
-docker exec vicar-demo bash -c 'ls -la $VISOR_CALIB | head -10'
-
-# Check VISOR sample data
-docker exec vicar-demo bash -c 'ls -la $VISOR_SAMPLES | head -10'
-
-# Count VISOR files
-docker exec vicar-demo bash -c 'find $VISOR_CALIB -type f | wc -l'
-docker exec vicar-demo bash -c 'find $VISOR_SAMPLES -type f | wc -l'
+tig bash -c 'ls /usr/local/bin | grep "^mars"'
+tig bash -c 'ls /usr/local/bin | grep -c "^mars"'
 ```
 
-**Expected Output:**
-- V2TOP=/usr/local/vicar/dev
-- WORKSPACE=/usr/local/vicar
-- VICSYS=DEVELOPMENT
-- VISOR_CALIB: 1,461 files
-- VISOR_SAMPLES: 249 files
+74 MARS commands, including `marsmap`, `marscorr`, `marscor3`, `marsxyz`,
+`marsrfilt`, `marsmesh` and `marsautotie`. Most need calibration data; see
+[Calibration Data](../reference/calibration-data.md). For an end-to-end terrain
+run, see [Mesh Generation](mesh-generation.md).
 
-### Step 8: Test Java vicario
-
-The vicario converter uses Java for VICAR image format conversion:
+## Step 5: Browse everything available
 
 ```bash
-# Check Java version
-docker exec vicar-demo java -version
-
-# Check vicario is installed
-docker exec vicar-demo which vicario
-
-# Test vicario wrapper
-docker exec vicar-demo bash -c 'ls /usr/local/bin/vicario.jar'
+tig bash -c 'ls /usr/local/bin | wc -l'      # ~545 commands
+tig bash -c 'ls /usr/local/bin | head -20'
 ```
 
-**Expected Output:**
-- Java 11 (OpenJDK)
-- vicario: /usr/local/bin/vicario
-- vicario.jar found
-
-### Step 9: Copy Files from Container to Host (Optional)
-
-Extract generated images to your host system:
+To call them without the `tig` prefix:
 
 ```bash
-# Create output directory on host
-mkdir -p ~/vicar-demo-output
-
-# Copy generated images to host
-docker cp vicar-demo:/tmp/test.vic ~/vicar-demo-output/
-docker cp vicar-demo:/tmp/test.png ~/vicar-demo-output/
-docker cp vicar-demo:/tmp/test.jpg ~/vicar-demo-output/
-
-# Verify files on host
-ls -lh ~/vicar-demo-output/
+tig --shim
+export PATH="$HOME/.local/share/tig/shims:$PATH"
+gen another.vic 64 64
 ```
 
-### Step 10: Interactive Shell (Optional)
-
-Enter the container for interactive testing:
+## Step 6: Inspect the VICAR environment
 
 ```bash
-# Enter container
-docker exec -it vicar-demo bash
+tig bash -c 'echo "V2TOP=$V2TOP VICSYS=$VICSYS"'
+```
 
-# Once inside, you can run commands directly:
-cd /tmp
-gen mytest.vic 256 256
-label mytest.vic
-vicario mytest.vic mytest.png
-exit
+The image ships no mission data. Calibration and sample images come from VISOR;
+see [Downloading VISOR Data](downloading-visor-data.md).
+
+## Step 7: GUI tools
+
+VICAR's X11 tools display on your host:
+
+```bash
+tig xvd test.vic
+```
+
+## Step 8: Interactive shell
+
+```bash
+tig bash
 ```
 
 ## Cleanup
 
 ```bash
-# Stop and remove container
-docker stop vicar-demo
-docker rm vicar-demo
-
-# Verify cleanup
-docker ps -a | grep vicar-demo
+tig --status      # containers tig is keeping around
+tig --shutdown    # remove them
 ```
 
 ---
 
-## Alternative: Single-Command Usage
+## Working with data outside your home directory
 
-If you prefer not to keep a running container, use `docker run --rm`:
+tig mounts your current directory and home directory read-write, and everything
+else read-only. To write elsewhere:
 
 ```bash
-# Generate and list test image (container starts and stops)
-docker run --rm ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource \
-  bash -c 'cd /tmp && gen test.vic 64 64 && ls -lh test.vic'
-
-# Generate, convert, and list
-docker run --rm ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource \
-  bash -c 'cd /tmp && gen test.vic 64 64 && vicario test.vic test.png && ls -lh test.*'
-
-# Count MARS commands
-docker run --rm ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource \
-  bash -c 'ls /usr/local/bin | grep "^mars" | wc -l'
+tig --writable-path /data/results marsmap INP=/data/in.vic OUT=/data/results/out.vic
 ```
-
-**Note:** This approach is slower due to container startup overhead but requires no cleanup.
-
----
-
-## Using with Workspace Mounts
-
-Mount a local directory to persist files between sessions:
-
-```bash
-# Create workspace directory
-mkdir -p ./workspace
-
-# Start container with workspace mount
-docker run -d \
-  --name vicar-demo \
-  -v $(pwd)/workspace:/workspace \
-  ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource \
-  tail -f /dev/null
-
-# Generate files in mounted workspace
-docker exec vicar-demo bash -c 'cd /workspace && gen output.vic 512 512'
-docker exec vicar-demo bash -c 'cd /workspace && vicario output.vic output.png'
-
-# Files are now available on host
-ls -lh ./workspace/
-
-# Cleanup
-docker stop vicar-demo && docker rm vicar-demo
-```
-
----
-
-## Summary of Test Coverage
-
-✅ **Container Functionality**
-- Container starts and runs correctly
-- Environment variables set properly
-- VICAR installation accessible at /usr/local/vicar/dev
-
-✅ **VICAR Commands** (545 total)
-- `gen` - Generate test images ✓
-- `copy` - Copy images ✓
-- `stretch` - Stretch image contrast ✓
-- `label` - Display image labels
-- `list` - List image contents
-- `hist` - Display histogram
-
-✅ **MARS Commands** (74 total)
-- marsmap, marscorr, marsxyz ✓
-- marsautotie, marsdisparity
-- All accessible via wrappers
-
-✅ **File Conversion**
-- vicario: VICAR → PNG ✓
-- vicario: VICAR → JPEG ✓
-- vicario: VICAR → TIFF ✓
-
-✅ **Python Integration**
-- Python 3.9.25 available ✓
-- Pillow 11.3.0 installed ✓
-- vicario uses Pillow for conversions
-
-✅ **Data Access**
-- VISOR calibration files: 1,461 files ✓
-- VISOR sample data: 249 files ✓
 
 ---
 
 ## Troubleshooting
 
-### Container fails to start
+**`Failed to connect to Docker`** — the daemon is not running, or your user is
+not in the `docker` group.
 
-```bash
-# Check logs
-docker logs vicar-demo
+**Permission denied on mounts (SELinux)** — tig passes
+`--security-opt label=disable` automatically when SELinux is Enforcing;
+`--no-selinux-label-disable` turns that off.
 
-# Clean up and retry
-docker system prune
-docker run -d --name vicar-demo ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource tail -f /dev/null
-```
+**Output written where you did not expect** — relative paths resolve against the
+directory you ran `tig` from. `--disable-path-translation` shows the raw paths
+tig would pass through.
 
-### Permission errors with volume mounts
-
-```bash
-# SELinux systems (Fedora/RHEL/CentOS) - add :Z flag
-docker run -d --name vicar-demo -v $(pwd)/workspace:/workspace:Z \
-  ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource tail -f /dev/null
-
-# Or work inside container without mounts (files persist until container removed)
-docker exec vicar-demo bash -c 'cd /tmp && gen test.vic 64 64'
-```
-
-### Commands not found
-
-```bash
-# Check PATH
-docker exec vicar-demo bash -c 'echo $PATH'
-
-# List available commands
-docker exec vicar-demo ls /usr/local/bin | head -20
-
-# Verify VICAR installation
-docker exec vicar-demo bash -c 'ls $V2TOP/p2/lib/x86-64-linx/ | head -10'
-```
-
-### Image not available
-
-```bash
-# Pull from GitHub Container Registry
-docker pull ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
-
-# Or check available images
-docker images | grep terrain
-```
+**A command is not found** — `tig bash -c 'ls /usr/local/bin | grep <name>'`.
 
 ---
 
-## Time Estimate
+## Next steps
 
-- Image pull/verification: 1-2 minutes
-- Demo steps execution: 5-10 minutes
-- **Total: 6-12 minutes**
-
----
-
-## Next Steps
-
-- **For native-like command experience**: See [vicar-native-toolkit/](./vicar-native-toolkit/)
-- **For building from source**: See [TERRAIN-INTELLIGENCE-GENERATOR.md](./TERRAIN-INTELLIGENCE-GENERATOR.md)
-- **For advanced workflows**: See [vicar-native-toolkit/QUICKREF.md](./vicar-native-toolkit/QUICKREF.md)
+- **[Mesh Generation](mesh-generation.md)** — full stereo terrain pipeline
+- **[tig-cli README](../../tig-cli/README.md)** — configuration, X11, shims
+- **[TIG VICAR image](../../terrain-intelligence-generator/README.md)** — building from source

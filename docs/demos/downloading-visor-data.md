@@ -157,5 +157,5 @@ wget -c "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_
 ## Related Documentation
 
 - [VICAR Releases](https://github.com/NASA-AMMOS/VICAR/releases)
-- [Mesh Generation Demo](demos/mesh-generation.md)
-- [Getting Started](getting-started.md)
+- [Mesh Generation Demo](mesh-generation.md)
+- [Getting Started](../getting-started.md)

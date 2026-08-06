@@ -44,6 +44,9 @@ XQUARTZ_START_TIMEOUT = 5.0
 # the layout VICAR's MARS programs expect.
 CALIBRATION_MOUNT = "/usr/local/vicar/mars_calib"
 
+# Directories in the image holding the VICAR tools users invoke by name.
+TOOL_PATHS = ("/usr/local/bin",)
+
 
 class TigError(Exception):
     """User-facing error; reported without a traceback."""
@@ -152,8 +155,8 @@ def _started_at(container: Any) -> float:
 def get_calibration_path(config: Optional[Config] = None) -> Optional[str]:
     """Return the host path holding MARS/VISOR calibration files, if any.
 
-    Precedence: MARS_CONFIG_PATH (the same variable the toolkit used), then the
-    ``calibration_path`` key from the configuration files.
+    Precedence: MARS_CONFIG_PATH, then the ``calibration_path`` key from the
+    configuration files.
     """
     from_env = os.environ.get("MARS_CONFIG_PATH")
     if from_env:
@@ -576,6 +579,27 @@ class ContainerManager:
                 continue
             paths.append(source)
         return sorted(paths)
+
+    def list_tools(self) -> List[str]:
+        """Return the VICAR tool names available in the container.
+
+        Requires a container to be running; call ``ensure_container`` first.
+        """
+        if self.container is None:
+            raise TigError("No container is running.")
+        try:
+            result = self.container.exec_run(
+                ["ls", "-1", *TOOL_PATHS], demux=False
+            )
+        except docker.errors.APIError as e:
+            raise TigError(f"Failed to list VICAR tools: {e}") from e
+
+        output = result.output.decode("utf-8", "replace")
+        return sorted({
+            line.strip() for line in output.splitlines()
+            # 'ls' prints a 'dir:' header per directory when given several.
+            if line.strip() and not line.rstrip().endswith(":")
+        })
 
     def execute_vicar_command(
         self,

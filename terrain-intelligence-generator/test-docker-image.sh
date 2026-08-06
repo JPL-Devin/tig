@@ -10,7 +10,7 @@
 #
 # Example:
 #   ./test-docker-image.sh tig-vicar-test:latest
-#   ./test-docker-image.sh ghcr.io/nasa-ammos/tig/vicar-native-toolkit:opensource
+#   ./test-docker-image.sh ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
 #
 
 set -e  # Exit on error

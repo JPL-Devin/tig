@@ -22,6 +22,7 @@ from .container import (
     get_calibration_path,
     get_container_image,
 )
+from .shim import default_shim_dir, tig_executable, write_shims
 
 
 class DynamicHelpCommand(click.Command):
@@ -92,6 +93,23 @@ class DynamicHelpCommand(click.Command):
          "Defaults to enabled when SELinux is Enforcing.",
 )
 @click.option(
+    "--shim",
+    "shim_dir",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    metavar="[PATH]",
+    help="Write one command per VICAR tool into PATH (default "
+         "~/.local/share/tig/shims), so tools run unqualified, then exit.",
+)
+@click.option(
+    "--shim-force",
+    is_flag=True,
+    default=False,
+    help="With --shim, also create commands whose names already exist on "
+         "PATH (such as 'sort').",
+)
+@click.option(
     "--status",
     "show_status",
     is_flag=True,
@@ -113,6 +131,8 @@ def main(
     calibration_path,
     disable_path_translation,
     selinux_label_disable,
+    shim_dir,
+    shim_force,
     show_status,
     shutdown,
 ):
@@ -157,6 +177,29 @@ def main(
     if shutdown:
         removed = manager.shutdown()
         click.echo(f"Removed {removed} container(s).")
+        return
+
+    if shim_dir is not None:
+        directory = Path(shim_dir) if shim_dir else default_shim_dir()
+        try:
+            manager.ensure_container(writable_paths=writable_paths)
+            tools = manager.list_tools()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
+        finally:
+            manager.release_claim()
+
+        written, skipped = write_shims(
+            directory, tools, tig_executable(), force=shim_force
+        )
+        click.echo(f"Wrote {len(written)} command(s) to {directory}.")
+        if skipped:
+            click.echo(
+                f"Skipped {len(skipped)} name(s) already on PATH "
+                f"({', '.join(skipped)}); run these as 'tig <tool>' or "
+                f"re-run with --shim-force."
+            )
+        click.echo(f'Add to your shell profile: export PATH="{directory}:$PATH"')
         return
 
     if show_status:

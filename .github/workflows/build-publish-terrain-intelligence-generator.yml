@@ -389,7 +389,7 @@ jobs:
           '
           echo ""
           
-          # Test 12: Docker exec pattern (vicar-native-toolkit simulation)
+          # Test 12: Docker exec pattern (tig-cli sidecar simulation)
           echo "============================================"
           echo "Test 12: Docker exec pattern (long-running container)"
           echo "============================================"

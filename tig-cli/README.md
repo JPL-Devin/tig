@@ -54,6 +54,8 @@ tig label /data/scenes/image.vic
 | `--calibration-path PATH` | Host directory with MARS/VISOR calibration files. Defaults to `$MARS_CONFIG_PATH`. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
 | `--selinux-label-disable` / `--no-selinux-label-disable` | Force `--security-opt label=disable` on or off (Linux). Defaults to on when SELinux is Enforcing. |
+| `--shim [PATH]` | Write one command per VICAR tool into `PATH` (default `~/.local/share/tig/shims`), then exit. See [Running tools unqualified](#running-tools-unqualified). |
+| `--shim-force` | With `--shim`, also create commands whose names already exist on your `PATH`. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |
 | `--help` | Show help, including the active container image and the config files in use. |
@@ -106,7 +108,7 @@ selinux_label_disable = true
 | --- | --- | --- |
 | `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
 | `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
-| `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. Same variable the `vicar-native-toolkit` uses, so an activated toolkit environment is picked up automatically. |
+| `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. |
 | `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
 | `TIG_SELINUX_LABEL_DISABLE` | `selinux_label_disable` | `1`/`true`/`yes`/`on` to force `label=disable`; `0`/`false` to force it off. |
 | `TIG_CONFIG` | (all files) | Load only this config file instead of the layered files. |
@@ -115,6 +117,26 @@ selinux_label_disable = true
 export CONTAINER_IMAGE=ghcr.io/my-org/custom-vicar:latest
 tig marsmap input.vic output.vic
 ```
+
+## Running tools unqualified
+
+`tig --shim` writes one small command per VICAR tool, so scripts and habits that
+call the tools directly keep working:
+
+```bash
+tig --shim
+export PATH="$HOME/.local/share/tig/shims:$PATH"
+
+marsmap INP=input.vic OUT=output.vic   # same as: tig marsmap ...
+```
+
+The tool list comes from the image, so re-run `tig --shim` after switching
+images; commands for tools that disappeared are removed.
+
+Names that already exist on your `PATH` — VICAR ships a `sort`, a `patch` and a
+`size`, among others — are skipped and reported, so putting the directory first
+on `PATH` cannot shadow your system commands. Reach those as `tig sort ...`, or
+pass `--shim-force` if you want the VICAR ones to win.
 
 ## Container reuse
 
