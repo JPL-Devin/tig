@@ -299,7 +299,7 @@ echo ""
 
 # List results
 echo "Step 4: Results summary"
-ls -lh pointcloud.xyz pointcloud_filtered.xyz terrain.obj terrain.mtl texture.png 2>/dev/null
+ls -lh pointcloud.xyz pointcloud_filtered.xyz terrain.obj terrain.mtl texture.png 2>/dev/null || true
 echo ""
 
 echo "=== Demo Complete ==="

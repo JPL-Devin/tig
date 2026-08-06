@@ -96,6 +96,15 @@ def test_removes_shims_for_tools_that_disappeared(tmp_path):
     assert not (tmp_path / "oldtool").exists()
 
 
+def test_regenerating_works_with_a_relative_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    write_shims(Path("shims"), ["marsmap", "oldtool"], "/bin/tig")
+    write_shims(Path("shims"), ["marsmap"], "/bin/tig")
+
+    assert (tmp_path / "shims/marsmap").is_symlink()
+    assert not (tmp_path / "shims/oldtool").exists()
+
+
 def test_leaves_unrelated_files_alone(tmp_path):
     keep = tmp_path / "notes.txt"
     keep.write_text("mine")

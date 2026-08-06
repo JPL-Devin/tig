@@ -55,10 +55,11 @@ def _shadows_host_command(tool: str, directory: Path) -> bool:
 
 def _stale_shims(directory: Path, dispatcher: Path) -> Iterable[Path]:
     """Existing symlinks in ``directory`` that point at the dispatcher."""
+    target = os.path.realpath(dispatcher)
     for entry in directory.iterdir():
         if entry == dispatcher or not entry.is_symlink():
             continue
-        if os.path.realpath(entry) == str(dispatcher):
+        if os.path.realpath(entry) == target:
             yield entry
 
 
