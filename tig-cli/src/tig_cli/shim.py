@@ -73,7 +73,8 @@ def write_shims(
 
     Tools whose name is already a command on the host PATH are skipped unless
     ``force``, so that putting the directory on PATH cannot shadow ``sort`` or
-    ``patch``; those tools remain reachable as ``tig <tool>``.
+    ``patch``; those tools remain reachable as ``tig <tool>``. Names taken by a
+    file this function did not generate are skipped in any case.
 
     Args:
         directory: Where to write the dispatcher and the per-tool symlinks
@@ -105,7 +106,9 @@ def write_shims(
             skipped.append(tool)
             continue
         link = directory / tool
-        if link.exists() and not link.is_symlink():
+        # Shims of ours were unlinked above, so anything left belongs to someone
+        # else.
+        if link.is_symlink() or link.exists():
             skipped.append(tool)
             continue
         link.symlink_to(DISPATCHER_NAME)

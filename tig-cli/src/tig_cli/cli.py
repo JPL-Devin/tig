@@ -195,9 +195,10 @@ def main(
         click.echo(f"Wrote {len(written)} command(s) to {directory}.")
         if skipped:
             click.echo(
-                f"Skipped {len(skipped)} name(s) already on PATH "
-                f"({', '.join(skipped)}); run these as 'tig <tool>' or "
-                f"re-run with --shim-force."
+                f"Skipped {len(skipped)} name(s) already taken "
+                f"({', '.join(skipped)}); run these as 'tig <tool>'. "
+                f"--shim-force covers names that merely exist elsewhere "
+                f"on PATH, not files already in {directory}."
             )
         click.echo(f'Add to your shell profile: export PATH="{directory}:$PATH"')
         return

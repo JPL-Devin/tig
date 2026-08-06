@@ -118,7 +118,9 @@ if [ ! -d "$CALIB_DIR" ]; then
 fi
 
 # tig mounts this read-only at /usr/local/vicar/mars_calib and points the MARS
-# programs at it.
+# programs at it. Resolve it now: tig runs from the workspace directory below,
+# where a relative calibration path would no longer resolve.
+CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
 export MARS_CONFIG_PATH="$CALIB_DIR"
 
 # Resolve inputs before changing directory, so relative paths keep working

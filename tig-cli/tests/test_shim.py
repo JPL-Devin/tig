@@ -105,6 +105,18 @@ def test_regenerating_works_with_a_relative_directory(tmp_path, monkeypatch):
     assert not (tmp_path / "shims/oldtool").exists()
 
 
+def test_skips_names_taken_by_a_foreign_symlink(tmp_path, monkeypatch):
+    monkeypatch.setattr("tig_cli.shim.shutil.which", lambda name: None)
+    mine = tmp_path / "marsmap"
+    mine.symlink_to("/opt/tools/marsmap")
+
+    written, skipped = write_shims(tmp_path, ["marsmap"], "/bin/tig")
+
+    assert written == []
+    assert skipped == ["marsmap"]
+    assert os.readlink(mine) == "/opt/tools/marsmap"
+
+
 def test_leaves_unrelated_files_alone(tmp_path):
     keep = tmp_path / "notes.txt"
     keep.write_text("mine")
@@ -213,7 +225,7 @@ def test_cli_shim_reports_skipped_names(tmp_path, monkeypatch):
          patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
         result = runner.invoke(main, ["--shim", str(tmp_path)])
 
-    assert "Skipped 1 name(s) already on PATH (sort)" in result.output
+    assert "Skipped 1 name(s) already taken (sort)" in result.output
 
 
 def test_cli_shim_does_not_run_a_vicar_tool(tmp_path):
