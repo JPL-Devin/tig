@@ -277,3 +277,140 @@ def test_signal_handlers_forward_signal_and_are_restored():
     assert exc.value.code == 128 + signal.SIGTERM
     mock_manager.signal_command.assert_called_once_with(signal.SIGTERM)
     mock_manager.shutdown.assert_not_called()
+
+
+# --- config files ---
+
+def test_config_file_provides_settings(tmp_path, monkeypatch):
+    """Config file supplies image, writable paths and path-translation flag."""
+    config = tmp_path / "tig.toml"
+    config.write_text(
+        'image = "ghcr.io/my-org/vicar:cfg"\n'
+        'writable_paths = ["/data"]\n'
+        'disable_path_translation = true\n'
+    )
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.delenv("CONTAINER_IMAGE", raising=False)
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    mock_cls.assert_called_once_with(
+        "ghcr.io/my-org/vicar:cfg",
+        disable_path_translation=True,
+        calibration_path=None,
+    )
+    mock_manager.ensure_container.assert_called_once_with(writable_paths=["/data"])
+
+
+def test_config_file_provides_calibration_path(tmp_path, monkeypatch):
+    """calibration_path from the config file reaches ContainerManager."""
+    config = tmp_path / "tig.toml"
+    config.write_text('calibration_path = "/opt/calib"\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    assert mock_cls.call_args[1]["calibration_path"] == "/opt/calib"
+
+
+def test_env_vars_override_config_file(tmp_path, monkeypatch):
+    """Environment variables win over the config file."""
+    config = tmp_path / "tig.toml"
+    config.write_text(
+        'image = "cfg:1"\n'
+        'writable_paths = ["/data"]\n'
+        'calibration_path = "/cfg/calib"\n'
+    )
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.setenv("CONTAINER_IMAGE", "env:2")
+    monkeypatch.setenv("TIG_WRITABLE_PATHS", "/scratch")
+    monkeypatch.setenv("MARS_CONFIG_PATH", "/env/calib")
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    mock_cls.assert_called_once_with(
+        "env:2", disable_path_translation=False, calibration_path="/env/calib"
+    )
+    mock_manager.ensure_container.assert_called_once_with(
+        writable_paths=["/scratch"]
+    )
+
+
+def test_cli_flags_override_config_file(tmp_path, monkeypatch):
+    """Flags win over both env vars and the config file."""
+    config = tmp_path / "tig.toml"
+    config.write_text('writable_paths = ["/data"]\ncalibration_path = "/cfg"\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.setenv("MARS_CONFIG_PATH", "/env/calib")
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, [
+            "--writable-path", "/flag",
+            "--calibration-path", "/flag/calib",
+            "marsmap",
+        ])
+
+    assert mock_cls.call_args[1]["calibration_path"] == "/flag/calib"
+    mock_manager.ensure_container.assert_called_once_with(writable_paths=["/flag"])
+
+
+def test_config_option_selects_file(tmp_path, monkeypatch):
+    """--config loads the given file instead of the layered files."""
+    config = tmp_path / "custom.toml"
+    config.write_text('image = "explicit:9"\n')
+    monkeypatch.delenv("CONTAINER_IMAGE", raising=False)
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["--config", str(config), "marsmap"])
+
+    assert mock_cls.call_args[0][0] == "explicit:9"
+
+
+def test_invalid_config_reported_without_traceback(tmp_path, monkeypatch):
+    """A malformed config file produces a clean error message."""
+    config = tmp_path / "tig.toml"
+    config.write_text('image = 5\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+
+    runner = CliRunner()
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        result = runner.invoke(main, ["marsmap"])
+
+    assert result.exit_code != 0
+    assert "must be a string" in result.output
+    mock_cls.assert_not_called()
+
+
+def test_help_lists_config_locations():
+    """Help text documents where config files are read from."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert "tig.toml" in result.output

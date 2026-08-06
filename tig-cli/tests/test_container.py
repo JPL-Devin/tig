@@ -3,6 +3,7 @@ import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import docker
+from tig_cli.config import Config
 from tig_cli.container import (
     CALIBRATION_MOUNT,
     CONTAINER_PREFIX,
@@ -50,6 +51,42 @@ def test_get_container_image_from_env():
     custom = "ghcr.io/my-org/custom-vicar:v2"
     with patch.dict(os.environ, {"CONTAINER_IMAGE": custom}):
         assert get_container_image() == custom
+
+
+def test_get_container_image_from_config():
+    """Falls back to the config file image when the env var is unset."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTAINER_IMAGE", None)
+        assert get_container_image(Config(image="cfg:1")) == "cfg:1"
+
+
+def test_get_container_image_env_beats_config():
+    """CONTAINER_IMAGE takes precedence over the config file."""
+    with patch.dict(os.environ, {"CONTAINER_IMAGE": "env:2"}):
+        assert get_container_image(Config(image="cfg:1")) == "env:2"
+
+
+# --- get_calibration_path ---
+
+def test_get_calibration_path_unset(monkeypatch):
+    monkeypatch.delenv("MARS_CONFIG_PATH", raising=False)
+    assert get_calibration_path() is None
+
+
+def test_get_calibration_path_from_config(monkeypatch):
+    monkeypatch.delenv("MARS_CONFIG_PATH", raising=False)
+    assert get_calibration_path(Config(calibration_path="/cfg")) == "/cfg"
+
+
+def test_get_calibration_path_env_beats_config(monkeypatch):
+    monkeypatch.setenv("MARS_CONFIG_PATH", "/env")
+    assert get_calibration_path(Config(calibration_path="/cfg")) == "/env"
+
+
+def test_get_calibration_path_env_expands_user(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.setenv("MARS_CONFIG_PATH", "~/calib")
+    assert get_calibration_path() == "/home/tester/calib"
 
 
 # --- ContainerManager init ---

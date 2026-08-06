@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import docker
 
+from .config import Config
 from .path_translator import PathTranslator
 
 DEFAULT_IMAGE = "ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource"
@@ -33,21 +34,32 @@ class TigError(Exception):
     """User-facing error; reported without a traceback."""
 
 
-def get_container_image() -> str:
+def get_container_image(config: Optional[Config] = None) -> str:
     """Return the Docker image to use for VICAR execution.
 
-    Reads CONTAINER_IMAGE environment variable. Falls back to the
-    opensource image if not set.
+    Precedence: CONTAINER_IMAGE environment variable, then the ``image`` key
+    from the configuration files, then the opensource image.
     """
-    return os.environ.get("CONTAINER_IMAGE", DEFAULT_IMAGE)
+    from_env = os.environ.get("CONTAINER_IMAGE")
+    if from_env:
+        return from_env
+    if config is not None and config.image:
+        return config.image
+    return DEFAULT_IMAGE
 
 
-def get_calibration_path() -> Optional[str]:
+def get_calibration_path(config: Optional[Config] = None) -> Optional[str]:
     """Return the host path holding MARS/VISOR calibration files, if any.
 
-    Reads MARS_CONFIG_PATH, the same variable the toolkit used.
+    Precedence: MARS_CONFIG_PATH (the same variable the toolkit used), then the
+    ``calibration_path`` key from the configuration files.
     """
-    return os.environ.get("MARS_CONFIG_PATH") or None
+    from_env = os.environ.get("MARS_CONFIG_PATH")
+    if from_env:
+        return os.path.expanduser(from_env)
+    if config is not None and config.calibration_path:
+        return config.calibration_path
+    return None
 
 
 class ContainerManager:
