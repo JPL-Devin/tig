@@ -27,19 +27,23 @@ normalize() {
     exit "$1"
 }
 
-if [ -t 1 ]; then
-    # On a terminal, stream output straight through instead of piping it, so
-    # TAE prompts and Motif tools keep working. The diagnostic is on screen,
-    # so the user can see what the exit code cannot say.
-    "$program" "$@"
-    normalize $?
-fi
-
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-"$program" "$@" | tee "$log"
-exit_code=${PIPESTATUS[0]}
+if [ -t 1 ] && command -v script > /dev/null; then
+    # On a terminal, run under a pty rather than a pipe so the program's stdout
+    # is still a terminal: VICAR's stdio stays line buffered, and TAE prompts
+    # and Motif tools behave as they do without the wrapper. script -e reports
+    # the program's own exit status, and its transcript is what gets scanned.
+    script -qefc "$(printf '%q ' "$program" "$@")" "$log"
+    exit_code=$?
+elif [ -t 1 ]; then
+    "$program" "$@"
+    normalize $?
+else
+    "$program" "$@" | tee "$log"
+    exit_code=${PIPESTATUS[0]}
+fi
 
 if [ "$exit_code" -le 1 ] && grep -q '\[TAE-\|\*\* ABEND called \*\*' "$log"; then
     exit 1

@@ -147,6 +147,9 @@ RUN dnf -y --nogpgcheck --setopt=install_weak_deps=False --setopt=tsflags=nodocs
     less \
     which \
     findutils \
+    # script(1), which the command wrappers use to keep a program's stdout a
+    # terminal while still reading its output
+    util-linux \
     && dnf clean all \
     && rm -rf /var/cache/dnf /var/cache/yum
 

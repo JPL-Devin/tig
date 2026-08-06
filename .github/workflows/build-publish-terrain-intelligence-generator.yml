@@ -505,6 +505,29 @@ jobs:
             echo "✓ A set -e pipeline of VICAR commands completes"
           '
           echo ""
+
+          # Same contract on a terminal, where the wrapper has to keep the
+          # program's stdout a tty (prompts, Motif) instead of piping it.
+          docker run --rm -t ${IMAGE_TAG} bash -c '
+            check() {
+              expected=$1; description=$2; shift 2
+              "$@" > /dev/tty 2>&1
+              actual=$?
+              if [ "$actual" -eq "$expected" ]; then
+                echo "✓ $description exits $actual on a tty" >> /tmp/results
+              else
+                echo "✗ ERROR: $description exits $actual on a tty, expected $expected" >> /tmp/results
+                exit 1
+              fi
+            }
+            : > /tmp/results
+            check 0 "a successful run" gen /tmp/codes.vic 8 8
+            check 1 "an unknown keyword" gen OUT=/tmp/codes.vic NL=8 NS=8 NOSUCHPARAM=1
+            check 1 "a missing parameter" copy
+            check 255 "a missing input file" list /tmp/definitely-absent.vic
+            cat /tmp/results
+          '
+          echo ""
           
           # Cleanup
           rm -rf ${TEST_WORKSPACE}
