@@ -3,6 +3,7 @@ name: Publish tig-cli
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
