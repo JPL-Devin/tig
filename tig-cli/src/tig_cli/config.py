@@ -28,6 +28,7 @@ KNOWN_KEYS = frozenset({
     "writable_paths",
     "disable_path_translation",
     "calibration_path",
+    "selinux_label_disable",
 })
 
 
@@ -47,6 +48,7 @@ class Config:
     writable_paths: List[str] = field(default_factory=list)
     disable_path_translation: Optional[bool] = None
     calibration_path: Optional[str] = None
+    selinux_label_disable: Optional[bool] = None
     sources: List[Path] = field(default_factory=list)
 
 
@@ -127,6 +129,12 @@ def _apply(config: Config, data: Dict[str, Any], path: Path) -> None:
             raise ConfigError(f"{path}: 'calibration_path' must be a string.")
         config.calibration_path = os.path.expanduser(value)
 
+    if "selinux_label_disable" in data:
+        value = data["selinux_label_disable"]
+        if not isinstance(value, bool):
+            raise ConfigError(f"{path}: 'selinux_label_disable' must be a boolean.")
+        config.selinux_label_disable = value
+
 
 def load_config(
     path: Optional[Path] = None,
@@ -183,4 +191,9 @@ def env_writable_paths() -> Optional[List[str]]:
 def env_disable_path_translation() -> Optional[bool]:
     """Return the value of ``TIG_DISABLE_PATH_TRANSLATION``, if set."""
     return _env_bool("TIG_DISABLE_PATH_TRANSLATION")
+
+
+def env_selinux_label_disable() -> Optional[bool]:
+    """Return the value of ``TIG_SELINUX_LABEL_DISABLE``, if set."""
+    return _env_bool("TIG_SELINUX_LABEL_DISABLE")
 

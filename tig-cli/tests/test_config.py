@@ -9,6 +9,7 @@ from tig_cli.config import (
     ConfigError,
     config_search_paths,
     env_disable_path_translation,
+    env_selinux_label_disable,
     env_writable_paths,
     find_project_config,
     load_config,
@@ -221,3 +222,40 @@ def test_env_disable_path_translation_invalid(monkeypatch):
     monkeypatch.setenv("TIG_DISABLE_PATH_TRANSLATION", "maybe")
     with pytest.raises(ConfigError, match="boolean"):
         env_disable_path_translation()
+
+
+# --- selinux_label_disable ---
+
+def test_selinux_label_disable_key(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text("selinux_label_disable = true\n")
+    assert load_config(path).selinux_label_disable is True
+
+
+def test_selinux_label_disable_defaults_to_unset(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text("")
+    assert load_config(path).selinux_label_disable is None
+
+
+def test_selinux_label_disable_must_be_boolean(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text('selinux_label_disable = "yes"\n')
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        load_config(path)
+
+
+def test_env_selinux_label_disable(monkeypatch):
+    monkeypatch.setenv("TIG_SELINUX_LABEL_DISABLE", "true")
+    assert env_selinux_label_disable() is True
+
+
+def test_env_selinux_label_disable_unset(monkeypatch):
+    monkeypatch.delenv("TIG_SELINUX_LABEL_DISABLE", raising=False)
+    assert env_selinux_label_disable() is None
+
+
+def test_env_selinux_label_disable_invalid(monkeypatch):
+    monkeypatch.setenv("TIG_SELINUX_LABEL_DISABLE", "maybe")
+    with pytest.raises(ConfigError, match="boolean"):
+        env_selinux_label_disable()

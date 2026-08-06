@@ -2,10 +2,13 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import docker
@@ -24,6 +27,18 @@ CONTAINER_PREFIX = "tig-vicar"
 # Retries for the create/adopt race between concurrent invocations.
 CREATE_ATTEMPTS = 3
 CREATE_RETRY_DELAY = 0.2
+
+# How many containers tig keeps around; older idle ones are reaped whenever a
+# new one is created, so working in many directories does not pile them up.
+MAX_KEPT_CONTAINERS = 2
+
+# Directory of claim files (one per invocation) naming the container each live
+# tig process is using, so reaping never removes a container out from under a
+# concurrent invocation. Per-boot state: stale claims are ignored by PID.
+CLAIM_DIR_NAME = "tig-claims"
+
+# How long to wait for XQuartz to come up on macOS before giving up.
+XQUARTZ_START_TIMEOUT = 5.0
 
 # Where calibration files (VISOR / mars_calibration_*) are mounted, matching
 # the layout VICAR's MARS programs expect.
@@ -46,6 +61,92 @@ def get_container_image(config: Optional[Config] = None) -> str:
     if config is not None and config.image:
         return config.image
     return DEFAULT_IMAGE
+
+
+def _run_quietly(command: List[str], timeout: float = 10.0) -> bool:
+    """Run a host helper command, discarding output; True if it succeeded."""
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def selinux_enforcing() -> bool:
+    """Whether this host is Linux with SELinux in Enforcing mode."""
+    if not sys.platform.startswith("linux"):
+        return False
+
+    getenforce = shutil.which("getenforce")
+    if getenforce is not None:
+        try:
+            completed = subprocess.run(
+                [getenforce], capture_output=True, text=True, timeout=10.0
+            )
+        except (OSError, subprocess.SubprocessError):
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            return completed.stdout.strip() == "Enforcing"
+
+    # No getenforce (common in minimal images): read the kernel state directly.
+    try:
+        return Path("/sys/fs/selinux/enforce").read_text().strip() == "1"
+    except OSError:
+        return False
+
+
+def _ensure_xquartz() -> None:
+    """Make XQuartz running and listening on TCP, as the container needs."""
+    _run_quietly(
+        ["defaults", "write", "org.xquartz.X11", "nolisten_tcp", "-bool", "false"]
+    )
+    if _run_quietly(["pgrep", "-x", "Xquartz"]):
+        return
+    if not _run_quietly(["open", "-a", "XQuartz"]):
+        return
+    deadline = time.monotonic() + XQUARTZ_START_TIMEOUT
+    while time.monotonic() < deadline:
+        if _run_quietly(["pgrep", "-x", "Xquartz"]):
+            return
+        time.sleep(0.5)
+
+
+def ensure_x11_ready() -> None:
+    """Authorize the host X server so GUI tools (xvd, marsmap) can connect.
+
+    Silently does nothing when there is no display or no ``xhost``; those
+    hosts simply have no GUI to authorize.
+    """
+    if not os.environ.get("DISPLAY") or shutil.which("xhost") is None:
+        return
+
+    if sys.platform == "darwin":
+        # The container reaches XQuartz over TCP via host.docker.internal:0.
+        _ensure_xquartz()
+        _run_quietly(["xhost", "+localhost"])
+    else:
+        # The broad form is deliberate: with 'label=disable' the container
+        # connects as the LOCAL: family, which '+local:docker' misses.
+        _run_quietly(["xhost", "+local:"])
+
+
+def _started_at(container: Any) -> float:
+    """Unix time the container was last started, or 0.0 if unknown."""
+    raw = (container.attrs.get("State") or {})
+    if not isinstance(raw, dict):
+        return 0.0
+    stamp = raw.get("StartedAt") or ""
+    match = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?", stamp)
+    if not match:
+        return 0.0
+    fraction = float(match.group(2) or 0.0)
+    parsed = datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")
+    return parsed.replace(tzinfo=timezone.utc).timestamp() + fraction
 
 
 def get_calibration_path(config: Optional[Config] = None) -> Optional[str]:
@@ -77,6 +178,7 @@ class ContainerManager:
         image: str,
         disable_path_translation: bool = False,
         calibration_path: Optional[str] = None,
+        selinux_label_disable: Optional[bool] = None,
     ):
         """Initialize the container manager.
 
@@ -84,9 +186,17 @@ class ContainerManager:
             image: Docker image name and tag
             disable_path_translation: Skip path translation (for debugging)
             calibration_path: Host path with MARS/VISOR calibration files
+            selinux_label_disable: Force ``--security-opt label=disable`` on or
+                off; ``None`` enables it when SELinux is Enforcing
         """
         self.image = image
         self.disable_path_translation = disable_path_translation
+        self.selinux_enforcing = selinux_enforcing()
+        self.selinux_label_disable = (
+            self.selinux_enforcing
+            if selinux_label_disable is None
+            else selinux_label_disable
+        )
         if shutil.which("docker") is None:
             raise TigError(
                 "The 'docker' command was not found on PATH. "
@@ -104,6 +214,7 @@ class ContainerManager:
         self.container: Optional[Any] = None
         self.container_name = CONTAINER_PREFIX
         self.command: Optional[subprocess.Popen] = None
+        self.claim: Optional[Path] = None
 
     def _resolve_calibration_path(self, path: Optional[str]) -> Optional[str]:
         if path is None:
@@ -172,6 +283,12 @@ class ContainerManager:
             # rather than by root. Docker Desktop already maps ownership.
             kwargs["user"] = f"{os.getuid()}:{os.getgid()}"
             kwargs["group_add"] = [str(os.getgid())]
+            if self.selinux_label_disable:
+                # SELinux Enforcing otherwise denies the container the bind
+                # mounts and the X11 socket, and blocks the 32-bit legacy
+                # libraries some VICAR tools load. Deliberately not ':z'/':Z'
+                # relabeling, which must never touch the host-root mount.
+                kwargs["security_opt"] = ["label=disable"]
 
         return kwargs
 
@@ -215,6 +332,16 @@ class ContainerManager:
         run_kwargs = self._run_kwargs(volumes)
         self.container_name = self._container_name_for(run_kwargs)
 
+        self._claim_container()
+
+        if self.selinux_enforcing and not self.selinux_label_disable:
+            print(
+                "tig: SELinux is Enforcing and label=disable is turned off; "
+                "mounts and GUI tools may be denied. Re-run with "
+                "--selinux-label-disable if so.",
+                file=sys.stderr,
+            )
+
         # Concurrent invocations share the name, so creating and adopting race
         # against each other; both outcomes are fine, but either can lose once.
         for attempt in reversed(range(CREATE_ATTEMPTS)):
@@ -232,9 +359,13 @@ class ContainerManager:
                 self._remove(existing)
 
             try:
+                # Authorize the display before the container exists, so the
+                # first GUI command in it can already connect.
+                ensure_x11_ready()
                 self.container = self.client.containers.run(
                     name=self.container_name, **run_kwargs
                 )
+                self._reap_containers(keep=self.container_name)
                 return
             except docker.errors.ImageNotFound as e:
                 raise TigError(f"Image not found: {self.image}") from e
@@ -258,6 +389,124 @@ class ContainerManager:
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
+
+    def _claim_dir(self) -> Path:
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        base = Path(runtime) if runtime else Path(tempfile.gettempdir())
+        return base / f"{CLAIM_DIR_NAME}-{os.getuid()}"
+
+    def _claim_container(self) -> None:
+        """Record that this process is about to use ``self.container_name``.
+
+        Claimed before the container is created or adopted, so a container
+        another invocation is still setting up is never seen as unused.
+        """
+        self.release_claim()
+        directory = self._claim_dir()
+        claim = directory / f"{self.container_name}.{os.getpid()}"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            claim.touch()
+        except OSError:
+            # Unclaimable state directory: reaping then just keeps containers.
+            return
+        self.claim = claim
+
+    def release_claim(self) -> None:
+        """Drop this process's claim, making its container reapable again."""
+        if self.claim is None:
+            return
+        try:
+            self.claim.unlink()
+        except OSError:
+            pass
+        self.claim = None
+
+    def _claimed_containers(self) -> set:
+        """Container names claimed by a still-running tig process.
+
+        Claims left behind by a process that died are pruned as they are found.
+        """
+        claimed = set()
+        try:
+            claims = list(self._claim_dir().iterdir())
+        except OSError:
+            return claimed
+
+        for claim in claims:
+            name, _, pid = claim.name.rpartition(".")
+            if not pid.isdigit():
+                continue
+            try:
+                os.kill(int(pid), 0)
+            except ProcessLookupError:
+                try:
+                    claim.unlink()
+                except OSError:
+                    pass
+                continue
+            except OSError:
+                pass
+            claimed.add(name)
+        return claimed
+
+    def _reap_containers(self, keep: str) -> int:
+        """Remove surplus tig containers, keeping the most recently started.
+
+        Called only when a container is created, so the warm path is untouched.
+        Containers claimed by another live invocation, or with a command
+        running in them, are left alone.
+
+        Returns:
+            Number of containers removed
+        """
+        claimed = self._claimed_containers()
+        candidates = []
+        for container in self.client.containers.list(
+            all=True, filters={"name": CONTAINER_PREFIX}
+        ):
+            if container.name == keep:
+                continue
+            try:
+                # The list response omits StartedAt and ExecIDs.
+                container.reload()
+            except docker.errors.APIError:
+                continue
+            candidates.append(container)
+
+        candidates.sort(key=_started_at, reverse=True)
+
+        removed = 0
+        for container in candidates[MAX_KEPT_CONTAINERS - 1:]:
+            if container.name in claimed:
+                continue
+            if self._busy(container.attrs.get("ExecIDs") or []):
+                continue
+            try:
+                container.remove(force=True)
+            except docker.errors.APIError:
+                continue
+            removed += 1
+        return removed
+
+    def _busy(self, exec_ids: List[str]) -> bool:
+        """Whether any of a container's exec instances is still running.
+
+        Docker prunes finished execs, so this only guards against a command
+        started outside tig; claims cover tig's own invocations.
+
+        Assumes busy when Docker cannot say, so a container in use by another
+        invocation is never reaped on the strength of a failed check.
+        """
+        for exec_id in exec_ids:
+            try:
+                if self.client.api.exec_inspect(exec_id).get("Running"):
+                    return True
+            except docker.errors.NotFound:
+                continue
+            except docker.errors.APIError:
+                return True
+        return False
 
     def _get_container(self, name: str) -> Optional[Any]:
         try:
@@ -285,10 +534,16 @@ class ContainerManager:
             except docker.errors.APIError:
                 pass
         self.container = None
+        self.release_claim()
         return removed
 
     def status(self) -> List[Dict[str, str]]:
-        """Describe the containers this tool has created."""
+        """Describe the containers this tool has created.
+
+        Includes each container's writable mounts, since those (the home
+        directory, the directory tig was invoked from, any --writable-path) are
+        what distinguishes one container from another.
+        """
         return [
             {
                 "name": container.name,
@@ -298,11 +553,29 @@ class ContainerManager:
                     if container.image.tags
                     else container.image.short_id
                 ),
+                "writable": ", ".join(self._writable_mounts(container)),
             }
             for container in self.client.containers.list(
                 all=True, filters={"name": CONTAINER_PREFIX}
             )
         ]
+
+    def _writable_mounts(self, container: Any) -> List[str]:
+        """Host paths mounted read-write in the container, X11 socket aside."""
+        try:
+            container.reload()
+        except docker.errors.APIError:
+            return []
+        binds = (container.attrs.get("HostConfig") or {}).get("Binds") or []
+        paths = []
+        for bind in binds:
+            source, _, mode = bind.partition(":")
+            if "ro" in mode.split(":")[-1].split(","):
+                continue
+            if source == "/tmp/.X11-unix":
+                continue
+            paths.append(source)
+        return sorted(paths)
 
     def execute_vicar_command(
         self,
@@ -337,8 +610,6 @@ class ContainerManager:
             # Passed per exec rather than baked into the container, so that
             # changing displays does not force a new container.
             "-e", f"DISPLAY={display}",
-            "-e", "XFILESEARCHPATH=/usr/local/vicar/gui/%N",
-            "-e", "XBMLANGPATH=/usr/local/vicar/gui/%L",
         ]
 
         # Allocate a TTY only for interactive use; with a TTY, docker merges
