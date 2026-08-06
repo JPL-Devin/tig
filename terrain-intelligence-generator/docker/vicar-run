@@ -30,22 +30,23 @@ normalize() {
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
-if [ -t 1 ] && command -v script > /dev/null; then
-    # On a terminal, run under a pty rather than a pipe so the program's stdout
-    # is still a terminal: VICAR's stdio stays line buffered, and TAE prompts
-    # and Motif tools behave as they do without the wrapper. script -e reports
-    # the program's own exit status, and its transcript is what gets scanned.
-    script -qefc "$(printf '%q ' "$program" "$@")" "$log"
+if [ -t 1 ] && [ -t 2 ] && command -v script > /dev/null; then
+    # A pty, not a pipe, so prompts and Motif tools still work; script -e
+    # reports the program's status and leaves a transcript to scan. SHELL is
+    # pinned because script -c runs through it and the quoting is bash's.
+    # Requires a tty on stderr too: script would redirect it onto the pty.
+    SHELL=/bin/bash script -qefc "$(printf '%q ' "$program" "$@")" "$log"
     exit_code=$?
-elif [ -t 1 ]; then
-    "$program" "$@"
-    normalize $?
 else
     "$program" "$@" | tee "$log"
     exit_code=${PIPESTATUS[0]}
 fi
 
-if [ "$exit_code" -le 1 ] && grep -q '\[TAE-\|\*\* ABEND called \*\*' "$log"; then
+# A rejection stops the run, so the diagnostic is the last line; matching it
+# anywhere would fail an interactive session that recovered from one. The
+# Script lines are script(1)'s own banners around the transcript.
+last=$(grep -Ev '^[[:space:]]*$|^Script (started|done) on ' "$log" | tail -1)
+if [ "$exit_code" -le 1 ] && [[ $last == *'[TAE-'* || $last == *'** ABEND called **'* ]]; then
     exit 1
 fi
 

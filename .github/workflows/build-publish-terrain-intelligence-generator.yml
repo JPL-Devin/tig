@@ -9,7 +9,7 @@ on:
     tags:
       - 'v*'
     paths:
-      - 'terrain-intelligence-generator/docker/Dockerfile'
+      - 'terrain-intelligence-generator/docker/**'
       - '.github/workflows/build-publish-terrain-intelligence-generator.yml'
   pull_request:
     branches:
@@ -17,7 +17,7 @@ on:
       - master
       - develop
     paths:
-      - 'terrain-intelligence-generator/docker/Dockerfile'
+      - 'terrain-intelligence-generator/docker/**'
       - '.github/workflows/build-publish-terrain-intelligence-generator.yml'
   workflow_dispatch:
     inputs:
@@ -525,6 +525,16 @@ jobs:
             check 1 "an unknown keyword" gen OUT=/tmp/codes.vic NL=8 NS=8 NOSUCHPARAM=1
             check 1 "a missing parameter" copy
             check 255 "a missing input file" list /tmp/definitely-absent.vic
+
+            # The pty must not swallow a caller-redirected stderr
+            /usr/local/libexec/vicar-run /bin/sh -c "echo diagnostic >&2" > /dev/tty 2> /tmp/stderr.txt
+            if grep -q diagnostic /tmp/stderr.txt; then
+              echo "✓ stderr still goes where the caller redirected it" >> /tmp/results
+            else
+              echo "✗ ERROR: redirected stderr was lost" >> /tmp/results
+              cat /tmp/results
+              exit 1
+            fi
             cat /tmp/results
           '
           echo ""
