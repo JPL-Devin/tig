@@ -23,7 +23,12 @@ SYSTEM_CONFIG_PATH = Path("/etc/tig/config.toml")
 USER_CONFIG_SUBPATH = Path("tig/config.toml")
 PROJECT_CONFIG_NAME = "tig.toml"
 
-KNOWN_KEYS = frozenset({"image", "writable_paths", "disable_path_translation"})
+KNOWN_KEYS = frozenset({
+    "image",
+    "writable_paths",
+    "disable_path_translation",
+    "mars_config_path",
+})
 
 
 class ConfigError(Exception):
@@ -41,6 +46,7 @@ class Config:
     image: Optional[str] = None
     writable_paths: List[str] = field(default_factory=list)
     disable_path_translation: Optional[bool] = None
+    mars_config_path: Optional[str] = None
     sources: List[Path] = field(default_factory=list)
 
 
@@ -115,6 +121,12 @@ def _apply(config: Config, data: Dict[str, Any], path: Path) -> None:
             raise ConfigError(f"{path}: 'disable_path_translation' must be a boolean.")
         config.disable_path_translation = value
 
+    if "mars_config_path" in data:
+        value = data["mars_config_path"]
+        if not isinstance(value, str):
+            raise ConfigError(f"{path}: 'mars_config_path' must be a string.")
+        config.mars_config_path = os.path.expanduser(value)
+
 
 def load_config(
     path: Optional[Path] = None,
@@ -171,3 +183,11 @@ def env_writable_paths() -> Optional[List[str]]:
 def env_disable_path_translation() -> Optional[bool]:
     """Return the value of ``TIG_DISABLE_PATH_TRANSLATION``, if set."""
     return _env_bool("TIG_DISABLE_PATH_TRANSLATION")
+
+
+def env_mars_config_path() -> Optional[str]:
+    """Return the host MARS calibration directory from ``MARS_CONFIG_PATH``."""
+    raw = os.environ.get("MARS_CONFIG_PATH")
+    if not raw:
+        return None
+    return os.path.expanduser(raw)

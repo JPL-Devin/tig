@@ -11,6 +11,10 @@ from .path_translator import PathTranslator
 
 DEFAULT_IMAGE = "ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource"
 
+# Where MARS calibration data (camera models, flat fields, param files) is
+# mounted inside the container, matching the vicar-native-toolkit layout.
+CONTAINER_MARS_CONFIG_PATH = "/usr/local/vicar/mars_calib"
+
 
 def get_container_image(config: Optional[Config] = None) -> str:
     """Return the Docker image to use for VICAR execution.
@@ -36,16 +40,20 @@ class ContainerManager:
     def __init__(
         self,
         image: str,
-        disable_path_translation: bool = False
+        disable_path_translation: bool = False,
+        mars_config_path: Optional[str] = None
     ):
         """Initialize the container manager.
 
         Args:
             image: Docker image name and tag
             disable_path_translation: Skip path translation (for debugging)
+            mars_config_path: Host directory of MARS calibration data, mounted
+                read-only at CONTAINER_MARS_CONFIG_PATH
         """
         self.image = image
         self.disable_path_translation = disable_path_translation
+        self.mars_config_path = mars_config_path
         try:
             self.client = docker.from_env()
         except docker.errors.DockerException as e:
@@ -80,6 +88,19 @@ class ContainerManager:
             if os.path.isdir(path):
                 volumes[path] = {"bind": f"/host{path}", "mode": "rw"}
 
+        if self.mars_config_path:
+            if os.path.isdir(self.mars_config_path):
+                volumes[self.mars_config_path] = {
+                    "bind": CONTAINER_MARS_CONFIG_PATH,
+                    "mode": "ro",
+                }
+            else:
+                print(
+                    f"tig: MARS_CONFIG_PATH set but directory not found: "
+                    f"{self.mars_config_path} (skipping)",
+                    file=sys.stderr,
+                )
+
         return volumes
 
     def start_container(self, writable_paths: List[str]) -> None:
@@ -99,6 +120,9 @@ class ContainerManager:
             environment["DISPLAY"] = os.environ.get("DISPLAY", ":0")
             volumes["/tmp/.X11-unix"] = {"bind": "/tmp/.X11-unix", "mode": "rw"}
             extra_kwargs["network_mode"] = "host"
+
+        if self.mars_config_path in volumes:
+            environment["MARS_CONFIG_PATH"] = CONTAINER_MARS_CONFIG_PATH
 
         self.container = self.client.containers.run(
             image=self.image,

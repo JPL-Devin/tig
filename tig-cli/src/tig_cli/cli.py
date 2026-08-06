@@ -10,6 +10,7 @@ from .config import (
     SYSTEM_CONFIG_PATH,
     PROJECT_CONFIG_NAME,
     env_disable_path_translation,
+    env_mars_config_path,
     env_writable_paths,
     load_config,
     user_config_path,
@@ -61,12 +62,26 @@ class DynamicHelpCommand(click.Command):
     help="Additional host path to mount as read-write in the container.",
 )
 @click.option(
+    "--mars-config-path",
+    type=click.Path(),
+    default=None,
+    metavar="PATH",
+    help="Host directory of MARS calibration data to mount read-only.",
+)
+@click.option(
     "--disable-path-translation",
     is_flag=True,
     default=False,
     help="Disable automatic host→container path translation (for debugging).",
 )
-def main(vicar_tool, args, config_path, writable_path, disable_path_translation):
+def main(
+    vicar_tool,
+    args,
+    config_path,
+    writable_path,
+    mars_config_path,
+    disable_path_translation,
+):
     try:
         config = load_config(config_path)
     except ConfigError as e:
@@ -88,7 +103,17 @@ def main(vicar_tool, args, config_path, writable_path, disable_path_translation)
             override = config.disable_path_translation
         disable_path_translation = bool(override)
 
-    manager = ContainerManager(image, disable_path_translation=disable_path_translation)
+    mars_config = (
+        mars_config_path
+        or env_mars_config_path()
+        or config.mars_config_path
+    )
+
+    manager = ContainerManager(
+        image,
+        disable_path_translation=disable_path_translation,
+        mars_config_path=mars_config,
+    )
     try:
         manager.start_container(writable_paths=writable_paths)
         exit_code = manager.execute_vicar_command(vicar_tool, list(args))

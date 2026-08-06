@@ -79,7 +79,9 @@ def test_disable_path_translation_option():
         mock_cls.return_value = mock_manager
         result = runner.invoke(main, ["--disable-path-translation", "marsmap"])
 
-    mock_cls.assert_called_once_with(DEFAULT_IMAGE, disable_path_translation=True)
+    mock_cls.assert_called_once_with(
+        DEFAULT_IMAGE, disable_path_translation=True, mars_config_path=None
+    )
 
 
 def test_stop_container_called_on_success():
@@ -133,7 +135,9 @@ def test_uses_container_image_env_var():
         mock_cls.return_value = mock_manager
         result = runner.invoke(main, ["marsmap"])
 
-    mock_cls.assert_called_once_with(custom, disable_path_translation=False)
+    mock_cls.assert_called_once_with(
+        custom, disable_path_translation=False, mars_config_path=None
+    )
 
 
 def test_config_file_provides_image_and_paths(tmp_path, monkeypatch):
@@ -156,7 +160,9 @@ def test_config_file_provides_image_and_paths(tmp_path, monkeypatch):
         runner.invoke(main, ["marsmap"])
 
     mock_cls.assert_called_once_with(
-        "ghcr.io/my-org/vicar:cfg", disable_path_translation=True
+        "ghcr.io/my-org/vicar:cfg",
+        disable_path_translation=True,
+        mars_config_path=None,
     )
     mock_manager.start_container.assert_called_once_with(writable_paths=["/data"])
 
@@ -177,7 +183,9 @@ def test_env_var_overrides_config_file(tmp_path, monkeypatch):
         mock_cls.return_value = mock_manager
         runner.invoke(main, ["marsmap"])
 
-    mock_cls.assert_called_once_with("env:2", disable_path_translation=False)
+    mock_cls.assert_called_once_with(
+        "env:2", disable_path_translation=False, mars_config_path=None
+    )
     mock_manager.start_container.assert_called_once_with(writable_paths=["/scratch"])
 
 
@@ -211,7 +219,9 @@ def test_config_option_selects_file(tmp_path, monkeypatch):
         mock_cls.return_value = mock_manager
         runner.invoke(main, ["--config", str(config), "marsmap"])
 
-    mock_cls.assert_called_once_with("explicit:9", disable_path_translation=False)
+    mock_cls.assert_called_once_with(
+        "explicit:9", disable_path_translation=False, mars_config_path=None
+    )
 
 
 def test_invalid_config_reports_error(tmp_path, monkeypatch):
@@ -227,6 +237,64 @@ def test_invalid_config_reports_error(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "must be a string" in result.output
     mock_cls.assert_not_called()
+
+
+def test_mars_config_path_from_config_file(tmp_path, monkeypatch):
+    """mars_config_path from the config file reaches ContainerManager."""
+    calib = tmp_path / "mars_calib"
+    calib.mkdir()
+    config = tmp_path / "tig.toml"
+    config.write_text(f'mars_config_path = "{calib}"\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.delenv("MARS_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("CONTAINER_IMAGE", raising=False)
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    mock_cls.assert_called_once_with(
+        DEFAULT_IMAGE,
+        disable_path_translation=False,
+        mars_config_path=str(calib),
+    )
+
+
+def test_mars_config_path_env_overrides_config(tmp_path, monkeypatch):
+    """MARS_CONFIG_PATH env var wins over the config file."""
+    config = tmp_path / "tig.toml"
+    config.write_text('mars_config_path = "/from/config"\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.setenv("MARS_CONFIG_PATH", "/from/env")
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    assert mock_cls.call_args.kwargs["mars_config_path"] == "/from/env"
+
+
+def test_mars_config_path_flag_wins(tmp_path, monkeypatch):
+    """--mars-config-path wins over env var and config file."""
+    monkeypatch.setenv("MARS_CONFIG_PATH", "/from/env")
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["--mars-config-path", "/from/flag", "marsmap"])
+
+    assert mock_cls.call_args.kwargs["mars_config_path"] == "/from/flag"
 
 
 def test_help_lists_config_locations():

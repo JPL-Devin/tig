@@ -51,6 +51,7 @@ tig label /data/scenes/image.vic
 | --- | --- |
 | `--config PATH` | Load only this config file instead of the standard layered files. |
 | `--writable-path PATH` | Mount an additional host directory read-write inside the container. May be repeated. |
+| `--mars-config-path PATH` | Host directory of MARS calibration data to mount read-only. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
 | `--help` | Show help, including the active container image and the config files in use. |
 
@@ -75,6 +76,7 @@ and loads only that file.
 # ~/.config/tig/config.toml or ./tig.toml
 image = "ghcr.io/my-org/custom-vicar:latest"
 writable_paths = ["/data/scenes", "/scratch"]
+mars_config_path = "~/.mars_calib"
 disable_path_translation = false
 ```
 
@@ -82,6 +84,7 @@ disable_path_translation = false
 | --- | --- | --- | --- |
 | `image` | string | `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource` | VICAR Docker image to run. |
 | `writable_paths` | list of strings | `[]` | Host directories mounted read-write in the container. |
+| `mars_config_path` | string | unset | Host directory of MARS calibration data (`camera_models/`, `flat_fields/`, `param_files/`). Mounted read-only at `/usr/local/vicar/mars_calib`, with `MARS_CONFIG_PATH` set to that mount point inside the container. `~` is expanded. |
 | `disable_path_translation` | boolean | `false` | Disable host→container path translation. |
 
 ### Environment variables
@@ -90,6 +93,7 @@ disable_path_translation = false
 | --- | --- | --- |
 | `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
 | `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
+| `MARS_CONFIG_PATH` | `mars_config_path` | Host directory of MARS calibration data. Same variable the `vicar-native-toolkit` uses, so an activated toolkit environment is picked up automatically. |
 | `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
 | `TIG_CONFIG` | (all files) | Load only this config file instead of the layered files. |
 
@@ -104,6 +108,22 @@ tig marsmap input.vic output.vic
 - **Paths under your home directory** are mounted directly and left unchanged.
 - **Other absolute paths** are prefixed with `/host` (the host root filesystem is
   mounted read-only at `/host` inside the container).
+
+## MARS calibration data
+
+MARS tools (`marscorr`, `marsxyz`, `marsmap`, …) need mission calibration data —
+camera models, flat fields and param files. Point `mars_config_path` (or
+`MARS_CONFIG_PATH`) at the host directory containing `camera_models/`,
+`flat_fields/` and `param_files/`:
+
+```bash
+tig --mars-config-path ~/.mars_calib marsxyz INP=left.vic,right.vic OUT=xyz.vic
+```
+
+It is mounted read-only at `/usr/local/vicar/mars_calib` and `MARS_CONFIG_PATH`
+is exported inside the container to that path, matching the layout used by
+`vicar-native-toolkit`. If the directory does not exist, `tig` warns and starts
+without it (MARS tools that need camera models will then fail).
 
 ## Development
 

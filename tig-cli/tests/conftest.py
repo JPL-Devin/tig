@@ -8,6 +8,10 @@ def isolated_config(tmp_path_factory, monkeypatch):
     empty = tmp_path_factory.mktemp("tig-config") / "config.toml"
     empty.write_text("")
     monkeypatch.setenv("TIG_CONFIG", str(empty))
-    for name in ("TIG_WRITABLE_PATHS", "TIG_DISABLE_PATH_TRANSLATION"):
+    for name in (
+        "TIG_WRITABLE_PATHS",
+        "TIG_DISABLE_PATH_TRANSLATION",
+        "MARS_CONFIG_PATH",
+    ):
         monkeypatch.delenv(name, raising=False)
     yield

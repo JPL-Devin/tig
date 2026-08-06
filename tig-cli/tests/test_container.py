@@ -2,7 +2,13 @@
 import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from tig_cli.container import ContainerManager, get_container_image, DEFAULT_IMAGE
+from tig_cli.container import (
+    CONTAINER_MARS_CONFIG_PATH,
+    ContainerManager,
+    get_container_image,
+    DEFAULT_IMAGE,
+)
+from tig_cli.config import Config
 
 
 # --- get_container_image ---
@@ -19,6 +25,19 @@ def test_get_container_image_from_env():
     custom = "ghcr.io/my-org/custom-vicar:v2"
     with patch.dict(os.environ, {"CONTAINER_IMAGE": custom}):
         assert get_container_image() == custom
+
+
+def test_get_container_image_from_config():
+    """Falls back to the config file image when the env var is unset."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTAINER_IMAGE", None)
+        assert get_container_image(Config(image="cfg:1")) == "cfg:1"
+
+
+def test_get_container_image_env_beats_config():
+    """CONTAINER_IMAGE takes precedence over the config file."""
+    with patch.dict(os.environ, {"CONTAINER_IMAGE": "env:2"}):
+        assert get_container_image(Config(image="cfg:1")) == "env:2"
 
 
 # --- ContainerManager init ---
@@ -84,6 +103,30 @@ def test_build_volume_mounts_skips_nonexistent_paths(home_dir):
     assert "/nonexistent/path" not in volumes
 
 
+def test_build_volume_mounts_with_mars_config(home_dir, tmp_path):
+    calib = str(tmp_path / "mars_calib")
+    os.makedirs(calib, exist_ok=True)
+
+    with patch('tig_cli.container.docker.from_env'), \
+         patch.dict(os.environ, {"HOME": home_dir}):
+        manager = ContainerManager("test-image:latest", mars_config_path=calib)
+        volumes = manager._build_volume_mounts([])
+
+    assert volumes[calib] == {"bind": CONTAINER_MARS_CONFIG_PATH, "mode": "ro"}
+
+
+def test_build_volume_mounts_warns_on_missing_mars_config(home_dir, capsys):
+    with patch('tig_cli.container.docker.from_env'), \
+         patch.dict(os.environ, {"HOME": home_dir}):
+        manager = ContainerManager(
+            "test-image:latest", mars_config_path="/nonexistent/calib"
+        )
+        volumes = manager._build_volume_mounts([])
+
+    assert "/nonexistent/calib" not in volumes
+    assert "directory not found" in capsys.readouterr().err
+
+
 # --- start_container ---
 
 @patch('tig_cli.container.docker.from_env')
@@ -116,6 +159,36 @@ def test_start_container_macos(mock_docker, home_dir):
     call_kwargs = mock_client.containers.run.call_args[1]
     assert call_kwargs['environment']['DISPLAY'] == 'host.docker.internal:0'
     assert 'network_mode' not in call_kwargs
+
+
+@patch('tig_cli.container.docker.from_env')
+def test_start_container_sets_mars_config_env(mock_docker, home_dir, tmp_path):
+    """Container sees MARS_CONFIG_PATH pointing at the in-container mount."""
+    mock_client = MagicMock()
+    mock_docker.return_value = mock_client
+    calib = str(tmp_path / "mars_calib")
+    os.makedirs(calib, exist_ok=True)
+
+    with patch.dict(os.environ, {"HOME": home_dir}):
+        manager = ContainerManager("test-image:latest", mars_config_path=calib)
+        manager.start_container([])
+
+    call_kwargs = mock_client.containers.run.call_args[1]
+    assert call_kwargs['environment']['MARS_CONFIG_PATH'] == CONTAINER_MARS_CONFIG_PATH
+
+
+@patch('tig_cli.container.docker.from_env')
+def test_start_container_without_mars_config(mock_docker, home_dir):
+    """MARS_CONFIG_PATH is not set in the container when unconfigured."""
+    mock_client = MagicMock()
+    mock_docker.return_value = mock_client
+
+    with patch.dict(os.environ, {"HOME": home_dir}):
+        manager = ContainerManager("test-image:latest")
+        manager.start_container([])
+
+    call_kwargs = mock_client.containers.run.call_args[1]
+    assert 'MARS_CONFIG_PATH' not in call_kwargs['environment']
 
 
 # --- stop_container ---
