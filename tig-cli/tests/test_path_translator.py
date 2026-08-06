@@ -113,3 +113,40 @@ def test_translate_args_mixed_types(translator, home_dir):
     assert result[3] == "/host/data/system.vic"
     assert result[4] == "output.vic"
     assert result[5] == "SIZE=(1,1,1024,1024)"
+
+
+# --- VICAR keyword=value arguments ---
+
+def test_keyword_value_absolute_path(translator):
+    assert translator.translate_arg("INP=/data/img.vic") == "INP=/host/data/img.vic"
+
+
+def test_keyword_value_relative_path_unchanged(translator):
+    assert translator.translate_arg("INP=img.vic") == "INP=img.vic"
+
+
+def test_keyword_value_home_path_unchanged(translator, home_dir):
+    arg = f"OUT={home_dir}/out.vic"
+    assert translator.translate_arg(arg) == arg
+
+
+def test_keyword_value_list(translator, home_dir):
+    result = translator.translate_arg(f"INP=(/data/a.vic,b.vic,{home_dir}/c.vic)")
+    assert result == f"INP=(/host/data/a.vic,b.vic,{home_dir}/c.vic)"
+
+
+def test_keyword_numeric_list_unchanged(translator):
+    assert translator.translate_arg("SIZE=(1,1,500,500)") == "SIZE=(1,1,500,500)"
+
+
+def test_flag_style_keyword_value(translator):
+    assert translator.translate_arg("--out=/data/x.vic") == "--out=/host/data/x.vic"
+
+
+def test_argument_that_is_not_a_keyword_is_left_alone(translator):
+    """An '=' in something that is not a keyword must not be split."""
+    assert translator.translate_arg("a+b=c") == "a+b=c"
+
+
+def test_absolute_path_containing_equals(translator):
+    assert translator.translate_arg("/data/a=b.vic") == "/host/data/a=b.vic"

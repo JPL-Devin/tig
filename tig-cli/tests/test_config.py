@@ -9,7 +9,6 @@ from tig_cli.config import (
     ConfigError,
     config_search_paths,
     env_disable_path_translation,
-    env_mars_config_path,
     env_writable_paths,
     find_project_config,
     load_config,
@@ -91,21 +90,21 @@ def test_load_config_reads_all_keys(tmp_path):
         'image = "ghcr.io/my-org/vicar:v3"\n'
         'writable_paths = ["/data", "/scratch"]\n'
         'disable_path_translation = true\n'
-        'mars_config_path = "/opt/mars_calibration"\n'
+        'calibration_path = "/opt/mars_calibration"\n'
     )
     config = load_config(path)
     assert config.image == "ghcr.io/my-org/vicar:v3"
     assert config.writable_paths == ["/data", "/scratch"]
     assert config.disable_path_translation is True
-    assert config.mars_config_path == "/opt/mars_calibration"
+    assert config.calibration_path == "/opt/mars_calibration"
     assert config.sources == [path]
 
 
-def test_mars_config_path_expands_user(tmp_path, monkeypatch):
+def test_calibration_path_expands_user(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", "/home/tester")
     path = tmp_path / "tig.toml"
-    path.write_text('mars_config_path = "~/.mars_calib"\n')
-    assert load_config(path).mars_config_path == "/home/tester/.mars_calib"
+    path.write_text('calibration_path = "~/.mars_calib"\n')
+    assert load_config(path).calibration_path == "/home/tester/.mars_calib"
 
 
 def test_user_config_overrides_system(monkeypatch, tmp_path):
@@ -178,7 +177,7 @@ def test_load_config_unknown_key(tmp_path):
     ('writable_paths = "/data"\n', "'writable_paths' must be a list"),
     ("writable_paths = [1]\n", "'writable_paths' must be a list"),
     ('disable_path_translation = "yes"\n', "must be a boolean"),
-    ("mars_config_path = 3\n", "'mars_config_path' must be a string"),
+    ("calibration_path = 3\n", "'calibration_path' must be a string"),
 ])
 def test_load_config_type_errors(tmp_path, body, message):
     path = tmp_path / "tig.toml"
@@ -216,19 +215,6 @@ def test_env_disable_path_translation(monkeypatch, raw, expected):
 def test_env_disable_path_translation_unset(monkeypatch):
     monkeypatch.delenv("TIG_DISABLE_PATH_TRANSLATION", raising=False)
     assert env_disable_path_translation() is None
-
-
-def test_env_mars_config_path(monkeypatch):
-    monkeypatch.setenv("HOME", "/home/tester")
-    monkeypatch.setenv("MARS_CONFIG_PATH", "~/calib")
-    assert env_mars_config_path() == "/home/tester/calib"
-
-
-def test_env_mars_config_path_unset_or_empty(monkeypatch):
-    monkeypatch.delenv("MARS_CONFIG_PATH", raising=False)
-    assert env_mars_config_path() is None
-    monkeypatch.setenv("MARS_CONFIG_PATH", "")
-    assert env_mars_config_path() is None
 
 
 def test_env_disable_path_translation_invalid(monkeypatch):

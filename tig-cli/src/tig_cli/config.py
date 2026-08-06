@@ -27,7 +27,7 @@ KNOWN_KEYS = frozenset({
     "image",
     "writable_paths",
     "disable_path_translation",
-    "mars_config_path",
+    "calibration_path",
 })
 
 
@@ -46,7 +46,7 @@ class Config:
     image: Optional[str] = None
     writable_paths: List[str] = field(default_factory=list)
     disable_path_translation: Optional[bool] = None
-    mars_config_path: Optional[str] = None
+    calibration_path: Optional[str] = None
     sources: List[Path] = field(default_factory=list)
 
 
@@ -121,11 +121,11 @@ def _apply(config: Config, data: Dict[str, Any], path: Path) -> None:
             raise ConfigError(f"{path}: 'disable_path_translation' must be a boolean.")
         config.disable_path_translation = value
 
-    if "mars_config_path" in data:
-        value = data["mars_config_path"]
+    if "calibration_path" in data:
+        value = data["calibration_path"]
         if not isinstance(value, str):
-            raise ConfigError(f"{path}: 'mars_config_path' must be a string.")
-        config.mars_config_path = os.path.expanduser(value)
+            raise ConfigError(f"{path}: 'calibration_path' must be a string.")
+        config.calibration_path = os.path.expanduser(value)
 
 
 def load_config(
@@ -184,10 +184,3 @@ def env_disable_path_translation() -> Optional[bool]:
     """Return the value of ``TIG_DISABLE_PATH_TRANSLATION``, if set."""
     return _env_bool("TIG_DISABLE_PATH_TRANSLATION")
 
-
-def env_mars_config_path() -> Optional[str]:
-    """Return the host MARS calibration directory from ``MARS_CONFIG_PATH``."""
-    raw = os.environ.get("MARS_CONFIG_PATH")
-    if not raw:
-        return None
-    return os.path.expanduser(raw)
