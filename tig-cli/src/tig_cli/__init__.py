@@ -1,6 +1,7 @@
 """TIG CLI — run VICAR commands via Docker.
 
-Configure the backend image with the CONTAINER_IMAGE environment variable.
+Configure the tool with layered TOML config files (system, user, project),
+the CONTAINER_IMAGE / TIG_* environment variables, or command-line flags.
 """
 
 __version__ = "0.1.0"
