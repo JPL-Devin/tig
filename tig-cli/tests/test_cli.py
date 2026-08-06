@@ -80,7 +80,10 @@ def test_disable_path_translation_option():
         result = runner.invoke(main, ["--disable-path-translation", "marsmap"])
 
     mock_cls.assert_called_once_with(
-        DEFAULT_IMAGE, disable_path_translation=True, calibration_path=None
+        DEFAULT_IMAGE,
+        disable_path_translation=True,
+        calibration_path=None,
+        selinux_label_disable=None,
     )
 
 
@@ -115,7 +118,12 @@ def test_status_option_lists_containers():
     runner = CliRunner()
     mock_manager = MagicMock()
     mock_manager.status.return_value = [
-        {"name": "tig-vicar-abc123", "status": "running", "image": "img:v1"}
+        {
+            "name": "tig-vicar-abc123",
+            "status": "running",
+            "image": "img:v1",
+            "writable": "",
+        }
     ]
 
     with patch('tig_cli.cli.ContainerManager', return_value=mock_manager), \
@@ -204,7 +212,10 @@ def test_uses_container_image_env_var():
         result = runner.invoke(main, ["marsmap"])
 
     mock_cls.assert_called_once_with(
-        custom, disable_path_translation=False, calibration_path=None
+        custom,
+        disable_path_translation=False,
+        calibration_path=None,
+        selinux_label_disable=None,
     )
 
 
@@ -304,6 +315,7 @@ def test_config_file_provides_settings(tmp_path, monkeypatch):
         "ghcr.io/my-org/vicar:cfg",
         disable_path_translation=True,
         calibration_path=None,
+        selinux_label_disable=None,
     )
     mock_manager.ensure_container.assert_called_once_with(writable_paths=["/data"])
 
@@ -347,7 +359,10 @@ def test_env_vars_override_config_file(tmp_path, monkeypatch):
         runner.invoke(main, ["marsmap"])
 
     mock_cls.assert_called_once_with(
-        "env:2", disable_path_translation=False, calibration_path="/env/calib"
+        "env:2",
+        disable_path_translation=False,
+        calibration_path="/env/calib",
+        selinux_label_disable=None,
     )
     mock_manager.ensure_container.assert_called_once_with(
         writable_paths=["/scratch"]
@@ -375,6 +390,62 @@ def test_cli_flags_override_config_file(tmp_path, monkeypatch):
 
     assert mock_cls.call_args[1]["calibration_path"] == "/flag/calib"
     mock_manager.ensure_container.assert_called_once_with(writable_paths=["/flag"])
+
+
+def test_selinux_label_disable_flag(tmp_path, monkeypatch):
+    """--selinux-label-disable / --no-... forces the setting either way."""
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    def call_kwargs(flag):
+        with patch('tig_cli.cli.ContainerManager') as mock_cls:
+            mock_cls.return_value = mock_manager
+            runner.invoke(main, [flag, "marsmap"])
+        return mock_cls.call_args[1]
+
+    assert call_kwargs("--selinux-label-disable")["selinux_label_disable"] is True
+    assert call_kwargs("--no-selinux-label-disable")["selinux_label_disable"] is False
+
+
+def test_selinux_label_disable_from_config_and_env(tmp_path, monkeypatch):
+    """The config key applies, and the env var overrides it."""
+    config = tmp_path / "tig.toml"
+    config.write_text("selinux_label_disable = true\n")
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+    assert mock_cls.call_args[1]["selinux_label_disable"] is True
+
+    monkeypatch.setenv("TIG_SELINUX_LABEL_DISABLE", "0")
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+    assert mock_cls.call_args[1]["selinux_label_disable"] is False
+
+
+def test_status_option_reports_writable_mounts():
+    """--status stays useful with several containers: it shows what each has."""
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.status.return_value = [{
+        "name": "tig-vicar-abc123",
+        "status": "running",
+        "image": "img:v1",
+        "writable": "/home/user, /scenes",
+    }]
+
+    with patch('tig_cli.cli.ContainerManager', return_value=mock_manager), \
+         patch('tig_cli.cli.get_container_image', return_value=DEFAULT_IMAGE):
+        result = runner.invoke(main, ["--status"])
+
+    assert "writable: /home/user, /scenes" in result.output
 
 
 def test_config_option_selects_file(tmp_path, monkeypatch):

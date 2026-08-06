@@ -1,5 +1,7 @@
 """Tests for container management."""
 import os
+import subprocess
+from datetime import datetime, timezone
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import docker
@@ -9,11 +11,16 @@ from tig_cli.container import (
     CONTAINER_PREFIX,
     ContainerManager,
     IMAGE_PLATFORM,
+    MAX_KEPT_CONTAINERS,
     TigError,
+    ensure_x11_ready,
     get_calibration_path,
     get_container_image,
+    selinux_enforcing,
     DEFAULT_IMAGE,
 )
+
+OLD_TIMESTAMP = "2020-01-01T00:00:00.123456789Z"
 
 
 @pytest.fixture
@@ -29,12 +36,37 @@ def make_manager(home, image="test-image:latest", client=None, **kwargs):
         return ContainerManager(image, **kwargs)
 
 
-def make_client(image_id="sha256:image"):
-    """Docker client mock with no pre-existing container."""
+def make_client(image_id="sha256:image", containers=()):
+    """Docker client mock with no pre-existing container of our own name."""
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("absent")
     client.images.get.return_value = MagicMock(id=image_id)
+    client.containers.list.return_value = list(containers)
     return client
+
+
+def make_container(
+    name,
+    started_at=OLD_TIMESTAMP,
+    exec_ids=None,
+    image_id="sha256:image",
+    status="running",
+    binds=None,
+):
+    """Mock of an existing container, as Docker reports one after inspect."""
+    container = MagicMock(status=status)
+    container.name = name
+    container.image.id = image_id
+    container.attrs = {
+        "State": {"StartedAt": started_at},
+        "ExecIDs": exec_ids,
+        "HostConfig": {"Binds": binds or []},
+    }
+    return container
+
+
+def utc_now_stamp():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 # --- get_container_image ---
@@ -384,8 +416,7 @@ def test_shutdown_with_no_containers(home_dir):
 
 def test_status_reports_containers(home_dir):
     client = MagicMock()
-    container = MagicMock(status="running")
-    container.name = f"{CONTAINER_PREFIX}-abc123"
+    container = make_container(f"{CONTAINER_PREFIX}-abc123")
     container.image.tags = ["test-image:latest"]
     client.containers.list.return_value = [container]
 
@@ -393,7 +424,371 @@ def test_status_reports_containers(home_dir):
         "name": f"{CONTAINER_PREFIX}-abc123",
         "status": "running",
         "image": "test-image:latest",
+        "writable": "",
     }]
+
+
+def test_status_reports_writable_mounts(home_dir):
+    """The writable mounts are what distinguishes one container from another."""
+    client = MagicMock()
+    container = make_container(
+        f"{CONTAINER_PREFIX}-abc123",
+        binds=[
+            "/:/host:ro",
+            "/home/user:/home/user:rw",
+            "/scenes:/host/scenes:rw",
+            "/tmp/.X11-unix:/tmp/.X11-unix:rw",
+        ],
+    )
+    container.image.tags = ["test-image:latest"]
+    client.containers.list.return_value = [container]
+
+    status = make_manager(home_dir, client=client).status()
+
+    assert status[0]["writable"] == "/home/user, /scenes"
+
+
+# --- reaping surplus containers ---
+
+def test_creating_a_container_reaps_surplus_idle_ones(home_dir):
+    """Working in several directories must not leave a pile of containers."""
+    older = make_container(f"{CONTAINER_PREFIX}-old", started_at=OLD_TIMESTAMP)
+    newer = make_container(
+        f"{CONTAINER_PREFIX}-new", started_at="2021-01-01T00:00:00Z"
+    )
+    client = make_client(containers=[older, newer])
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    # One kept alongside the container just created.
+    assert MAX_KEPT_CONTAINERS == 2
+    older.remove.assert_called_once_with(force=True)
+    newer.remove.assert_not_called()
+
+
+def test_reaping_never_touches_the_container_in_use(home_dir):
+    client = make_client()
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    mine = make_container(manager.container_name)
+    others = [make_container(f"{CONTAINER_PREFIX}-{i}") for i in range(3)]
+    client.containers.list.return_value = [mine, *others]
+
+    manager._reap_containers(keep=manager.container_name)
+
+    mine.remove.assert_not_called()
+
+
+def test_reaping_skips_a_container_running_a_command_started_outside_tig(home_dir):
+    """A hand-run 'docker exec' also keeps a container alive."""
+    busy = make_container(f"{CONTAINER_PREFIX}-busy", exec_ids=["exec1"])
+    idle = make_container(f"{CONTAINER_PREFIX}-idle")
+    client = make_client(containers=[busy, idle])
+    client.api.exec_inspect.return_value = {"Running": True}
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    busy.remove.assert_not_called()
+
+
+def test_reaping_skips_a_container_when_docker_cannot_say(home_dir):
+    """An unanswerable liveness check is treated as in use."""
+    unknown = make_container(f"{CONTAINER_PREFIX}-unknown", exec_ids=["exec1"])
+    idle = make_container(f"{CONTAINER_PREFIX}-idle")
+    client = make_client(containers=[unknown, idle])
+    client.api.exec_inspect.side_effect = docker.errors.APIError("boom")
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    unknown.remove.assert_not_called()
+
+
+def test_reaping_skips_a_container_claimed_by_a_live_process(home_dir):
+    """A container another live invocation claimed is not reaped, even idle.
+
+    The claim is what covers the window between another process creating its
+    container and its first 'docker exec' appearing.
+    """
+    newest = make_container(f"{CONTAINER_PREFIX}-newest", "2022-01-01T00:00:00Z")
+    claimed = make_container(f"{CONTAINER_PREFIX}-claimed", "2021-01-01T00:00:00Z")
+    oldest = make_container(f"{CONTAINER_PREFIX}-oldest", "2020-01-01T00:00:00Z")
+    client = make_client(containers=[newest, claimed, oldest])
+
+    manager = make_manager(home_dir, client=client)
+    claim_dir = manager._claim_dir()
+    claim_dir.mkdir(parents=True, exist_ok=True)
+    (claim_dir / f"{claimed.name}.{os.getpid()}").touch()
+
+    manager.ensure_container([])
+
+    claimed.remove.assert_not_called()
+    oldest.remove.assert_called_once_with(force=True)
+
+
+def test_reaping_ignores_and_prunes_a_claim_from_a_dead_process(home_dir):
+    newest = make_container(f"{CONTAINER_PREFIX}-newest", "2022-01-01T00:00:00Z")
+    stale = make_container(f"{CONTAINER_PREFIX}-stale", "2021-01-01T00:00:00Z")
+    client = make_client(containers=[newest, stale])
+
+    manager = make_manager(home_dir, client=client)
+    claim_dir = manager._claim_dir()
+    claim_dir.mkdir(parents=True, exist_ok=True)
+    claim = claim_dir / f"{stale.name}.999999"
+    claim.touch()
+
+    with patch('tig_cli.container.os.kill', side_effect=ProcessLookupError):
+        manager.ensure_container([])
+
+    assert not claim.exists()
+    stale.remove.assert_called_once_with(force=True)
+
+
+def test_a_container_is_claimed_before_it_is_created(home_dir):
+    """Claiming first is what closes the create-then-exec race."""
+    client = make_client()
+    manager = make_manager(home_dir, client=client)
+
+    def creating(*args, **kwargs):
+        assert manager.claim.exists()
+        return MagicMock()
+
+    client.containers.run.side_effect = creating
+    manager.ensure_container([])
+
+    assert manager.claim.name.endswith(f".{os.getpid()}")
+    assert manager.claim.name.startswith(manager.container_name)
+
+
+def test_releasing_the_claim_makes_the_container_reapable(home_dir):
+    client = make_client()
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+    claim = manager.claim
+
+    manager.release_claim()
+
+    assert not claim.exists()
+    assert manager.claim is None
+    manager.release_claim()  # idempotent
+
+
+def test_reaping_tolerates_a_container_removed_concurrently(home_dir):
+    first = make_container(f"{CONTAINER_PREFIX}-a")
+    first.remove.side_effect = docker.errors.NotFound("gone")
+    second = make_container(f"{CONTAINER_PREFIX}-b")
+    client = make_client(containers=[first, second])
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])  # should not raise
+
+
+def test_reusing_a_container_does_not_reap(home_dir):
+    """The warm path stays a single lookup, so latency is unchanged."""
+    client = make_client()
+    existing = make_container(f"{CONTAINER_PREFIX}-x")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    client.containers.list.assert_not_called()
+
+
+# --- SELinux ---
+
+def test_selinux_enforcing_reads_getenforce():
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
+         patch('tig_cli.container.subprocess.run',
+               return_value=subprocess.CompletedProcess([], 0, "Enforcing\n", "")):
+        assert selinux_enforcing() is True
+
+
+def test_selinux_permissive_is_not_enforcing():
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
+         patch('tig_cli.container.subprocess.run',
+               return_value=subprocess.CompletedProcess([], 0, "Permissive\n", "")):
+        assert selinux_enforcing() is False
+
+
+def test_selinux_falls_back_to_the_kernel_state(tmp_path):
+    enforce = tmp_path / "enforce"
+    enforce.write_text("1\n")
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value=None), \
+         patch('tig_cli.container.Path', return_value=enforce):
+        assert selinux_enforcing() is True
+
+
+def test_selinux_absent_when_there_is_no_selinux():
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value=None):
+        assert selinux_enforcing() is False
+
+
+def test_selinux_not_checked_off_linux():
+    with patch('sys.platform', 'darwin'), \
+         patch('tig_cli.container.shutil.which') as which:
+        assert selinux_enforcing() is False
+        which.assert_not_called()
+
+
+def test_enforcing_host_gets_label_disable(home_dir):
+    client = make_client()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=True):
+        manager = make_manager(home_dir, client=client)
+    with patch('sys.platform', 'linux'):
+        manager.ensure_container([])
+
+    assert client.containers.run.call_args[1]["security_opt"] == ["label=disable"]
+
+
+def test_non_enforcing_host_keeps_standard_labeling(home_dir):
+    client = make_client()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=False):
+        manager = make_manager(home_dir, client=client)
+    with patch('sys.platform', 'linux'):
+        manager.ensure_container([])
+
+    assert "security_opt" not in client.containers.run.call_args[1]
+
+
+def test_label_disable_can_be_forced_on(home_dir):
+    client = make_client()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=False):
+        manager = make_manager(home_dir, client=client, selinux_label_disable=True)
+    with patch('sys.platform', 'linux'):
+        manager.ensure_container([])
+
+    assert client.containers.run.call_args[1]["security_opt"] == ["label=disable"]
+
+
+def test_label_disable_can_be_forced_off_on_an_enforcing_host(home_dir, capsys):
+    client = make_client()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=True):
+        manager = make_manager(home_dir, client=client, selinux_label_disable=False)
+    with patch('sys.platform', 'linux'):
+        manager.ensure_container([])
+
+    assert "security_opt" not in client.containers.run.call_args[1]
+    assert "SELinux is Enforcing" in capsys.readouterr().err
+
+
+def test_label_disable_is_not_used_on_macos(home_dir):
+    client = make_client()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=True):
+        manager = make_manager(home_dir, client=client, selinux_label_disable=True)
+    with patch('sys.platform', 'darwin'):
+        manager.ensure_container([])
+
+    assert "security_opt" not in client.containers.run.call_args[1]
+
+
+def test_host_root_mount_is_never_relabeled(home_dir, tmp_path):
+    """Relabeling (:z/:Z) the host root filesystem would be unrecoverable."""
+    calib = tmp_path / "mars_calibration_m20"
+    calib.mkdir()
+
+    with patch('tig_cli.container.selinux_enforcing', return_value=True):
+        manager = make_manager(home_dir, calibration_path=str(calib))
+    volumes = manager._build_volume_mounts([])
+
+    assert all(
+        "z" not in mount["mode"].lower() for mount in volumes.values()
+    )
+
+
+# --- X11 host setup ---
+
+def test_x11_setup_authorizes_local_connections_on_linux(monkeypatch):
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.container.subprocess.run') as run:
+        ensure_x11_ready()
+
+    # The broad form: label=disable makes the container connect as LOCAL:.
+    assert run.call_args[0][0] == ["xhost", "+local:"]
+
+
+def test_x11_setup_skipped_without_a_display(monkeypatch):
+    monkeypatch.delenv("DISPLAY", raising=False)
+
+    with patch('tig_cli.container.subprocess.run') as run:
+        ensure_x11_ready()
+
+    run.assert_not_called()
+
+
+def test_x11_setup_skipped_without_xhost(monkeypatch):
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    with patch('tig_cli.container.shutil.which', return_value=None), \
+         patch('tig_cli.container.subprocess.run') as run:
+        ensure_x11_ready()
+
+    run.assert_not_called()
+
+
+def test_x11_setup_failure_is_not_fatal(monkeypatch):
+    monkeypatch.setenv("DISPLAY", ":0")
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.container.subprocess.run', side_effect=OSError):
+        ensure_x11_ready()  # should not raise
+
+
+def test_x11_setup_prepares_xquartz_on_macos(monkeypatch):
+    monkeypatch.setenv("DISPLAY", "/private/tmp/com.apple.launchd.x/org.xquartz:0")
+
+    with patch('sys.platform', 'darwin'), \
+         patch('tig_cli.container.shutil.which', return_value="/opt/X11/bin/xhost"), \
+         patch('tig_cli.container.subprocess.run') as run:
+        run.return_value = subprocess.CompletedProcess([], 0)
+        ensure_x11_ready()
+
+    commands = [call[0][0] for call in run.call_args_list]
+    assert ["defaults", "write", "org.xquartz.X11",
+            "nolisten_tcp", "-bool", "false"] in commands
+    assert ["xhost", "+localhost"] in commands
+
+
+def test_x11_setup_runs_when_a_container_is_created(home_dir):
+    client = make_client()
+
+    manager = make_manager(home_dir, client=client)
+    with patch('tig_cli.container.ensure_x11_ready') as ready:
+        manager.ensure_container([])
+
+    ready.assert_called_once()
+
+
+def test_x11_setup_skipped_when_a_container_is_reused(home_dir):
+    """Authorizing the display is container setup, not per-command work."""
+    client = make_client()
+    existing = make_container(f"{CONTAINER_PREFIX}-x")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    with patch('tig_cli.container.ensure_x11_ready') as ready:
+        manager.ensure_container([])
+
+    ready.assert_not_called()
 
 
 # --- execute_vicar_command ---
@@ -429,6 +824,20 @@ def test_execute_vicar_command_passes_display(mock_popen, home_dir):
             manager.execute_vicar_command("xvd", [])
 
     assert "DISPLAY=:7" in mock_popen.call_args[0][0]
+
+
+@patch('tig_cli.container.subprocess.Popen')
+def test_execute_vicar_command_leaves_x_resource_paths_to_the_image(
+    mock_popen, home_dir
+):
+    """The image's own xvd wrapper exports these; ours pointed at nothing."""
+    mock_popen.return_value = Mock(wait=Mock(return_value=0))
+
+    make_manager(home_dir).execute_vicar_command("xvd", [])
+
+    call_args = mock_popen.call_args[0][0]
+    assert not any("XFILESEARCHPATH" in arg for arg in call_args)
+    assert not any("XBMLANGPATH" in arg for arg in call_args)
 
 
 @patch('tig_cli.container.subprocess.Popen')

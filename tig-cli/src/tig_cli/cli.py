@@ -11,6 +11,7 @@ from .config import (
     PROJECT_CONFIG_NAME,
     SYSTEM_CONFIG_PATH,
     env_disable_path_translation,
+    env_selinux_label_disable,
     env_writable_paths,
     load_config,
     user_config_path,
@@ -84,6 +85,13 @@ class DynamicHelpCommand(click.Command):
     help="Disable automatic host→container path translation (for debugging).",
 )
 @click.option(
+    "--selinux-label-disable/--no-selinux-label-disable",
+    "selinux_label_disable",
+    default=None,
+    help="Run the container with '--security-opt label=disable' (Linux). "
+         "Defaults to enabled when SELinux is Enforcing.",
+)
+@click.option(
     "--status",
     "show_status",
     is_flag=True,
@@ -104,6 +112,7 @@ def main(
     writable_path,
     calibration_path,
     disable_path_translation,
+    selinux_label_disable,
     show_status,
     shutdown,
 ):
@@ -121,6 +130,11 @@ def main(
             if override is None:
                 override = config.disable_path_translation
             disable_path_translation = bool(override)
+
+        if selinux_label_disable is None:
+            selinux_label_disable = env_selinux_label_disable()
+        if selinux_label_disable is None:
+            selinux_label_disable = config.selinux_label_disable
     except ConfigError as e:
         raise click.ClickException(str(e)) from e
 
@@ -135,6 +149,7 @@ def main(
                 None if lifecycle_only
                 else calibration_path or get_calibration_path(config)
             ),
+            selinux_label_disable=selinux_label_disable,
         )
     except TigError as e:
         raise click.ClickException(str(e)) from e
@@ -149,9 +164,12 @@ def main(
         if not containers:
             click.echo("No tig containers running.")
         for container in containers:
-            click.echo(
+            line = (
                 f"{container['name']}  {container['status']}  {container['image']}"
             )
+            if container["writable"]:
+                line += f"  writable: {container['writable']}"
+            click.echo(line)
         return
 
     if vicar_tool is None:
@@ -175,5 +193,6 @@ def main(
     except TigError as e:
         raise click.ClickException(str(e)) from e
     finally:
+        manager.release_claim()
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)
