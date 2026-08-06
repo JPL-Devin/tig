@@ -99,7 +99,9 @@ ENV SHELL=/bin/bash
 # environment and normalize VICAR's exit codes. Without it ahead of the
 # program directories, `gen` and friends resolve to the raw binary and behave
 # differently from the MARS and GUI programs, which have no other directory on
-# PATH and so always go through their wrapper.
+# PATH and so always go through their wrapper. Each wrapper puts the program
+# directories back in front for its children, so a VICAR program calling
+# another VICAR program still sees VICAR's own exit codes.
 ENV PATH="/usr/local/bin:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/tae53/bin/x86_64_linx:${PATH}"
 ENV LD_LIBRARY_PATH="${V2TOP}/olb/x86-64-linx:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/mars/lib/x86-64-linx"
 
@@ -251,7 +253,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export WORKSPACE=${WORKSPACE}" >> /usr/local/bin/$cmdname; \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
-                    echo "export PATH=${V2TOP}/tae53/bin/$TAE_ARCH_DIR:${V2TOP}/tae53/bin/all:\$PATH" >> /usr/local/bin/$cmdname; \
+                    echo "export PATH=${V2TOP}/tae53/bin/$TAE_ARCH_DIR:${V2TOP}/tae53/bin/all:${V2TOP}/p2/lib/$ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
                     echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     TAE_COUNT=$((TAE_COUNT + 1)); \
@@ -272,7 +274,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export WORKSPACE=${WORKSPACE}" >> /usr/local/bin/$cmdname; \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
-                    echo "export PATH=${V2TOP}/mars/lib/$ARCH_DIR:${V2TOP}/p2/lib/$ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
+                    echo "export PATH=${V2TOP}/mars/lib/$ARCH_DIR:${V2TOP}/p2/lib/$ARCH_DIR:${V2TOP}/tae53/bin/$TAE_ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
                     echo "exec /usr/local/libexec/vicar-run $cmd \"\$@\"" >> /usr/local/bin/$cmdname; \
                     chmod +x /usr/local/bin/$cmdname; \
                     MARS_COUNT=$((MARS_COUNT + 1)); \
@@ -293,7 +295,7 @@ RUN ARCH_DIR="x86-64-linx" && \
                     echo "export WORKSPACE=${WORKSPACE}" >> /usr/local/bin/$cmdname; \
                     echo "export VICSYS=DEVELOPMENT" >> /usr/local/bin/$cmdname; \
                     echo "export LD_LIBRARY_PATH=$VICAR_LIB_PATH:\$LD_LIBRARY_PATH" >> /usr/local/bin/$cmdname; \
-                    echo "export PATH=${V2TOP}/gui/lib/$ARCH_DIR:${V2TOP}/mars/lib/$ARCH_DIR:${V2TOP}/p2/lib/$ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
+                    echo "export PATH=${V2TOP}/gui/lib/$ARCH_DIR:${V2TOP}/mars/lib/$ARCH_DIR:${V2TOP}/p2/lib/$ARCH_DIR:${V2TOP}/tae53/bin/$TAE_ARCH_DIR:\$PATH" >> /usr/local/bin/$cmdname; \
                     echo "# X11 app-defaults (.xres) so Motif widget labels resolve instead of showing placeholder resource names" >> /usr/local/bin/$cmdname; \
                     echo "export XFILESEARCHPATH=\"${V2TOP}/gui/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/p2/lib/$ARCH_DIR/%N%S.xres:${V2TOP}/mars/lib/$ARCH_DIR/%N%S.xres:/usr/lib/X11/%L/%T/%N%C%S:/usr/lib/X11/%l/%T/%N%C%S:/usr/lib/X11/%T/%N%C%S:/usr/lib/X11/%L/%T/%N%S:/usr/lib/X11/%l/%T/%N%S:/usr/lib/X11/%T/%N%S\${XFILESEARCHPATH:+:\$XFILESEARCHPATH}\"" >> /usr/local/bin/$cmdname; \
                     echo "export XBMLANGPATH=\"%D:${V2TOP}/p2/lib/$ARCH_DIR/%B\"" >> /usr/local/bin/$cmdname; \
