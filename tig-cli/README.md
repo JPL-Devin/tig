@@ -49,13 +49,49 @@ tig label /data/scenes/image.vic
 
 | Option | Description |
 | --- | --- |
+| `--config PATH` | Load only this config file instead of the standard layered files. |
 | `--writable-path PATH` | Mount an additional host directory read-write inside the container. May be repeated. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
-| `--help` | Show help, including the currently active container image. |
+| `--help` | Show help, including the active container image and the config files in use. |
 
-### Configuration
+## Configuration
 
-Set the `CONTAINER_IMAGE` environment variable to use a different VICAR image:
+Settings can come from TOML config files, environment variables, or command-line
+flags. Later sources override earlier ones:
+
+1. system config — `/etc/tig/config.toml`
+2. user config — `$XDG_CONFIG_HOME/tig/config.toml` (default `~/.config/tig/config.toml`)
+3. project config — the nearest `tig.toml`, searching upwards from the current directory
+4. environment variables
+5. command-line flags
+
+Each file only needs the keys it wants to change; unspecified keys keep the value
+from the layer below. Setting `TIG_CONFIG` (or passing `--config`) skips the search
+and loads only that file.
+
+### Config file keys
+
+```toml
+# ~/.config/tig/config.toml or ./tig.toml
+image = "ghcr.io/my-org/custom-vicar:latest"
+writable_paths = ["/data/scenes", "/scratch"]
+disable_path_translation = false
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `image` | string | `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource` | VICAR Docker image to run. |
+| `writable_paths` | list of strings | `[]` | Host directories mounted read-write in the container. |
+| `disable_path_translation` | boolean | `false` | Disable host→container path translation. |
+
+### Environment variables
+
+| Variable | Overrides | Description |
+| --- | --- | --- |
+| `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
+| `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
+| `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
+| `TIG_CONFIG` | (all files) | Load only this config file instead of the layered files. |
 
 ```bash
 export CONTAINER_IMAGE=ghcr.io/my-org/custom-vicar:latest

@@ -136,6 +136,106 @@ def test_uses_container_image_env_var():
     mock_cls.assert_called_once_with(custom, disable_path_translation=False)
 
 
+def test_config_file_provides_image_and_paths(tmp_path, monkeypatch):
+    """Config file supplies image, writable paths and path-translation flag."""
+    config = tmp_path / "tig.toml"
+    config.write_text(
+        'image = "ghcr.io/my-org/vicar:cfg"\n'
+        'writable_paths = ["/data"]\n'
+        'disable_path_translation = true\n'
+    )
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.delenv("CONTAINER_IMAGE", raising=False)
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    mock_cls.assert_called_once_with(
+        "ghcr.io/my-org/vicar:cfg", disable_path_translation=True
+    )
+    mock_manager.start_container.assert_called_once_with(writable_paths=["/data"])
+
+
+def test_env_var_overrides_config_file(tmp_path, monkeypatch):
+    """CONTAINER_IMAGE and TIG_WRITABLE_PATHS win over the config file."""
+    config = tmp_path / "tig.toml"
+    config.write_text('image = "cfg:1"\nwritable_paths = ["/data"]\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+    monkeypatch.setenv("CONTAINER_IMAGE", "env:2")
+    monkeypatch.setenv("TIG_WRITABLE_PATHS", "/scratch")
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["marsmap"])
+
+    mock_cls.assert_called_once_with("env:2", disable_path_translation=False)
+    mock_manager.start_container.assert_called_once_with(writable_paths=["/scratch"])
+
+
+def test_cli_flag_overrides_config_writable_paths(tmp_path, monkeypatch):
+    """--writable-path replaces configured writable paths."""
+    config = tmp_path / "tig.toml"
+    config.write_text('writable_paths = ["/data"]\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager', return_value=mock_manager):
+        runner.invoke(main, ["--writable-path", "/flag", "marsmap"])
+
+    mock_manager.start_container.assert_called_once_with(writable_paths=["/flag"])
+
+
+def test_config_option_selects_file(tmp_path, monkeypatch):
+    """--config loads the given file instead of the layered files."""
+    config = tmp_path / "custom.toml"
+    config.write_text('image = "explicit:9"\n')
+    monkeypatch.delenv("CONTAINER_IMAGE", raising=False)
+
+    runner = CliRunner()
+    mock_manager = MagicMock()
+    mock_manager.execute_vicar_command.return_value = 0
+
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        mock_cls.return_value = mock_manager
+        runner.invoke(main, ["--config", str(config), "marsmap"])
+
+    mock_cls.assert_called_once_with("explicit:9", disable_path_translation=False)
+
+
+def test_invalid_config_reports_error(tmp_path, monkeypatch):
+    """A malformed config file produces a clean error, not a traceback."""
+    config = tmp_path / "tig.toml"
+    config.write_text('image = 5\n')
+    monkeypatch.setenv("TIG_CONFIG", str(config))
+
+    runner = CliRunner()
+    with patch('tig_cli.cli.ContainerManager') as mock_cls:
+        result = runner.invoke(main, ["marsmap"])
+
+    assert result.exit_code != 0
+    assert "must be a string" in result.output
+    mock_cls.assert_not_called()
+
+
+def test_help_lists_config_locations():
+    """Help text documents where config files are read from."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert "tig.toml" in result.output
+
+
 def test_passes_unknown_args_to_vicar_tool():
     """Unknown args (VICAR keyword=value format) passed through."""
     runner = CliRunner()

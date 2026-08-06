@@ -6,18 +6,24 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import docker
 
+from .config import Config
 from .path_translator import PathTranslator
 
 DEFAULT_IMAGE = "ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource"
 
 
-def get_container_image() -> str:
+def get_container_image(config: Optional[Config] = None) -> str:
     """Return the Docker image to use for VICAR execution.
 
-    Reads CONTAINER_IMAGE environment variable. Falls back to the
-    opensource image if not set.
+    Precedence: CONTAINER_IMAGE environment variable, then the ``image`` key
+    from the configuration files, then the opensource image.
     """
-    return os.environ.get("CONTAINER_IMAGE", DEFAULT_IMAGE)
+    from_env = os.environ.get("CONTAINER_IMAGE")
+    if from_env:
+        return from_env
+    if config is not None and config.image:
+        return config.image
+    return DEFAULT_IMAGE
 
 
 class ContainerManager:

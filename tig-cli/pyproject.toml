@@ -6,6 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "click>=8.0.0",
     "docker>=6.0.0",
+    "tomli>=2.0.1; python_version < '3.11'",
 ]
 authors = [
     {name = "NASA AMMOS", email = "ammos@jpl.nasa.gov"}
