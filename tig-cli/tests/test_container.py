@@ -941,7 +941,7 @@ def test_list_tools_returns_sorted_unique_names(home_dir):
     manager = make_manager(home_dir)
     manager.container = MagicMock(
         exec_run=MagicMock(
-            return_value=Mock(output=b"marsmesh\nmarsmap\nmarsmap\n")
+            return_value=Mock(exit_code=0, output=b"marsmesh\nmarsmap\nmarsmap\n")
         )
     )
 
@@ -952,7 +952,7 @@ def test_list_tools_ignores_directory_headers(home_dir):
     manager = make_manager(home_dir)
     manager.container = MagicMock(
         exec_run=MagicMock(
-            return_value=Mock(output=b"/usr/local/bin:\nmarsmap\n\n")
+            return_value=Mock(exit_code=0, output=b"/usr/local/bin:\nmarsmap\n\n")
         )
     )
 
@@ -962,6 +962,22 @@ def test_list_tools_ignores_directory_headers(home_dir):
 def test_list_tools_without_a_container(home_dir):
     with pytest.raises(TigError):
         make_manager(home_dir).list_tools()
+
+
+def test_list_tools_reports_a_failed_listing(home_dir):
+    """A failing 'ls' must not turn its stderr into a tool name."""
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(
+            return_value=Mock(
+                exit_code=2,
+                output=b"ls: cannot access '/usr/local/bin': No such file\n",
+            )
+        )
+    )
+
+    with pytest.raises(TigError, match="cannot access"):
+        manager.list_tools()
 
 
 def test_list_tools_reports_a_docker_failure(home_dir):

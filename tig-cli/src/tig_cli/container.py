@@ -595,10 +595,15 @@ class ContainerManager:
             raise TigError(f"Failed to list VICAR tools: {e}") from e
 
         output = result.output.decode("utf-8", "replace")
+        if result.exit_code != 0:
+            raise TigError(
+                f"Failed to list VICAR tools in the container: {output.strip()}"
+            )
         return sorted({
             line.strip() for line in output.splitlines()
             # 'ls' prints a 'dir:' header per directory when given several.
             if line.strip() and not line.rstrip().endswith(":")
+            and "/" not in line
         })
 
     def execute_vicar_command(
