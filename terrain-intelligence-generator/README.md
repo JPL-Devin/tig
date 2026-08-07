@@ -64,12 +64,17 @@ Environment set by the image:
 
 ## Build arguments
 
-| Argument | Default | Meaning |
+The Dockerfile takes `VICAR_VERSION` (the release to download) plus the two
+tarball names it fetches from it, `BINARIES_FILE` and `EXTERNAL_FILE`.
+`build-opensource-image.sh` derives the tarball names from the versions, so
+setting `VICAR_VERSION` alone is enough:
+
+| Variable | Default | Meaning |
 | --- | --- | --- |
 | `VICAR_VERSION` | `5.0` | Release to download |
-| `EXTERNAL_VERSION` | `5.0` | Externals package version |
-| `BINARIES_FILE` | `vicar_open_bin_x86-64-linx_5.0.tar.gz` | Binaries tarball name |
-| `EXTERNAL_FILE` | `vicar_open_ext_x86-64-linx_5.0.tar.gz` | Externals tarball name |
+| `EXTERNAL_VERSION` | `$VICAR_VERSION` | Version in the externals tarball name |
+| `BINARIES_FILE` | `vicar_open_bin_x86-64-linx_$VICAR_VERSION.tar.gz` | Binaries tarball name |
+| `EXTERNAL_FILE` | `vicar_open_ext_x86-64-linx_$EXTERNAL_VERSION.tar.gz` | Externals tarball name |
 
 ## Image tags
 

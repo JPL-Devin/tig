@@ -3,7 +3,7 @@
 # Checks multiple common locations and environment variables
 
 # Priority order for calibration location:
-# 1. MARS_CALIB_PATH environment variable
+# 1. MARS_CONFIG_PATH, then MARS_CALIB_PATH environment variables
 # 2. Relative to script location (for demos in repo)
 # 3. User's home directory
 # 4. /opt/mars_calib (system-wide)
@@ -36,6 +36,7 @@ find_calibration() {
 
     # Priority-ordered list of candidate locations
     for candidate in \
+        "$MARS_CONFIG_PATH" \
         "$MARS_CALIB_PATH" \
         "$script_dir/calibration" \
         "$HOME/.mars_calib" \
@@ -93,8 +94,8 @@ The mesh generation tools require MARS calibration files containing:
 
 To specify calibration location, use one of:
 
-1. Environment variable (recommended for system-wide use):
-   export MARS_CALIB_PATH=/path/to/mars_calibration_m20
+1. Environment variable (recommended; tig reads this one too):
+   export MARS_CONFIG_PATH=/path/to/mars_calibration_m20
 
 2. User home directory:
    mkdir -p ~/.mars_calib
@@ -108,12 +109,13 @@ To specify calibration location, use one of:
    cp -r /path/to/calibration ./mars_calib
 
 The script will check these locations in order:
-  1. $MARS_CALIB_PATH
-  2. ./calibration (repo structure)
-  3. ~/.mars_calib
-  4. /opt/mars_calib
-  5. ./mars_calibration_m20
-  6. ./mars_calib
+  1. $MARS_CONFIG_PATH
+  2. $MARS_CALIB_PATH
+  3. ./calibration (repo structure)
+  4. ~/.mars_calib
+  5. /opt/mars_calib
+  6. ./mars_calibration_m20
+  7. ./mars_calib
 
 For TIG repository users:
   Calibration is already in: ./calibration/

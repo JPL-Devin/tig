@@ -8,7 +8,11 @@ set -e  # Exit on error
 IMAGE_NAME="${IMAGE_NAME:-terrain-intelligence-generator}"
 IMAGE_TAG="${IMAGE_TAG:-opensource}"
 VICAR_VERSION="${VICAR_VERSION:-5.0}"
-EXTERNAL_VERSION="${EXTERNAL_VERSION:-5.0}"
+EXTERNAL_VERSION="${EXTERNAL_VERSION:-$VICAR_VERSION}"
+# Release asset names, which carry the version; the Dockerfile downloads these
+# from the VICAR_VERSION release.
+BINARIES_FILE="${BINARIES_FILE:-vicar_open_bin_x86-64-linx_${VICAR_VERSION}.tar.gz}"
+EXTERNAL_FILE="${EXTERNAL_FILE:-vicar_open_ext_x86-64-linx_${EXTERNAL_VERSION}.tar.gz}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -22,6 +26,8 @@ echo "Configuration:"
 echo "  Image name: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "  VICAR version: ${VICAR_VERSION}"
 echo "  Externals version: ${EXTERNAL_VERSION}"
+echo "  Binaries tarball: ${BINARIES_FILE}"
+echo "  Externals tarball: ${EXTERNAL_FILE}"
 echo ""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,7 +54,8 @@ docker build \
     -f "${DOCKER_DIR}/Dockerfile" \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
     --build-arg VICAR_VERSION="${VICAR_VERSION}" \
-    --build-arg EXTERNAL_VERSION="${EXTERNAL_VERSION}" \
+    --build-arg BINARIES_FILE="${BINARIES_FILE}" \
+    --build-arg EXTERNAL_FILE="${EXTERNAL_FILE}" \
     "${DOCKER_DIR}"
 
 echo ""

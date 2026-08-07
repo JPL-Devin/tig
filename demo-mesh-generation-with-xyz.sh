@@ -20,8 +20,10 @@ fi
 # Find calibration files using helper script
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"
-    CALIB_DIR=$(find_calibration)
-    if [ $? -ne 0 ] || ! verify_calibration "$CALIB_DIR"; then
+    # Guard the assignment: under 'set -e' a failed lookup would otherwise end
+    # the script before the help below is printed.
+    CALIB_DIR=$(find_calibration) || true
+    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
         echo "ERROR: MARS calibration not found."
         echo ""
         print_calibration_help
@@ -126,7 +128,9 @@ export MARS_CONFIG_PATH="$CALIB_DIR"
 # Resolve inputs before changing directory, so relative paths keep working
 abspath() {
   [ -z "$1" ] && return 0
-  echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  local dir
+  dir=$(cd "$(dirname "$1")" && pwd)
+  echo "${dir%/}/$(basename "$1")"
 }
 XYZ_FILE=$(abspath "$XYZ_FILE")
 STEREO_LEFT=$(abspath "$STEREO_LEFT")
