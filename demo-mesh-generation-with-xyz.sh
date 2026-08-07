@@ -138,6 +138,34 @@ STEREO_LEFT=$(abspath "$STEREO_LEFT")
 STEREO_RIGHT=$(abspath "$STEREO_RIGHT")
 TEXTURE_FILE=$(abspath "$TEXTURE_FILE")
 
+# Validate inputs before the workspace is touched, so a mistyped path cannot
+# cost an earlier run's results.
+if [ -n "$XYZ_FILE" ]; then
+  if [ ! -f "$XYZ_FILE" ]; then
+    echo "ERROR: XYZ file not found: $XYZ_FILE"
+    exit 1
+  fi
+  if [ -z "$TEXTURE_FILE" ] && [ -z "$STEREO_LEFT" ]; then
+    echo "ERROR: No texture specified"
+    exit 1
+  fi
+  for input in "$TEXTURE_FILE" "$STEREO_LEFT"; do
+    if [ -n "$input" ] && [ ! -f "$input" ]; then
+      echo "ERROR: Texture file not found: $input"
+      exit 1
+    fi
+  done
+else
+  if [ ! -f "$STEREO_LEFT" ]; then
+    echo "ERROR: Left stereo file not found: $STEREO_LEFT"
+    exit 1
+  fi
+  if [ ! -f "$STEREO_RIGHT" ]; then
+    echo "ERROR: Right stereo file not found: $STEREO_RIGHT"
+    exit 1
+  fi
+fi
+
 # Create workspace
 mkdir -p "$WORKSPACE"
 echo "✓ Created workspace: $WORKSPACE"
@@ -178,38 +206,20 @@ done
 if [ -n "$XYZ_FILE" ]; then
   # Use pre-computed XYZ
   echo "Step 1: Using pre-computed XYZ point cloud..."
-  if [ ! -f "$XYZ_FILE" ]; then
-    echo "ERROR: XYZ file not found: $XYZ_FILE"
-    exit 1
-  fi
-
   stage "$XYZ_FILE" pointcloud_filtered.xyz
   echo "✓ XYZ copied: $(du -h "$XYZ_FILE" | cut -f1)"
 
   # Set texture
   if [ -n "$TEXTURE_FILE" ]; then
     stage "$TEXTURE_FILE" texture.img
-  elif [ -n "$STEREO_LEFT" ]; then
-    stage "$STEREO_LEFT" texture.img
   else
-    echo "ERROR: No texture specified"
-    exit 1
+    stage "$STEREO_LEFT" texture.img
   fi
 else
   # Calculate XYZ from stereo pair
   echo "Step 1: Calculating XYZ from stereo pair..."
   echo "  WARNING: This takes 10+ minutes for full-resolution images"
   echo ""
-
-  # Validate files exist
-  if [ ! -f "$STEREO_LEFT" ]; then
-    echo "ERROR: Left stereo file not found: $STEREO_LEFT"
-    exit 1
-  fi
-  if [ ! -f "$STEREO_RIGHT" ]; then
-    echo "ERROR: Right stereo file not found: $STEREO_RIGHT"
-    exit 1
-  fi
 
   stage "$STEREO_LEFT" left.vic
   stage "$STEREO_RIGHT" right.vic
