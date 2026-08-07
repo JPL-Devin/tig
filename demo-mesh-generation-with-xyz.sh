@@ -145,6 +145,13 @@ echo ""
 
 cd "$WORKSPACE"
 
+# Each step below is judged by whether its output appeared, so clear the
+# outputs of an earlier run: a leftover file would make a failure look like
+# success and mesh the previous scene's data.
+rm -f left.vic right.vic disparity_init.img disparity.img \
+  pointcloud.xyz pointcloud_filtered.xyz \
+  texture.img texture.png terrain.obj terrain.mtl
+
 # Step 1: Get or generate XYZ
 if [ -n "$XYZ_FILE" ]; then
   # Use pre-computed XYZ
