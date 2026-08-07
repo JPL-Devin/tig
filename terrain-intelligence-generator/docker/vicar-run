@@ -27,12 +27,35 @@ normalize() {
     exit "$1"
 }
 
-log=$(mktemp)
 status=$(mktemp)
-trap 'rm -f "$log" "$status"' EXIT
+last_line=$(mktemp)
+produced_output=$(mktemp)
+transcript=$(mktemp -u)
+mkfifo -m 600 "$transcript"
+trap 'rm -f "$status" "$last_line" "$produced_output" "$transcript"' EXIT
+
+# Only the last meaningful line is ever needed, so the output streams through
+# a filter that keeps just that line; nothing is stored in full. The Script
+# lines are script(1)'s own banners around the transcript.
+begin_capture() {
+    exec 9<> "$transcript"  # a writer of our own, so the filter cannot block on open
+    awk -v last_line="$last_line" -v produced_output="$produced_output" '
+        !/^[[:space:]]*$/ && !/^Script (started|done) on / { last = $0 }
+        END {
+            if (NR) print "1" > produced_output
+            if (last != "") print last > last_line
+        }
+    ' < "$transcript" 9>&- &
+    filter_pid=$!
+}
+
+end_capture() {
+    exec 9>&-
+    wait "$filter_pid"
+}
 
 run_through_pipe() {
-    "$program" "$@" | tee "$log"
+    "$program" "$@" | tee "$transcript"
     exit_code=${PIPESTATUS[0]}
 }
 
@@ -46,29 +69,38 @@ foreground() {
     [ "$3" = "$6" ]
 }
 
+begin_capture
+
 if [ -t 0 ] && [ -t 1 ] && [ -t 2 ] && foreground && command -v script > /dev/null; then
     # A pty, not a pipe, so prompts and Motif tools still work. The program's
     # own status goes to a file because script's exit code cannot distinguish
     # a VICAR run from script failing to start. SHELL is pinned because
     # script -c runs through it and the quoting is bash's.
     SHELL=/bin/bash script -qfc \
-        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$log"
+        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$transcript"
     script_code=$?
+    end_capture
     if [ -s "$status" ]; then
         exit_code=$(cat "$status")
-    elif [ -s "$log" ]; then
+    elif [ -s "$produced_output" ]; then
         exit_code=$script_code  # the program ran; only its status was lost
     else
-        run_through_pipe "$@"  # script never started it
+        begin_capture  # script never started it
+        run_through_pipe "$@"
+        end_capture
     fi
 else
     run_through_pipe "$@"
+    end_capture
 fi
 
+case $exit_code in
+    ''|*[!0-9]*) exit_code=1 ;;  # the status file held something unusable
+esac
+
 # A rejection stops the run, so the diagnostic is the last line; matching it
-# anywhere would fail an interactive session that recovered from one. The
-# Script lines are script(1)'s own banners around the transcript.
-last=$(grep -Ev '^[[:space:]]*$|^Script (started|done) on ' "$log" | tail -1)
+# anywhere would fail an interactive session that recovered from one.
+last=$(cat "$last_line" 2> /dev/null)
 if [ "$exit_code" -le 1 ] && [[ $last == *'[TAE-'* || $last == *'** ABEND called **'* ]]; then
     exit 1
 fi
