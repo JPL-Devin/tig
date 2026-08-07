@@ -5,11 +5,13 @@ CLI is plain files and FIFOs, so it can be exercised for real by running the
 very same script next to the tests. What is a bind mount in production is
 just a directory here; nothing else about the exchange differs.
 """
+import errno
 import os
 import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -198,6 +200,25 @@ code = dispatch.run(
 )
 sys.exit(0 if code == index %% 5 else 1)
 """
+
+
+def test_survives_output_nobody_is_reading(dispatcher, monkeypatch):
+    """``tig list big.img | head`` must still report the command's status.
+
+    Reporting the dispatcher unused instead would have the caller run the
+    command all over again.
+    """
+
+    class Broken:
+        def write(self, data):
+            raise BrokenPipeError(errno.EPIPE, "broken pipe")
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(buffer=Broken()))
+
+    assert dispatcher.run(["sh", "-c", "echo plenty; exit 5"]) == 5
 
 
 def test_reports_a_command_that_does_not_exist(dispatcher, capfd):

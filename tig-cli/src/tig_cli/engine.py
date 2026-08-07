@@ -441,8 +441,8 @@ class Connection:
                         incoming += chunk
         finally:
             selector.close()
-            stdout.flush()
-            stderr.flush()
+            _flush(stdout)
+            _flush(stderr)
 
     def _watch_socket(self, selector: selectors.BaseSelector, writing: bool) -> None:
         events = selectors.EVENT_READ
@@ -531,12 +531,32 @@ def _stdin_fileno() -> int | None:
         return None
 
 
+def _put(stream, data: bytes) -> None:
+    """Write output, letting go of a stream nobody is reading.
+
+    ``tig list big.img | head`` closes the pipe early; the command still has
+    to be seen through to its exit status.
+    """
+    if not data:
+        return
+    try:
+        stream.write(data)
+    except OSError:
+        return
+    _flush(stream)
+
+
+def _flush(stream) -> None:
+    try:
+        stream.flush()
+    except OSError:
+        pass
+
+
 def _emit(data: bytes, tty: bool, stdout, stderr, final: bool = False) -> bytes:
     """Write what is complete in ``data``; return what is not yet."""
     if tty:
-        if data:
-            stdout.write(data)
-            stdout.flush()
+        _put(stdout, data)
         return b""
 
     while len(data) >= FRAME_HEADER_SIZE:
@@ -544,9 +564,7 @@ def _emit(data: bytes, tty: bool, stdout, stderr, final: bool = False) -> bytes:
         if len(data) < FRAME_HEADER_SIZE + size:
             break
         payload = data[FRAME_HEADER_SIZE:FRAME_HEADER_SIZE + size]
-        target = stderr if stream == STDERR_STREAM else stdout
-        target.write(payload)
-        target.flush()
+        _put(stderr if stream == STDERR_STREAM else stdout, payload)
         data = data[FRAME_HEADER_SIZE + size:]
 
     if final:

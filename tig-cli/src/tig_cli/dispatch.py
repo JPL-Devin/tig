@@ -133,14 +133,19 @@ def run(
     if not _expressible(command, workdir, env):
         return None
 
-    paths = _Paths(home, container)
+    job = _Job(_Paths(home, container), command, workdir, env)
     try:
-        with _Job(paths, command, workdir, env) as job:
-            if not job.submit():
-                return None
-            return job.wait()
+        submitted = job.start()
     except OSError:
+        job.close()
         return None
+    # Past this point the command may have run, so a failure must be an
+    # error: telling the caller the dispatcher went unused would have it run
+    # the command a second time.
+    try:
+        return job.wait() if submitted else None
+    finally:
+        job.close()
 
 
 def usable() -> bool:
@@ -329,8 +334,10 @@ class _Job:
         self.stdin: int | None = None
         self.watching_stdin = False
         self.watching_in = False
+        self.closed: set[str] = set()
 
-    def __enter__(self) -> "_Job":
+    def start(self) -> bool:
+        """Describe the job and hand it over; False if nobody is listening."""
         os.makedirs(self.directory, mode=0o700)
         for name in _FIFOS:
             _make_fifo(self._path(name))
@@ -343,22 +350,21 @@ class _Job:
             self.fds[name] = os.open(
                 self._path(name), os.O_RDWR | os.O_NONBLOCK
             )
-        return self
+        return self._submit()
 
-    def __exit__(self, *exc_info) -> bool:
+    def close(self) -> None:
         for fd in self.fds.values():
             try:
                 os.close(fd)
             except OSError:
                 pass
+        self.fds.clear()
         _remove_tree(self.directory)
-        return False
 
     def _path(self, name: str) -> str:
         return os.path.join(self.directory, name)
 
-    def submit(self) -> bool:
-        """Hand the job to the dispatcher; False if none is listening."""
+    def _submit(self) -> bool:
         try:
             control = os.open(self.paths.control, os.O_WRONLY | os.O_NONBLOCK)
         except OSError as e:
@@ -504,10 +510,19 @@ class _Job:
         self.watching_in = wanted
 
     def _write_out(self, name: str, data: bytes) -> None:
+        """Pass output on, giving up on a stream nobody is reading.
+
+        ``tig list big.img | head`` closes the pipe early; the command still
+        has to be seen through to its exit status.
+        """
+        if not data or name in self.closed:
+            return
         stream = sys.stdout.buffer if name == "out" else sys.stderr.buffer
-        if data:
+        try:
             stream.write(data)
             stream.flush()
+        except OSError:
+            self.closed.add(name)
 
     def _drain(self) -> None:
         """Emit whatever the command wrote just before exiting."""
