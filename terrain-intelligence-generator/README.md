@@ -66,15 +66,14 @@ Environment set by the image:
 
 The Dockerfile takes `VICAR_VERSION` (the release to download) plus the two
 tarball names it fetches from it, `BINARIES_FILE` and `EXTERNAL_FILE`.
-`build-opensource-image.sh` derives the tarball names from the versions, so
-setting `VICAR_VERSION` alone is enough:
+Both tarballs are assets of that one release, so `build-opensource-image.sh`
+derives their names from it and setting `VICAR_VERSION` alone is enough:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `VICAR_VERSION` | `5.0` | Release to download |
-| `EXTERNAL_VERSION` | `$VICAR_VERSION` | Version in the externals tarball name |
 | `BINARIES_FILE` | `vicar_open_bin_x86-64-linx_$VICAR_VERSION.tar.gz` | Binaries tarball name |
-| `EXTERNAL_FILE` | `vicar_open_ext_x86-64-linx_$EXTERNAL_VERSION.tar.gz` | Externals tarball name |
+| `EXTERNAL_FILE` | `vicar_open_ext_x86-64-linx_$VICAR_VERSION.tar.gz` | Externals tarball name |
 
 ## Image tags
 
@@ -91,8 +90,9 @@ The image is `linux/amd64`; tig always requests that platform, so it runs under
 emulation on Apple Silicon.
 
 **A build download fails.** Check the version exists in
-[VICAR releases](https://github.com/NASA-AMMOS/VICAR/releases) and pass matching
-`VICAR_VERSION`/`EXTERNAL_VERSION`.
+[VICAR releases](https://github.com/NASA-AMMOS/VICAR/releases) and pass a
+matching `VICAR_VERSION`; override `BINARIES_FILE`/`EXTERNAL_FILE` if a release
+names its assets differently.
 
 **Out of disk space during build.** `docker system prune -a`, then rebuild.
 
