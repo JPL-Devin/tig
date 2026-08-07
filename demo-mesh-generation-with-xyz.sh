@@ -161,11 +161,16 @@ stage() {
 
 # Each step below is judged by whether its output appeared, so clear the
 # outputs of an earlier run: a leftover file would make a failure look like
-# success and mesh the previous scene's data. Inputs are spared, since
-# re-meshing an earlier run's pointcloud.xyz is a documented workflow.
-for stale in left.vic right.vic disparity_init.img disparity.img \
-  pointcloud.xyz pointcloud_filtered.xyz \
-  texture.img texture.png terrain.obj terrain.mtl; do
+# success and mesh the previous scene's data. Only what this run regenerates,
+# and never an input: re-meshing an earlier run's cloud is a documented
+# workflow, and it must not cost that run's stereo results.
+stale_outputs="pointcloud_filtered.xyz texture.img texture.png
+  terrain.obj terrain.mtl"
+if [ -z "$XYZ_FILE" ]; then
+  stale_outputs="$stale_outputs left.vic right.vic
+    disparity_init.img disparity.img pointcloud.xyz"
+fi
+for stale in $stale_outputs; do
   is_input "$stale" || rm -f "$stale"
 done
 
@@ -341,8 +346,12 @@ echo ""
 echo "=== Demo Complete ==="
 echo ""
 echo "Generated files in: $WORKSPACE"
-echo "  - pointcloud.xyz         : Raw 3D point cloud"
-echo "  - pointcloud_filtered.xyz: Filtered point cloud (rover hardware removed)"
+if [ -z "$XYZ_FILE" ]; then
+  echo "  - pointcloud.xyz         : Raw 3D point cloud"
+  echo "  - pointcloud_filtered.xyz: Filtered point cloud (rover hardware removed)"
+else
+  echo "  - pointcloud_filtered.xyz: The point cloud that was meshed"
+fi
 echo "  - terrain.obj            : 3D mesh (Wavefront OBJ)"
 echo "  - terrain.mtl            : Material file"
 echo "  - texture.png            : Texture image"
