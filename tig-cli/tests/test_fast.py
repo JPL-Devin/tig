@@ -30,6 +30,9 @@ def host(monkeypatch, tmp_path):
     monkeypatch.delenv(fast.DISABLE_ENV, raising=False)
     monkeypatch.delenv("MARS_CONFIG_PATH", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
+    # Which in-container runner is preferred is the host's business, not
+    # these tests'; they say what the warm path does with the one it picks.
+    monkeypatch.setattr(fast.broker, "preferred", lambda: False)
     monkeypatch.chdir(home)
     return home
 
@@ -159,6 +162,18 @@ def test_prefers_the_dispatcher_when_it_answers(host, engine, monkeypatch):
     assert command == ["vicar", "in.img"]
     assert workdir == os.path.realpath(host)
     assert env == {"DISPLAY": container_display()}
+
+
+def test_prefers_the_broker_where_it_is_the_one_that_can_serve(
+    host, engine, monkeypatch
+):
+    monkeypatch.setattr(fast.broker, "preferred", lambda: True)
+    monkeypatch.setattr(fast.broker, "run", lambda *args: 4)
+    monkeypatch.setattr(fast.dispatch, "run", lambda *args: pytest.fail("used"))
+
+    assert fast.run(["vicar", "in.img"]) == 4
+
+    engine.exec_command.assert_not_called()
 
 
 def test_retires_a_dispatcher_serving_a_stale_image(host, engine, monkeypatch):

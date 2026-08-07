@@ -103,8 +103,12 @@ def code_of(result):
 
 @pytest.fixture
 def home():
-    """A home short enough that the broker's socket path fits in sun_path."""
-    directory = tempfile.mkdtemp(prefix="tigb")
+    """A home short enough that the broker's socket path fits in sun_path.
+
+    macOS puts the usual temporary directory somewhere far too long for
+    that, so this one is made where the path stays short.
+    """
+    directory = tempfile.mkdtemp(prefix="tigb", dir="/tmp")
     yield pathlib.Path(directory)
     shutil.rmtree(directory, ignore_errors=True)
 
@@ -266,6 +270,10 @@ def test_forwards_an_interrupt_to_the_command(session, home):
     assert (home / "caught").read_text() == "INT\n"
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="process groups are the container's business, and it is Linux",
+)
 def test_the_command_s_children_are_stopped_too(session, home):
     """A tool that spawns children must not leave them in the container."""
     running = session.start(
