@@ -145,12 +145,29 @@ echo ""
 
 cd "$WORKSPACE"
 
+is_input() {
+  local candidate="$PWD/$1"
+  local given
+  for given in "$XYZ_FILE" "$STEREO_LEFT" "$STEREO_RIGHT" "$TEXTURE_FILE"; do
+    [ "$given" = "$candidate" ] && return 0
+  done
+  return 1
+}
+
+# Copy an input into place, unless it is already the file we want.
+stage() {
+  [ "$1" = "$PWD/$2" ] || cp "$1" "$2"
+}
+
 # Each step below is judged by whether its output appeared, so clear the
 # outputs of an earlier run: a leftover file would make a failure look like
-# success and mesh the previous scene's data.
-rm -f left.vic right.vic disparity_init.img disparity.img \
+# success and mesh the previous scene's data. Inputs are spared, since
+# re-meshing an earlier run's pointcloud.xyz is a documented workflow.
+for stale in left.vic right.vic disparity_init.img disparity.img \
   pointcloud.xyz pointcloud_filtered.xyz \
-  texture.img texture.png terrain.obj terrain.mtl
+  texture.img texture.png terrain.obj terrain.mtl; do
+  is_input "$stale" || rm -f "$stale"
+done
 
 # Step 1: Get or generate XYZ
 if [ -n "$XYZ_FILE" ]; then
@@ -161,14 +178,14 @@ if [ -n "$XYZ_FILE" ]; then
     exit 1
   fi
 
-  cp "$XYZ_FILE" pointcloud_filtered.xyz
+  stage "$XYZ_FILE" pointcloud_filtered.xyz
   echo "✓ XYZ copied: $(du -h "$XYZ_FILE" | cut -f1)"
 
   # Set texture
   if [ -n "$TEXTURE_FILE" ]; then
-    cp "$TEXTURE_FILE" texture.img
+    stage "$TEXTURE_FILE" texture.img
   elif [ -n "$STEREO_LEFT" ]; then
-    cp "$STEREO_LEFT" texture.img
+    stage "$STEREO_LEFT" texture.img
   else
     echo "ERROR: No texture specified"
     exit 1
@@ -189,8 +206,8 @@ else
     exit 1
   fi
 
-  cp "$STEREO_LEFT" left.vic
-  cp "$STEREO_RIGHT" right.vic
+  stage "$STEREO_LEFT" left.vic
+  stage "$STEREO_RIGHT" right.vic
   echo "  ✓ Stereo pair copied"
 
   # Validate image resolution
@@ -278,9 +295,9 @@ else
 
   # Use right image as texture (matches reference mesh workflow)
   if [ -n "$TEXTURE_FILE" ]; then
-    cp "$TEXTURE_FILE" texture.img
+    stage "$TEXTURE_FILE" texture.img
   else
-    cp "$STEREO_RIGHT" texture.img
+    stage "$STEREO_RIGHT" texture.img
   fi
 fi
 
