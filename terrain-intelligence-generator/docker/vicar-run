@@ -28,18 +28,41 @@ normalize() {
 }
 
 log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+status=$(mktemp)
+trap 'rm -f "$log" "$status"' EXIT
 
-if [ -t 1 ] && [ -t 2 ] && command -v script > /dev/null; then
-    # A pty, not a pipe, so prompts and Motif tools still work; script -e
-    # reports the program's status and leaves a transcript to scan. SHELL is
-    # pinned because script -c runs through it and the quoting is bash's.
-    # Requires a tty on stderr too: script would redirect it onto the pty.
-    SHELL=/bin/bash script -qefc "$(printf '%q ' "$program" "$@")" "$log"
-    exit_code=$?
-else
+run_through_pipe() {
     "$program" "$@" | tee "$log"
     exit_code=${PIPESTATUS[0]}
+}
+
+# script(1) reads the terminal to feed the pty, which stops a background job
+# with SIGTTIN, so the pty is only for a foreground job on a full terminal.
+foreground() {
+    local fields
+    read -r fields < /proc/self/stat || return 1
+    # shellcheck disable=SC2086
+    set -- ${fields#*) }  # state ppid pgrp session tty_nr tpgid
+    [ "$3" = "$6" ]
+}
+
+if [ -t 0 ] && [ -t 1 ] && [ -t 2 ] && foreground && command -v script > /dev/null; then
+    # A pty, not a pipe, so prompts and Motif tools still work. The program's
+    # own status goes to a file because script's exit code cannot distinguish
+    # a VICAR run from script failing to start. SHELL is pinned because
+    # script -c runs through it and the quoting is bash's.
+    SHELL=/bin/bash script -qfc \
+        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$log"
+    script_code=$?
+    if [ -s "$status" ]; then
+        exit_code=$(cat "$status")
+    elif [ -s "$log" ]; then
+        exit_code=$script_code  # the program ran; only its status was lost
+    else
+        run_through_pipe "$@"  # script never started it
+    fi
+else
+    run_through_pipe "$@"
 fi
 
 # A rejection stops the run, so the diagnostic is the last line; matching it
