@@ -30,8 +30,12 @@ def home_dir(tmp_path):
 
 def make_manager(home, image="test-image:latest", client=None, **kwargs):
     """Build a ContainerManager with Docker mocked out."""
+    # which() is stubbed too: Docker is mocked, and the CLI is absent from the
+    # macOS runners.
     with patch('tig_cli.container.docker.from_env',
                return_value=client or MagicMock()), \
+         patch('tig_cli.container.shutil.which',
+               side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None), \
          patch.dict(os.environ, {"HOME": home}):
         return ContainerManager(image, **kwargs)
 
