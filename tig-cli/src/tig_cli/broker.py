@@ -53,7 +53,10 @@ AGENT = r"""
 # pay for no container exec. Started by the tig CLI; see tig_cli/broker.py.
 host=$1
 port=$2
-token=$3
+# In the environment, not the arguments: /proc/<pid>/cmdline is readable by
+# anyone in the container, and the token is what keeps others off the broker.
+token=$TIG_BROKER_TOKEN
+unset TIG_BROKER_TOKEN
 [ -n "$host" ] && [ -n "$port" ] && [ -n "$token" ] || exit 64
 
 exec 3<>"/dev/tcp/$host/$port" || exit 65
@@ -293,6 +296,8 @@ def _submit(
     except OSError:
         return None
 
+    # Past this point the command may have run, so the broker going quiet is
+    # an error: telling the caller nothing ran would have it run a second time.
     with _forwarded_signals(connection):
         answer = _read_line(connection)
     return _status(answer)
@@ -326,8 +331,10 @@ def _read_line(connection: socket.socket) -> bytes:
 def _status(answer: bytes) -> int | None:
     """Read the broker's answer; ``None`` means nothing was run."""
     text = answer.split(b"\n", 1)[0].strip()
-    if text in (b"", b"unstarted"):
+    if text == b"unstarted":
         return None
+    if not text:
+        raise TigError("The container's command broker went away")
     try:
         return int(text)
     except ValueError:

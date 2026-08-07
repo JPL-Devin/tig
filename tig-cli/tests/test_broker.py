@@ -22,6 +22,7 @@ import pytest
 
 from tig_cli import broker
 from tig_cli.server import Broker
+from tig_cli.spec import TigError
 
 CONTAINER = "tig-vicar-test"
 
@@ -133,8 +134,8 @@ class LocalBroker(Broker):
                 "tig-agent",
                 "127.0.0.1",
                 str(self.port),
-                self.token,
-            ]
+            ],
+            env={**os.environ, "TIG_BROKER_TOKEN": self.token},
         )
         return True
 
@@ -336,6 +337,33 @@ def test_retire_stops_new_clients(session):
     broker.retire(session.home, CONTAINER)
 
     assert code_of(session.run(["true"])) is None
+
+
+def test_a_command_already_running_is_never_reported_as_unrun(session, home):
+    """Losing the agent must not have the caller run the command again."""
+    running = session.start(_waits_for(home, "TERM", 4))
+    _wait_for(home / "ready")
+
+    session.server.agent.kill()
+
+    assert running.wait(timeout=30) != 0
+
+
+def test_a_broker_leaves_its_successor_s_socket_alone(home):
+    first = LocalBroker(CONTAINER, str(home))
+    broker.retire(str(home), CONTAINER)
+    second = LocalBroker(CONTAINER, str(home))
+
+    first._close()
+
+    assert os.path.exists(second.address)
+    second._close()
+    assert not os.path.exists(second.address)
+
+
+def test_a_broker_that_goes_quiet_is_an_error_not_a_second_run():
+    with pytest.raises(TigError):
+        broker._status(b"")
 
 
 def _waits_for(home, signal_name, code):

@@ -228,7 +228,12 @@ class Engine:
 
         return self._exit_code(exec_id)
 
-    def exec_detached(self, container: str, command: list[str]) -> None:
+    def exec_detached(
+        self,
+        container: str,
+        command: list[str],
+        env: dict[str, str] | None = None,
+    ) -> None:
         """Start ``command`` in the container and leave it running."""
         created = self.post(
             f"/containers/{_safe(container)}/exec",
@@ -238,6 +243,7 @@ class Engine:
                 "AttachStderr": False,
                 "Tty": False,
                 "Cmd": command,
+                "Env": [f"{name}={value}" for name, value in (env or {}).items()],
             },
         )
         exec_id = (created or {}).get("Id")

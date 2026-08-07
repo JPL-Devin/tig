@@ -45,7 +45,7 @@ HOST_ADDRESS = "host.docker.internal" if sys.platform == "darwin" else "127.0.0.
 UNSTARTED = b"unstarted\n"
 
 # What a pipe that reports itself writable is guaranteed to accept.
-PIPE_BUF = getattr(select, "PIPE_BUF", 4096)
+PIPE_BUF = select.PIPE_BUF
 
 # How long output is still collected after the command has exited. A child
 # it left behind holds the same streams, so waiting for them to close would
@@ -74,6 +74,8 @@ class Broker:
 
         os.makedirs(os.path.dirname(self.address), mode=0o700, exist_ok=True)
         self.clients = _listen_unix(self.address)
+        bound = os.stat(self.address)
+        self.bound = (bound.st_dev, bound.st_ino)
         self.agents = _listen_tcp()
         self.port = self.agents.getsockname()[1]
         self.selector.register(self.clients, selectors.EVENT_READ, ("clients", None))
@@ -106,8 +108,8 @@ class Broker:
                     "tig-agent",
                     HOST_ADDRESS,
                     str(self.port),
-                    self.token,
                 ],
+                {"TIG_BROKER_TOKEN": self.token},
             )
         except (EngineError, OSError):
             return False
@@ -280,10 +282,20 @@ class Broker:
 
     def _close(self) -> None:
         for job in list(self.jobs.values()):
-            self._finish(job, UNSTARTED)
+            self._finish(job, job.answer())
         for source in (self.clients, self.agents, self.control):
             if source is not None:
                 _drop(self.selector, source)
+        self._unlink_own_socket()
+
+    def _unlink_own_socket(self) -> None:
+        """Remove the socket file, unless it is a successor's by now."""
+        try:
+            current = os.stat(self.address)
+        except OSError:
+            return
+        if (current.st_dev, current.st_ino) != self.bound:
+            return
         try:
             os.unlink(self.address)
         except OSError:
@@ -528,9 +540,13 @@ class Job:
         return (now or time.monotonic()) >= self.grace_until
 
     def answer(self) -> bytes:
-        if self.unstarted or self.status is None:
+        if self.status is not None:
+            return f"{self.status}\n".encode()
+        if self.pid is None:
             return UNSTARTED
-        return f"{self.status}\n".encode()
+        # It had started when we lost sight of it; saying nothing ran would
+        # have the client run it a second time.
+        return b"125\n"
 
     def close(self, answer: bytes) -> None:
         for name in ("out", "err"):
