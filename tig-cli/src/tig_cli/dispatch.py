@@ -23,7 +23,7 @@ import selectors
 import signal
 import sys
 
-from .spec import RUNNER_MARKER, TigError
+from .spec import RUNNER_MARKER, TigError, forwarded_signals
 
 DISABLE_ENV = "TIG_NO_DISPATCHER"
 
@@ -389,7 +389,7 @@ class _Job:
         ``None`` means the dispatcher never started the command, so the
         caller can still run it the ordinary way.
         """
-        with _forwarded_signals(self._interrupt):
+        with forwarded_signals(self._interrupt):
             code = self._pump()
         self._drain()
         return code
@@ -606,31 +606,3 @@ def _remove_tree(directory: str) -> None:
         os.rmdir(directory)
     except OSError:
         pass
-
-
-class _forwarded_signals:
-    """Send interrupts to the container's command instead of only exiting."""
-
-    HANDLED = (signal.SIGINT, signal.SIGTERM)
-
-    def __init__(self, forward):
-        self.forward = forward
-        self.previous: dict[int, object] = {}
-
-    def __enter__(self) -> "_forwarded_signals":
-        for signum in self.HANDLED:
-            try:
-                self.previous[signum] = signal.signal(
-                    signum, lambda number, frame: self.forward(number)
-                )
-            except (ValueError, OSError):
-                pass
-        return self
-
-    def __exit__(self, *exc_info) -> bool:
-        for signum, handler in self.previous.items():
-            try:
-                signal.signal(signum, handler)
-            except (ValueError, OSError):
-                pass
-        return False

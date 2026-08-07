@@ -147,6 +147,24 @@ Example workflows for stereo mesh generation.
 
 *TIG provides ~550 total VICAR commands. Above shows representative examples.*
 
+### Exit Codes
+
+VICAR programs return 1 on a successful run, and 1 again when TAE rejects the
+invocation, so the raw code cannot tell the two apart. TIG's command wrappers
+translate them, which means `set -e` and `&&` chains work as written:
+
+| Code | Meaning |
+|------|---------|
+| 0 | The program ran |
+| 1 | TAE rejected the invocation (missing parameter, unknown keyword) |
+| 255 | The program called `abend()` — e.g. a missing or unreadable input |
+| >128 | Killed by a signal |
+
+The translation happens in the wrappers under `/usr/local/bin`, so it applies
+to commands run through `tig-cli` or `docker exec`. Calling a program by its
+full path (`$V2TOP/p2/lib/x86-64-linx/gen`) bypasses it and returns VICAR's
+raw code.
+
 ## Requirements
 
 - Docker or Podman

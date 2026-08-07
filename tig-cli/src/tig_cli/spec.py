@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from .config import (
@@ -26,6 +27,56 @@ DEFAULT_IMAGE = "ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensourc
 IMAGE_PLATFORM = "linux/amd64"
 
 CONTAINER_PREFIX = "tig-vicar"
+
+# Marks the processes of one invocation, so a signal can reach them inside the
+# shared container. Every descendant inherits it.
+EXEC_ID_ENV = "TIG_EXEC_ID"
+
+
+def kill_tree_command(exec_id: str, signum: int) -> str:
+    """Shell command signalling one invocation's processes in a container.
+
+    /proc is the only way in: the exec id is in the environment of the tool
+    and of everything it started.
+    """
+    return (
+        "for p in /proc/[0-9]*; do "
+        f'grep -qz {EXEC_ID_ENV}={exec_id} "$p/environ" 2>/dev/null '
+        f'&& kill -{signum} "${{p#/proc/}}" 2>/dev/null; done'
+    )
+
+
+class forwarded_signals:
+    """Pass interrupts on to a command running in the container.
+
+    Without this the caller would simply exit, leaving the tool running in a
+    container that outlives it.
+    """
+
+    HANDLED = (signal.SIGINT, signal.SIGTERM)
+
+    def __init__(self, forward):
+        self.forward = forward
+        self.previous: dict[int, object] = {}
+
+    def __enter__(self) -> "forwarded_signals":
+        for signum in self.HANDLED:
+            try:
+                self.previous[signum] = signal.signal(
+                    signum, lambda number, frame: self.forward(number)
+                )
+            except (ValueError, OSError):
+                pass
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        for signum, handler in self.previous.items():
+            try:
+                signal.signal(signum, handler)
+            except (ValueError, OSError):
+                pass
+        return False
+
 
 # Last argument of the dispatcher's and the agent's exec, marking them as
 # tig's own: they run for as long as the container does, so reaping must not

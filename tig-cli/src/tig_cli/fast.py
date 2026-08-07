@@ -17,20 +17,24 @@ import os
 import sys
 import termios
 import tty
+import uuid
 
 from . import broker, dispatch
 from .config import ConfigError, load_config
 from .path_translator import PathTranslator
 from .spec import (
+    EXEC_ID_ENV,
     Claim,
     TigError,
     build_run_kwargs,
     build_volume_mounts,
     container_display,
     container_name_for,
+    forwarded_signals,
     get_calibration_path,
     get_container_image,
     home_directory,
+    kill_tree_command,
     resolve_calibration_path,
     resolve_disable_path_translation,
     resolve_selinux_label_disable,
@@ -157,14 +161,34 @@ def _exec(plan: _Plan) -> int | None:
     except (EngineError, OSError):
         return None
 
+    # Docker does not pass signals on to an exec, and the container is
+    # shared, so an interrupted tig would leave the tool running; the id
+    # every descendant inherits is how they are found again.
+    exec_id = uuid.uuid4().hex
+    env = {**plan.env, EXEC_ID_ENV: exec_id}
+
     # Allocate a TTY only for interactive use; with a TTY, Docker merges
     # stderr into stdout and mangles redirected output.
-    with _raw_terminal(interactive):
+    with _raw_terminal(interactive), forwarded_signals(
+        lambda signum: _signal_in_container(engine, plan.name, exec_id, signum)
+    ):
         code = engine.exec_command(
-            plan.name, plan.command, plan.workdir, plan.env, tty=interactive
+            plan.name, plan.command, plan.workdir, env, tty=interactive
         )
     _prepare_warm_path(engine, plan)
     return code
+
+
+def _signal_in_container(engine, container: str, exec_id: str, signum: int) -> None:
+    """Signal this invocation's processes inside the shared container."""
+    from .engine import EngineError
+
+    try:
+        engine.exec_detached(
+            container, ["/bin/sh", "-c", kill_tree_command(exec_id, signum)]
+        )
+    except (EngineError, OSError):
+        pass
 
 
 def _warm(plan: _Plan) -> int | None:

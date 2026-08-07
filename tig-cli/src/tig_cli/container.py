@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -14,6 +15,7 @@ from .spec import (  # noqa: F401  (re-exported for callers and tests)
     CALIBRATION_MOUNT,
     CONTAINER_PREFIX,
     DEFAULT_IMAGE,
+    EXEC_ID_ENV,
     IMAGE_PLATFORM,
     RUNNER_MARKER,
     Claim,
@@ -26,6 +28,7 @@ from .spec import (  # noqa: F401  (re-exported for callers and tests)
     get_calibration_path,
     get_container_image,
     home_directory,
+    kill_tree_command,
     resolve_calibration_path,
     selinux_enforcing,
 )
@@ -38,6 +41,9 @@ CREATE_RETRY_DELAY = 0.2
 # How many containers tig keeps around; older idle ones are reaped whenever a
 # new one is created, so working in many directories does not pile them up.
 MAX_KEPT_CONTAINERS = 2
+
+# Seconds allowed for the in-container kill, which runs from a signal handler.
+SIGNAL_TIMEOUT = 5
 
 
 def _started_at(container: Any) -> float:
@@ -109,6 +115,7 @@ class ContainerManager:
         self.container: Optional[Any] = None
         self.container_name = CONTAINER_PREFIX
         self.command: Optional[subprocess.Popen] = None
+        self.exec_id: Optional[str] = None
         self._claim = Claim()
 
     def _build_volume_mounts(
@@ -182,9 +189,12 @@ class ContainerManager:
                     try:
                         self._adopt(existing)
                         return
-                    except docker.errors.APIError:
+                    except docker.errors.APIError as e:
                         if not attempt:
-                            raise
+                            raise TigError(
+                                f"Failed to reuse container "
+                                f"{self.container_name}: {e.explanation or e}"
+                            ) from e
                         time.sleep(CREATE_RETRY_DELAY)
                         continue
                 self._remove(existing)
@@ -220,6 +230,11 @@ class ContainerManager:
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
+        except docker.errors.APIError as e:
+            raise TigError(
+                f"Failed to replace container {container.name}: "
+                f"{e.explanation or e}"
+            ) from e
 
     def _claim_dir(self) -> Path:
         return Claim.directory()
@@ -399,6 +414,8 @@ class ContainerManager:
             translated_args = self.translator.translate_args(args)
             container_cwd = self.translator.get_container_cwd(os.getcwd())
 
+        self.exec_id = uuid.uuid4().hex
+
         exec_args = [
             "docker", "exec",
             "-i",
@@ -406,6 +423,7 @@ class ContainerManager:
             # Passed per exec rather than baked into the container, so that
             # changing displays does not force a new container.
             "-e", f"DISPLAY={container_display()}",
+            "-e", f"{EXEC_ID_ENV}={self.exec_id}",
         ]
 
         # Allocate a TTY only for interactive use; with a TTY, docker merges
@@ -420,6 +438,7 @@ class ContainerManager:
             return self.command.wait()
         finally:
             self.command = None
+            self.exec_id = None
 
     def signal_command(self, signum: int) -> None:
         """Forward a signal to the running docker exec client.
@@ -430,7 +449,28 @@ class ContainerManager:
         """
         if self.command is None:
             return
+        self._signal_in_container(signum)
         try:
             self.command.send_signal(signum)
         except ProcessLookupError:
+            pass
+
+    def _signal_in_container(self, signum: int) -> None:
+        """Signal this invocation's processes inside the container.
+
+        Docker does not proxy signals for ``docker exec``, and the container is
+        shared, so killing the client alone would leave the tool running.
+        """
+        if self.exec_id is None:
+            return
+        kill_tree = kill_tree_command(self.exec_id, signum)
+        try:
+            subprocess.run(
+                ["docker", "exec", self.container_name, "sh", "-c", kill_tree],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=SIGNAL_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
             pass

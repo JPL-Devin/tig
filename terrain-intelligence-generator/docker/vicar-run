@@ -1,0 +1,169 @@
+#!/bin/bash
+# Run a VICAR program and translate its exit code into shell conventions.
+#
+# VICAR programs return 1 on a successful run, so `set -e`, `&&` chains and
+# CI steps all read a normal run as a failure. They also return 1 when TAE
+# rejects the invocation (missing parameter, unknown keyword), so the code
+# alone cannot separate success from a typo -- the only signal is the
+# [TAE-...] diagnostic VICAR prints on stdout.
+#
+# Codes this produces:
+#   0     the program ran
+#   1     TAE rejected the invocation
+#   255   the program called abend()
+#   >128  killed by a signal
+#   other passed through unchanged
+#
+# Usage: vicar-run /path/to/program [args...]
+
+program=$1
+shift
+
+normalize() {
+    # VICAR's success code is 1; anything higher is a genuine failure.
+    if [ "$1" -le 1 ]; then
+        exit 0
+    fi
+    exit "$1"
+}
+
+# One private directory, so the FIFO is created under a name nothing else can
+# reach rather than at a path reserved by mktemp -u.
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+started=$tmpdir/started
+status=$tmpdir/status
+diag=$tmpdir/diagnostic
+progress=$tmpdir/progress
+capture=0
+
+# A rejection stops the run, so the diagnostic is the last line; matching it
+# anywhere would fail an interactive session that recovered from one. The
+# verdict is published as the stream goes, so nothing has to wait for the
+# stream to end. The Script lines are script(1)'s own banners.
+classify() {
+    awk -v diag="$diag" -v progress="$progress" '
+        !/^[[:space:]]*$/ && !/^Script (started|done) on / {
+            d = (/\[TAE-/ || /\*\* ABEND called \*\*/) ? "1" : ""
+            if (d != prev) { printf "%s", d > diag; close(diag); prev = d }
+        }
+        # so the wrapper can tell a reader still catching up from a stalled one
+        NR % 5000 == 0 { printf "%d", NR > progress; close(progress) }
+    '
+}
+
+# $1 = forward: also copy the stream to stdout, which the pipe branch needs and
+# the pty branch must not do, since script(1) already writes to the terminal.
+begin_capture() {
+    capture=$((capture + 1))  # a fresh pair, so a stale reader cannot steal input
+    transcript=$tmpdir/transcript-$capture
+    copy=$tmpdir/copy-$capture
+    mkfifo "$transcript" "$copy"
+    exec 9<> "$transcript"  # a writer of our own, so the reader cannot block on open
+    # The reader closes fd 9 in a subshell: a redirection would only hide it,
+    # since bash keeps a copy to restore and the copy is inherited. It also
+    # waits for the classifier, so its own exit means the verdict is in.
+    if [ "$1" = forward ]; then
+        ( exec 9>&-; classify < "$copy" & tee "$copy" < "$transcript"; wait ) &
+    else
+        ( exec 9>&-; classify < "$transcript" ) &
+    fi
+    reader_pid=$!
+    disown
+}
+
+# The reader's exit means the verdict is in, so it is worth waiting for while it
+# is still consuming. A descendant the program leaves running holds the write
+# end open, though, so a stalled reader is abandoned rather than hung on.
+end_capture() {
+    exec 9>&-
+    local idle=0 total=0 seen="" at
+    while kill -0 "$reader_pid" 2> /dev/null && [ "$total" -lt 1200 ]; do
+        at=$(cat "$progress" 2> /dev/null)
+        if [ "$at" = "$seen" ]; then
+            idle=$((idle + 1))
+            [ "$idle" -ge 20 ] && return
+        else
+            seen=$at
+            idle=0
+        fi
+        total=$((total + 1))
+        sleep 0.05
+    done
+}
+
+# The program keeps stdin and its own foreground status; only the reader is
+# left to drain, and fd 9 is closed so a descendant cannot hold it open.
+run_through_pipe() {
+    "$program" "$@" 9>&- > "$transcript"
+    exit_code=$?
+}
+
+# script(1) reads the terminal to feed the pty, which stops a background job
+# with SIGTTIN, so the pty is only for a foreground job on a full terminal.
+foreground() {
+    local fields
+    read -r fields < /proc/self/stat || return 1
+    # shellcheck disable=SC2086
+    set -- ${fields#*) }  # state ppid pgrp session tty_nr tpgid
+    [ "$3" = "$6" ]
+}
+
+# script(1) waits for the pty to drain, so a descendant left running would keep
+# it -- and the caller -- waiting; end it once the program's status is in.
+reap_script() {
+    local pid=""
+    while [ -z "$pid" ]; do
+        pid=$(pgrep -P $$ -x script)
+        [ -z "$pid" ] && sleep 0.05
+    done
+    while [ ! -e "$status" ]; do
+        kill -0 "$pid" 2> /dev/null || return
+        sleep 0.1
+    done
+    sleep 0.3  # let the rest of the output through first
+    [ "$(ps -o comm= -p "$pid" 2> /dev/null)" = script ] && kill "$pid" 2> /dev/null
+}
+
+if [ -t 0 ] && [ -t 1 ] && [ -t 2 ] && foreground && command -v script > /dev/null; then
+    begin_capture
+    # A pty, not a pipe, so prompts and Motif tools still work. The inner shell
+    # marks the start and records the status, because script's own exit code
+    # cannot distinguish a VICAR run from script failing to start. SHELL is
+    # pinned because script -c runs through it and the quoting is bash's; -e
+    # returns the shell's status, so a signal is not reported as success.
+    reap_script &
+    reaper_pid=$!
+    disown
+    SHELL=/bin/bash script -qefc \
+        "printf 1 > $(printf '%q' "$started"); $(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" \
+        "$transcript" 9>&-
+    script_code=$?
+    kill "$reaper_pid" 2> /dev/null
+    end_capture
+    if [ -s "$status" ]; then
+        exit_code=$(cat "$status")
+    elif [ -s "$started" ]; then
+        # It ran but its status was lost, as when a signal kills the inner
+        # shell; re-running would repeat the work.
+        exit_code=$script_code
+    else
+        begin_capture forward  # script never started it
+        run_through_pipe "$@"
+        end_capture
+    fi
+else
+    begin_capture forward
+    run_through_pipe "$@"
+    end_capture
+fi
+
+case $exit_code in
+    ''|*[!0-9]*) exit_code=1 ;;  # the status file held something unusable
+esac
+
+if [ "$exit_code" -le 1 ] && [ -s "$diag" ]; then
+    exit 1
+fi
+
+normalize "$exit_code"

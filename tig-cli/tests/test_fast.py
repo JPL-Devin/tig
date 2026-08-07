@@ -7,6 +7,7 @@ import pytest
 from tig_cli import fast
 from tig_cli.engine import Engine, EngineUnavailable
 from tig_cli.spec import (
+    EXEC_ID_ENV,
     build_run_kwargs,
     build_volume_mounts,
     container_display,
@@ -67,7 +68,9 @@ def test_runs_in_the_container_the_cli_would_use(host, engine):
     assert name == expected_name(host)
     assert command == ["vicar", "in.img"]
     assert workdir == os.path.realpath(host)
-    assert env == {"DISPLAY": container_display()}
+    assert env["DISPLAY"] == container_display()
+    # Every process of this invocation carries it, so a signal can find them.
+    assert env[EXEC_ID_ENV]
 
 
 def test_translates_host_paths(host, engine):
