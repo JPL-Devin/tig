@@ -948,15 +948,17 @@ def test_list_tools_returns_sorted_unique_names(home_dir):
     assert manager.list_tools() == ["marsmap", "marsmesh"]
 
 
-def test_list_tools_ignores_directory_headers(home_dir):
+def test_list_tools_asks_only_for_executables(home_dir):
+    """The tool directories also hold payloads such as vicario.jar."""
     manager = make_manager(home_dir)
     manager.container = MagicMock(
-        exec_run=MagicMock(
-            return_value=Mock(exit_code=0, output=b"/usr/local/bin:\nmarsmap\n\n")
-        )
+        exec_run=MagicMock(return_value=Mock(exit_code=0, output=b"marsmap\n"))
     )
 
     assert manager.list_tools() == ["marsmap"]
+    command = manager.container.exec_run.call_args[0][0]
+    assert command[0] == "find"
+    assert "-executable" in command
 
 
 def test_list_tools_without_a_container(home_dir):

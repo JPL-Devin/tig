@@ -588,8 +588,14 @@ class ContainerManager:
         if self.container is None:
             raise TigError("No container is running.")
         try:
+            # Executable files only: the tool directories also hold payloads
+            # such as vicario.jar, which is not a command.
             result = self.container.exec_run(
-                ["ls", "-1", *TOOL_PATHS], demux=False
+                [
+                    "find", *TOOL_PATHS, "-maxdepth", "1",
+                    "-type", "f", "-executable", "-printf", "%f\\n",
+                ],
+                demux=False,
             )
         except docker.errors.APIError as e:
             raise TigError(f"Failed to list VICAR tools: {e}") from e
@@ -601,9 +607,7 @@ class ContainerManager:
             )
         return sorted({
             line.strip() for line in output.splitlines()
-            # 'ls' prints a 'dir:' header per directory when given several.
-            if line.strip() and not line.rstrip().endswith(":")
-            and "/" not in line
+            if line.strip() and "/" not in line
         })
 
     def execute_vicar_command(
