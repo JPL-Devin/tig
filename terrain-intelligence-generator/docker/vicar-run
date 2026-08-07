@@ -27,12 +27,15 @@ normalize() {
     exit "$1"
 }
 
-status=$(mktemp)
-last_line=$(mktemp)
-produced_output=$(mktemp)
-transcript=$(mktemp -u)
-mkfifo -m 600 "$transcript"
-trap 'rm -f "$status" "$last_line" "$produced_output" "$transcript"' EXIT
+# One private directory, so the FIFO is created under a name nothing else can
+# reach rather than at a path reserved by mktemp -u.
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+status=$tmpdir/status
+last_line=$tmpdir/last-line
+produced_output=$tmpdir/produced-output
+transcript=$tmpdir/transcript
+mkfifo "$transcript"
 
 # Only the last meaningful line is ever needed, so the output streams through
 # a filter that keeps just that line; nothing is stored in full. The Script
@@ -54,8 +57,10 @@ end_capture() {
     wait "$filter_pid"
 }
 
+# fd 9 is closed for everything the program can outlive: a descendant holding
+# the write end would keep the filter waiting for input that never comes.
 run_through_pipe() {
-    "$program" "$@" | tee "$transcript"
+    "$program" "$@" 9>&- | tee "$transcript" 9>&-
     exit_code=${PIPESTATUS[0]}
 }
 
@@ -77,7 +82,7 @@ if [ -t 0 ] && [ -t 1 ] && [ -t 2 ] && foreground && command -v script > /dev/nu
     # a VICAR run from script failing to start. SHELL is pinned because
     # script -c runs through it and the quoting is bash's.
     SHELL=/bin/bash script -qfc \
-        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$transcript"
+        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$transcript" 9>&-
     script_code=$?
     end_capture
     if [ -s "$status" ]; then
