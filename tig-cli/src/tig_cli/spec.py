@@ -27,6 +27,11 @@ IMAGE_PLATFORM = "linux/amd64"
 
 CONTAINER_PREFIX = "tig-vicar"
 
+# Last argument of the dispatcher's and the agent's exec, marking them as
+# tig's own: they run for as long as the container does, so reaping must not
+# mistake them for a command someone is waiting on.
+RUNNER_MARKER = "tig-runner"
+
 # Directory of claim files (one per invocation) naming the container each live
 # tig process is using, so reaping never removes a container out from under a
 # concurrent invocation. Per-boot state: stale claims are ignored by PID.

@@ -15,6 +15,7 @@ from .spec import (  # noqa: F401  (re-exported for callers and tests)
     CONTAINER_PREFIX,
     DEFAULT_IMAGE,
     IMAGE_PLATFORM,
+    RUNNER_MARKER,
     Claim,
     TigError,
     build_run_kwargs,
@@ -283,20 +284,30 @@ class ContainerManager:
         """Whether any of a container's exec instances is still running.
 
         Docker prunes finished execs, so this only guards against a command
-        started outside tig; claims cover tig's own invocations.
+        started outside tig; claims cover tig's own invocations. tig's own
+        dispatcher and broker agent run for the container's whole life, so
+        they are not what busy means here.
 
         Assumes busy when Docker cannot say, so a container in use by another
         invocation is never reaped on the strength of a failed check.
         """
         for exec_id in exec_ids:
             try:
-                if self.client.api.exec_inspect(exec_id).get("Running"):
-                    return True
+                details = self.client.api.exec_inspect(exec_id)
             except docker.errors.NotFound:
                 continue
             except docker.errors.APIError:
                 return True
+            if details.get("Running") and not self._is_runner(details):
+                return True
         return False
+
+    @staticmethod
+    def _is_runner(details: dict) -> bool:
+        """Whether an exec is tig's own in-container runner."""
+        process = details.get("ProcessConfig") or {}
+        arguments = process.get("arguments") or []
+        return RUNNER_MARKER in arguments
 
     def _get_container(self, name: str) -> Optional[Any]:
         try:

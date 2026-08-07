@@ -12,6 +12,7 @@ from tig_cli.container import (
     ContainerManager,
     IMAGE_PLATFORM,
     MAX_KEPT_CONTAINERS,
+    RUNNER_MARKER,
     TigError,
     ensure_x11_ready,
     get_calibration_path,
@@ -490,15 +491,42 @@ def test_reaping_never_touches_the_container_in_use(home_dir):
 
 def test_reaping_skips_a_container_running_a_command_started_outside_tig(home_dir):
     """A hand-run 'docker exec' also keeps a container alive."""
-    busy = make_container(f"{CONTAINER_PREFIX}-busy", exec_ids=["exec1"])
-    idle = make_container(f"{CONTAINER_PREFIX}-idle")
-    client = make_client(containers=[busy, idle])
-    client.api.exec_inspect.return_value = {"Running": True}
+    newer = make_container(f"{CONTAINER_PREFIX}-newer", "2022-01-01T00:00:00Z")
+    busy = make_container(
+        f"{CONTAINER_PREFIX}-busy", "2020-01-01T00:00:00Z", exec_ids=["exec1"]
+    )
+    client = make_client(containers=[newer, busy])
+    client.api.exec_inspect.return_value = {
+        "Running": True,
+        "ProcessConfig": {"entrypoint": "vicar", "arguments": ["in.img"]},
+    }
 
     manager = make_manager(home_dir, client=client)
     manager.ensure_container([])
 
     busy.remove.assert_not_called()
+
+
+def test_reaping_still_removes_a_container_running_only_tigs_runner(home_dir):
+    """The dispatcher and agent live as long as the container; they are not
+    a command anyone is waiting on."""
+    newer = make_container(f"{CONTAINER_PREFIX}-newer", "2022-01-01T00:00:00Z")
+    surplus = make_container(
+        f"{CONTAINER_PREFIX}-surplus", "2020-01-01T00:00:00Z", exec_ids=["exec1"]
+    )
+    client = make_client(containers=[newer, surplus])
+    client.api.exec_inspect.return_value = {
+        "Running": True,
+        "ProcessConfig": {
+            "entrypoint": "/bin/sh",
+            "arguments": ["/run/dispatch.sh", "/run", "/run/control", RUNNER_MARKER],
+        },
+    }
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    surplus.remove.assert_called_once()
 
 
 def test_reaping_skips_a_container_when_docker_cannot_say(home_dir):

@@ -34,6 +34,7 @@ from .broker import (
     STARTUP_TIMEOUT,
     socket_path,
 )
+from .spec import RUNNER_MARKER
 
 # What the agent dials to reach this broker. On Docker Desktop the container
 # runs in a virtual machine and reaches the host by name; elsewhere the
@@ -108,6 +109,7 @@ class Broker:
                     "tig-agent",
                     HOST_ADDRESS,
                     str(self.port),
+                    RUNNER_MARKER,
                 ],
                 {"TIG_BROKER_TOKEN": self.token},
             )
@@ -128,6 +130,10 @@ class Broker:
     def _loop(self) -> None:
         while self.control is not None:
             now = time.monotonic()
+            if self.jobs:
+                # A command still running is not idleness: an idle deadline
+                # left behind would have every select() return at once.
+                self.idle_until = now + IDLE_TIMEOUT
             deadlines = [self.idle_until] + [
                 deadline
                 for deadline in (job.next_deadline() for job in self.jobs.values())
@@ -666,15 +672,21 @@ def _answer(connection: socket.socket, answer: bytes) -> None:
 def _listen_unix(address: str) -> socket.socket:
     """Listen for clients, refusing to displace a broker already serving."""
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    # The socket is owner-only from the moment it exists; tightening it after
+    # binding would leave a moment in which anyone could connect.
+    previous = os.umask(0o177)
     try:
-        server.bind(address)
-    except OSError as e:
-        if e.errno != errno.EADDRINUSE:
-            raise
-        if _answering(address):
-            raise
-        os.unlink(address)
-        server.bind(address)
+        try:
+            server.bind(address)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+            if _answering(address):
+                raise
+            os.unlink(address)
+            server.bind(address)
+    finally:
+        os.umask(previous)
     os.chmod(address, 0o600)
     server.listen(64)
     server.setblocking(False)

@@ -23,7 +23,7 @@ import selectors
 import signal
 import sys
 
-from .spec import TigError
+from .spec import RUNNER_MARKER, TigError
 
 DISABLE_ENV = "TIG_NO_DISPATCHER"
 
@@ -180,7 +180,8 @@ def ensure_running(engine, container: str, home: str) -> None:
         return
     try:
         engine.exec_detached(
-            container, [SHELL, paths.script, paths.rundir, paths.control]
+            container,
+            [SHELL, paths.script, paths.rundir, paths.control, RUNNER_MARKER],
         )
     except EngineError:
         pass
