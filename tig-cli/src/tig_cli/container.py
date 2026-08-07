@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -43,6 +44,13 @@ XQUARTZ_START_TIMEOUT = 5.0
 # Where calibration files (VISOR / mars_calibration_*) are mounted, matching
 # the layout VICAR's MARS programs expect.
 CALIBRATION_MOUNT = "/usr/local/vicar/mars_calib"
+
+# Marks the processes of one invocation, so a signal can reach them inside the
+# shared container. Every descendant inherits it.
+EXEC_ID_ENV = "TIG_EXEC_ID"
+
+# Seconds allowed for the in-container kill, which runs from a signal handler.
+SIGNAL_TIMEOUT = 5
 
 
 class TigError(Exception):
@@ -214,6 +222,7 @@ class ContainerManager:
         self.container: Optional[Any] = None
         self.container_name = CONTAINER_PREFIX
         self.command: Optional[subprocess.Popen] = None
+        self.exec_id: Optional[str] = None
         self.claim: Optional[Path] = None
 
     def _resolve_calibration_path(self, path: Optional[str]) -> Optional[str]:
@@ -351,9 +360,12 @@ class ContainerManager:
                     try:
                         self._adopt(existing)
                         return
-                    except docker.errors.APIError:
+                    except docker.errors.APIError as e:
                         if not attempt:
-                            raise
+                            raise TigError(
+                                f"Failed to reuse container "
+                                f"{self.container_name}: {e.explanation or e}"
+                            ) from e
                         time.sleep(CREATE_RETRY_DELAY)
                         continue
                 self._remove(existing)
@@ -389,6 +401,11 @@ class ContainerManager:
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
+        except docker.errors.APIError as e:
+            raise TigError(
+                f"Failed to replace container {container.name}: "
+                f"{e.explanation or e}"
+            ) from e
 
     def _claim_dir(self) -> Path:
         runtime = os.environ.get("XDG_RUNTIME_DIR")
@@ -598,6 +615,8 @@ class ContainerManager:
             translated_args = self.translator.translate_args(args)
             container_cwd = self.translator.get_container_cwd(os.getcwd())
 
+        self.exec_id = uuid.uuid4().hex
+
         if sys.platform == "darwin":
             display = "host.docker.internal:0"
         else:
@@ -610,6 +629,7 @@ class ContainerManager:
             # Passed per exec rather than baked into the container, so that
             # changing displays does not force a new container.
             "-e", f"DISPLAY={display}",
+            "-e", f"{EXEC_ID_ENV}={self.exec_id}",
         ]
 
         # Allocate a TTY only for interactive use; with a TTY, docker merges
@@ -624,6 +644,7 @@ class ContainerManager:
             return self.command.wait()
         finally:
             self.command = None
+            self.exec_id = None
 
     def signal_command(self, signum: int) -> None:
         """Forward a signal to the running docker exec client.
@@ -634,7 +655,34 @@ class ContainerManager:
         """
         if self.command is None:
             return
+        self._signal_in_container(signum)
         try:
             self.command.send_signal(signum)
         except ProcessLookupError:
+            pass
+
+    def _signal_in_container(self, signum: int) -> None:
+        """Signal this invocation's processes inside the container.
+
+        Docker does not proxy signals for ``docker exec``, and the container is
+        shared, so killing the client alone would leave the tool running.
+        """
+        if self.exec_id is None:
+            return
+        # /proc is the only way in: the exec id is in the environment of the
+        # tool and of everything it started.
+        kill_tree = (
+            "for p in /proc/[0-9]*; do "
+            f'grep -qz {EXEC_ID_ENV}={self.exec_id} "$p/environ" 2>/dev/null '
+            f'&& kill -{signum} "${{p#/proc/}}" 2>/dev/null; done'
+        )
+        try:
+            subprocess.run(
+                ["docker", "exec", self.container_name, "sh", "-c", kill_tree],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=SIGNAL_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
             pass
