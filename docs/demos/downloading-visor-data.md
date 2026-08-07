@@ -1,150 +1,125 @@
 # Downloading VISOR Data
 
-VISOR (VIsualization System for Orbital Reconnaissance) calibration and sample data are available from the VICAR GitHub releases but are **not bundled** in the TIG Docker image to reduce image size.
+VISOR (VIsualization System for Orbital Reconnaissance) calibration and sample data are published as assets of the [VICAR 5.0 release](https://github.com/NASA-AMMOS/VICAR/releases/tag/5.0). The base TIG Docker image does **not** bundle them, to keep it small.
+
+If you work on a single mission, you probably do not need this page: the
+`:visor-<mission>` image variants ship that mission's calibration already
+extracted and configured. See [Mounting MARS Calibration Data](../reference/calibration-data.md).
+Sample data is not in those variants, so download it here.
 
 ## Quick Download
 
 ```bash
-# Create directory for VISOR data
 mkdir -p visor_data
 
-# Download and extract sample data (~1.3GB)
+# Sample data (740MB compressed, 1.3GB extracted)
 curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_data_20230623.tar.gz" | \
   tar -zxf - -C visor_data
 
-# Download and extract Phoenix calibration
-curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_phx.tar.gz" | \
+# Calibration for one mission - here MSL (380MB compressed)
+curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_msl.tar.gz" | \
   tar -zxf - -C visor_data
+```
 
-# Download and extract MER calibration  
-curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_mer.tar.gz" | \
+M20 is the exception: GitHub caps a release asset at 2GB, so its calibration is published as two parts that must be concatenated before extraction.
+
+```bash
+curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_m20.tar.gzaa" \
+        "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_m20.tar.gzab" | \
   tar -zxf - -C visor_data
 ```
 
 **Result:**
 ```
 visor_data/
-├── samples/
-│   └── sample_data/
-│       ├── OrthorectifiedMosaic/    # Pre-computed XYZ point clouds
-│       └── StereoCorrelation/       # Stereo image pairs
-└── calib/
-    ├── phx/                         # Phoenix lander calibration
-    └── mer/                         # MER rover calibration
+├── sample_data/                     # from visor_sample_data_20230623.tar.gz
+│   ├── OrthorectifiedMosaic/        # Pre-computed XYZ point clouds
+│   ├── StereoCorrelation/           # Stereo image pairs
+│   ├── RadiometricCorrection/       # Raw EDRs for marsrad
+│   └── ...                          # ~20 more per-workflow directories
+└── calibration/                     # from each visor_calibration_* archive
+    └── msl/
+        ├── camera_models/           # *.cahvor, *.cahvore
+        ├── flat_fields/             # *.IMG
+        ├── ilut/
+        ├── param_files/             # *_camera_mapping.xml, *.parms
+        └── rmc/
 ```
+
+`tig --calibration-path` (or `MARS_CONFIG_PATH`, or `calibration_path` in a config file) takes the *mission* directory, `visor_data/calibration/msl` above - the directory that directly contains `camera_models/`.
 
 ## What's Included
 
-### Sample Data (~1.3GB)
+### Calibration
 
-Pre-computed stereo data products for testing without running full correlation pipeline:
+Camera models (CAHVOR/CAHVORE), flat fields, inverse lookup tables, camera mapping XML and rover motion counter files, per mission.
 
-- **Orthorectified Mosaics**: XYZ point clouds ready for mesh generation
-- **Stereo Pairs**: Calibrated stereo images for correlation testing
-- **Missions**: Phoenix lander, MER rovers
+| Asset | Mission | Compressed | Extracted |
+| --- | --- | --- | --- |
+| `visor_calibration_20230608_m20.tar.gzaa` + `...ab` | Mars 2020 / Perseverance | 2.69 GB | 5.3 GB |
+| `visor_calibration_20230608_mer.tar.gz` | MER / Spirit and Opportunity | 845 MB | 989 MB |
+| `visor_calibration_20230608_phx.tar.gz` | Phoenix | 258 MB | 627 MB |
+| `visor_calibration_20230608_msl.tar.gz` | Mars Science Laboratory / Curiosity | 380 MB | 532 MB |
+| `visor_calibration_20230608_msam.tar.gz` | MSAM | 366 MB | 516 MB |
+| `visor_calibration_20230608_nsyt.tar.gz` | InSight | 117 MB | 159 MB |
+| **Total (all six)** | | **4.6 GB** | **8.1 GB** |
 
-### Calibration Data (~1.7GB)
+### Sample Data (740MB compressed, 1.3GB extracted)
 
-Camera models and calibration parameters:
-
-- **Phoenix**: Surface Stereo Imager (SSI) camera models
-- **MER**: Navigation Camera (Navcam) and Panoramic Camera (Pancam) models
-- **Formats**: CAHVORE camera models, flat field corrections
-
-## Usage with TIG
-
-### With demo-mesh-generation-complete.sh
-
-```bash
-# Run demo with VISOR sample data
-./demo-mesh-generation-complete.sh --visor-samples visor_data/samples
-```
-
-### With Docker directly
-
-```bash
-# Mount VISOR data as read-only volumes
-docker run -d --name tig-demo \
-  -v $(pwd)/workspace:/workspace:Z \
-  -v $(pwd)/visor_data/samples:/usr/local/vicar/visor_samples:ro,Z \
-  -v $(pwd)/visor_data/calib:/usr/local/vicar/visor_calib:ro,Z \
-  ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
-```
-
-### Setting environment variables (optional)
-
-```bash
-# Inside container, export paths
-export VISOR_SAMPLES=/usr/local/vicar/visor_samples
-export VISOR_CALIB=/usr/local/vicar/visor_calib
-```
-
-## File Details
-
-### visor_sample_data_20230623.tar.gz
-
-- **Size**: ~1.3GB compressed
-- **Extracted**: ~1.35GB
-- **Contents**: 
-  - NavCam stereo pairs (Phoenix, MER)
-  - Pre-computed XYZ point clouds
-  - Example disparity maps
+`visor_sample_data_20230623.tar.gz`. Inputs and pre-computed products for the VICAR sample workflows - stereo pairs, disparity maps, XYZ point clouds, mosaics, raw EDRs - plus the `Scripts/` csh drivers that run them. Predominantly MSL Navcam, with some MER Pancam.
 
 **Example files:**
 ```
-samples/sample_data/OrthorectifiedMosaic/
-  NLB_712299404XYZ_F0961766NCAM00353M1.IMG  # XYZ point cloud
+sample_data/StereoCorrelation/
+  NLB_712299404EDR_F0961766NCAM00353M1.IMG   # Left image
+  NRB_712299404EDR_F0961766NCAM00353M1.IMG   # Right image
 
-samples/sample_data/StereoCorrelation/
-  NLB_712299404EDR_F0961766NCAM00353M1.IMG  # Left image
-  NRB_712299404EDR_F0961766NCAM00353M1.IMG  # Right image
+sample_data/OrthorectifiedMosaic/
+  NLB_712299404XYZ_F0961766NCAM00353M1.IMG   # XYZ point cloud
 ```
 
-### visor_calibration_20230608_phx.tar.gz
+## Usage with TIG
 
-- **Size**: ~800MB compressed
-- **Mission**: Phoenix Mars Lander
-- **Instruments**: Surface Stereo Imager (SSI)
+```bash
+# Per invocation
+tig --calibration-path visor_data/calibration/msl marsrad edr.IMG out.RAD.IMG
 
-### visor_calibration_20230608_mer.tar.gz
+# Or for the session
+export MARS_CONFIG_PATH="$(pwd)/visor_data/calibration/msl"
+tig marsrad edr.IMG out.RAD.IMG
+```
 
-- **Size**: ~900MB compressed  
-- **Missions**: Spirit and Opportunity rovers
-- **Instruments**: Navcam, Pancam
+The path is mounted read-only at `/usr/local/vicar/mars_calib` inside the container, and `MARS_CONFIG_PATH` is set to that location. On a `:visor-<mission>` image the same mount replaces the bundled calibration; see [Mounting MARS Calibration Data](../reference/calibration-data.md).
+
+Sample data is just input files - mount it like any other data, or keep it under your home directory, which `tig` mounts already:
+
+```bash
+tig marsrad visor_data/sample_data/RadiometricCorrection/NLB_712299404EDR_F0961766NCAM00353M1.IMG out.RAD.IMG
+```
 
 ## Alternative: Download Individual Files
 
-If you only need specific samples, browse releases directly:
+If you only need specific samples, browse the release directly:
 
 https://github.com/NASA-AMMOS/VICAR/releases/tag/5.0
-
-## Disk Space Requirements
-
-| Component | Compressed | Extracted |
-|-----------|------------|-----------|
-| Sample data | ~1.3GB | ~1.35GB |
-| Phoenix calibration | ~800MB | ~850MB |
-| MER calibration | ~900MB | ~950MB |
-| **Total (all)** | **~3GB** | **~3.15GB** |
 
 ## Troubleshooting
 
 ### "404 Not Found" errors
 
-Check VICAR releases page for latest version:
+Asset names contain a date stamp that is not the release version. Check the release page, or list the assets:
+
 ```bash
-# Replace 5.0 with current version
-VICAR_VERSION=5.0
-curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/${VICAR_VERSION}/visor_sample_data_20230623.tar.gz"
+gh release view 5.0 --repo NASA-AMMOS/VICAR --json assets \
+  --jq '.assets[] | "\(.name)\t\(.size)"'
 ```
 
-### Extraction fails
+### M20 extraction fails with "unexpected end of file"
 
-Ensure `tar` supports gzip:
+The two M20 parts were produced by `split`; neither is a valid archive on its own. Concatenate them, either through `curl` as above or on disk:
+
 ```bash
-# Extract in two steps
-curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_data_20230623.tar.gz" -o visor_samples.tar.gz
-tar -zxf visor_samples.tar.gz -C visor_data
+cat visor_calibration_20230608_m20.tar.gzaa visor_calibration_20230608_m20.tar.gzab | tar -xz -C visor_data
 ```
 
 ### Slow download
