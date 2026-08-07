@@ -142,6 +142,16 @@ to see which containers exist and what each has mounted read-write.
 Interrupting a command (Ctrl-C, `SIGTERM`) stops that command and leaves the
 container up for the next one; `tig --shutdown` removes it.
 
+## Warm command latency
+
+Once the container is up, `tig <tool> <args...>` runs on a warm path that talks
+to the Docker daemon socket directly, so a command costs neither the `docker`
+CLI's startup nor the Docker SDK's and click's imports. Anything the warm path
+does not recognise - options, a container that is not running, a re-pulled
+image, a Docker setup it cannot drive (TLS, an unknown context) - falls back to
+the full path, which behaves exactly as before. Set `TIG_NO_FAST_PATH=1` to
+always take the full path.
+
 ## MARS / VISOR calibration files
 
 VICAR's MARS programs need mission calibration data, which is not in the image.

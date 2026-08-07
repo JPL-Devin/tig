@@ -9,15 +9,10 @@ Configuration is read from up to three files, each overriding the previous:
 Setting ``TIG_CONFIG`` (or passing an explicit path) replaces the search
 entirely and loads only that file.
 """
-import os
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib
+import os
+from pathlib import Path
 
 SYSTEM_CONFIG_PATH = Path("/etc/tig/config.toml")
 USER_CONFIG_SUBPATH = Path("tig/config.toml")
@@ -36,20 +31,40 @@ class ConfigError(Exception):
     """Raised when a configuration file is unreadable or invalid."""
 
 
-@dataclass
 class Config:
     """Resolved configuration values.
 
     ``None`` means the setting was not configured, so a caller may fall back
     to an environment variable or a built-in default.
+
+    Hand-written rather than a dataclass: importing ``dataclasses`` costs
+    more than everything this module does, on every tig invocation.
     """
 
-    image: Optional[str] = None
-    writable_paths: List[str] = field(default_factory=list)
-    disable_path_translation: Optional[bool] = None
-    calibration_path: Optional[str] = None
-    selinux_label_disable: Optional[bool] = None
-    sources: List[Path] = field(default_factory=list)
+    def __init__(
+        self,
+        image: str | None = None,
+        writable_paths: list[str] | None = None,
+        disable_path_translation: bool | None = None,
+        calibration_path: str | None = None,
+        selinux_label_disable: bool | None = None,
+        sources: list[Path] | None = None,
+    ):
+        self.image = image
+        self.writable_paths: list[str] = writable_paths or []
+        self.disable_path_translation = disable_path_translation
+        self.calibration_path = calibration_path
+        self.selinux_label_disable = selinux_label_disable
+        self.sources: list[Path] = sources or []
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Config):
+            return NotImplemented
+        return vars(self) == vars(other)
+
+    def __repr__(self) -> str:
+        values = ", ".join(f"{key}={value!r}" for key, value in vars(self).items())
+        return f"Config({values})"
 
 
 def user_config_path() -> Path:
@@ -59,7 +74,7 @@ def user_config_path() -> Path:
     return base / USER_CONFIG_SUBPATH
 
 
-def find_project_config(start: Optional[Path] = None) -> Optional[Path]:
+def find_project_config(start: Path | None = None) -> Path | None:
     """Return the nearest ``tig.toml`` at or above ``start``.
 
     Args:
@@ -73,7 +88,7 @@ def find_project_config(start: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def config_search_paths(start: Optional[Path] = None) -> List[Path]:
+def config_search_paths(start: Path | None = None) -> list[Path]:
     """Return the configuration files to load, lowest precedence first."""
     explicit = os.environ.get("TIG_CONFIG")
     if explicit:
@@ -86,7 +101,13 @@ def config_search_paths(start: Optional[Path] = None) -> List[Path]:
     return paths
 
 
-def _read_file(path: Path) -> Dict[str, Any]:
+def _read_file(path: Path) -> dict:
+    # Imported here so invocations without a config file never load it.
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib
+
     try:
         with open(path, "rb") as handle:
             data = tomllib.load(handle)
@@ -104,7 +125,7 @@ def _read_file(path: Path) -> Dict[str, Any]:
     return data
 
 
-def _apply(config: Config, data: Dict[str, Any], path: Path) -> None:
+def _apply(config: Config, data: dict, path: Path) -> None:
     if "image" in data:
         value = data["image"]
         if not isinstance(value, str):
@@ -137,8 +158,8 @@ def _apply(config: Config, data: Dict[str, Any], path: Path) -> None:
 
 
 def load_config(
-    path: Optional[Path] = None,
-    start: Optional[Path] = None,
+    path: Path | None = None,
+    start: Path | None = None,
 ) -> Config:
     """Load and merge the configuration layers.
 
@@ -168,7 +189,7 @@ def load_config(
     return config
 
 
-def _env_bool(name: str) -> Optional[bool]:
+def _env_bool(name: str) -> bool | None:
     raw = os.environ.get(name)
     if raw is None:
         return None
@@ -180,7 +201,7 @@ def _env_bool(name: str) -> Optional[bool]:
     raise ConfigError(f"{name} must be a boolean value, got {raw!r}.")
 
 
-def env_writable_paths() -> Optional[List[str]]:
+def env_writable_paths() -> list[str] | None:
     """Return paths from ``TIG_WRITABLE_PATHS`` (``os.pathsep``-separated)."""
     raw = os.environ.get("TIG_WRITABLE_PATHS")
     if raw is None:
@@ -188,12 +209,12 @@ def env_writable_paths() -> Optional[List[str]]:
     return [p for p in raw.split(os.pathsep) if p]
 
 
-def env_disable_path_translation() -> Optional[bool]:
+def env_disable_path_translation() -> bool | None:
     """Return the value of ``TIG_DISABLE_PATH_TRANSLATION``, if set."""
     return _env_bool("TIG_DISABLE_PATH_TRANSLATION")
 
 
-def env_selinux_label_disable() -> Optional[bool]:
+def env_selinux_label_disable() -> bool | None:
     """Return the value of ``TIG_SELINUX_LABEL_DISABLE``, if set."""
     return _env_bool("TIG_SELINUX_LABEL_DISABLE")
 

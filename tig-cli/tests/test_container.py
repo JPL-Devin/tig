@@ -601,7 +601,33 @@ def test_reusing_a_container_does_not_reap(home_dir):
 
 # --- SELinux ---
 
-def test_selinux_enforcing_reads_getenforce():
+def test_selinux_enforcing_reads_the_kernel_state(tmp_path, monkeypatch):
+    enforce = tmp_path / "enforce"
+    enforce.write_text("1\n")
+    monkeypatch.setattr('tig_cli.spec.SELINUX_ENFORCE_PATH', str(enforce))
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.subprocess.run') as run:
+        assert selinux_enforcing() is True
+
+    # The kernel state answers on its own; no process is spawned for it.
+    run.assert_not_called()
+
+
+def test_selinux_permissive_is_not_enforcing(tmp_path, monkeypatch):
+    enforce = tmp_path / "enforce"
+    enforce.write_text("0\n")
+    monkeypatch.setattr('tig_cli.spec.SELINUX_ENFORCE_PATH', str(enforce))
+
+    with patch('sys.platform', 'linux'):
+        assert selinux_enforcing() is False
+
+
+def test_selinux_falls_back_to_getenforce(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
+
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
          patch('tig_cli.container.subprocess.run',
@@ -609,7 +635,11 @@ def test_selinux_enforcing_reads_getenforce():
         assert selinux_enforcing() is True
 
 
-def test_selinux_permissive_is_not_enforcing():
+def test_selinux_permissive_from_getenforce(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
+
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
          patch('tig_cli.container.subprocess.run',
@@ -617,17 +647,11 @@ def test_selinux_permissive_is_not_enforcing():
         assert selinux_enforcing() is False
 
 
-def test_selinux_falls_back_to_the_kernel_state(tmp_path):
-    enforce = tmp_path / "enforce"
-    enforce.write_text("1\n")
+def test_selinux_absent_when_there_is_no_selinux(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
 
-    with patch('sys.platform', 'linux'), \
-         patch('tig_cli.container.shutil.which', return_value=None), \
-         patch('tig_cli.container.Path', return_value=enforce):
-        assert selinux_enforcing() is True
-
-
-def test_selinux_absent_when_there_is_no_selinux():
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value=None):
         assert selinux_enforcing() is False
