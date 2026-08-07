@@ -30,8 +30,12 @@ def home_dir(tmp_path):
 
 def make_manager(home, image="test-image:latest", client=None, **kwargs):
     """Build a ContainerManager with Docker mocked out."""
+    # which() is stubbed too: Docker is mocked, and the CLI is absent from the
+    # macOS runners.
     with patch('tig_cli.container.docker.from_env',
                return_value=client or MagicMock()), \
+         patch('tig_cli.container.shutil.which',
+               side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None), \
          patch.dict(os.environ, {"HOME": home}):
         return ContainerManager(image, **kwargs)
 
@@ -144,6 +148,7 @@ def test_missing_docker_cli_is_user_facing(home_dir):
 def test_docker_daemon_unavailable_is_user_facing(home_dir):
     with patch('tig_cli.container.docker.from_env',
                side_effect=docker.errors.DockerException("boom")), \
+         patch('tig_cli.container.shutil.which', return_value="/usr/bin/docker"), \
          patch.dict(os.environ, {"HOME": home_dir}):
         with pytest.raises(TigError, match="Is the Docker daemon running"):
             ContainerManager("test-image:latest")
@@ -386,6 +391,34 @@ def test_ensure_container_api_error_is_user_facing(home_dir):
 
     manager = make_manager(home_dir, client=client)
     with pytest.raises(TigError, match="Failed to start container"):
+        manager.ensure_container([])
+
+
+def test_ensure_container_reuse_failure_is_user_facing(home_dir):
+    """A container that cannot be started is an error, not a traceback."""
+    client = make_client()
+    existing = MagicMock(status="exited")
+    existing.image.id = "sha256:image"
+    existing.start.side_effect = docker.errors.APIError("denied")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    with pytest.raises(TigError, match="Failed to reuse container"):
+        manager.ensure_container([])
+
+
+def test_ensure_container_replacement_failure_is_user_facing(home_dir):
+    """So is a container that cannot be replaced."""
+    client = make_client(image_id="sha256:new")
+    existing = MagicMock(status="running")
+    existing.image.id = "sha256:old"
+    existing.remove.side_effect = docker.errors.APIError("in use")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    with pytest.raises(TigError, match="Failed to replace container"):
         manager.ensure_container([])
 
 
@@ -916,11 +949,39 @@ def test_signal_command_forwards_to_the_running_client(home_dir):
     command = MagicMock()
     manager.command = command
 
-    manager.signal_command(15)
+    with patch("tig_cli.container.subprocess.run"):
+        manager.signal_command(15)
 
     command.send_signal.assert_called_once_with(15)
     # Waiting here would deadlock against the wait() the main flow is in.
     command.wait.assert_not_called()
+
+
+def test_signal_command_kills_the_processes_in_the_container(home_dir):
+    """Docker does not proxy signals to an exec, so tig has to do it."""
+    manager = make_manager(home_dir)
+    manager.command = MagicMock()
+    manager.container_name = "tig-vicar-abc"
+    manager.exec_id = "deadbeef"
+
+    with patch("tig_cli.container.subprocess.run") as run:
+        manager.signal_command(15)
+
+    command = run.call_args[0][0]
+    assert command[:3] == ["docker", "exec", "tig-vicar-abc"]
+    assert "TIG_EXEC_ID=deadbeef" in command[-1]
+    assert "kill -15" in command[-1]
+
+
+def test_signal_command_tolerates_a_failing_kill(home_dir):
+    manager = make_manager(home_dir)
+    manager.command = MagicMock()
+    manager.exec_id = "deadbeef"
+
+    with patch("tig_cli.container.subprocess.run", side_effect=OSError):
+        manager.signal_command(15)  # should not raise
+
+    manager.command.send_signal.assert_called_once_with(15)
 
 
 def test_signal_command_tolerates_an_exited_client(home_dir):
@@ -929,7 +990,8 @@ def test_signal_command_tolerates_an_exited_client(home_dir):
         send_signal=MagicMock(side_effect=ProcessLookupError)
     )
 
-    manager.signal_command(15)  # should not raise
+    with patch("tig_cli.container.subprocess.run"):
+        manager.signal_command(15)  # should not raise
 
 
 def test_signal_command_without_running_command(home_dir):
