@@ -339,12 +339,17 @@ echo ""
 # Convert texture using Java vicario, which rescales 16-bit VICAR images
 # properly (oform=byte rescale=true).
 echo "Step 3: Converting texture to PNG..."
-tig vicario texture.img texture.png 2>&1 |
-  grep -E "Image write Done|inp =|out =|format =|oform =|rescale =" || true
+# Keep the output: on failure the whole log is the only diagnostic.
+conversion_log=$(tig vicario texture.img texture.png 2>&1) || true
 if [ -f texture.png ]; then
+  echo "$conversion_log" |
+    grep -E "Image write Done|inp =|out =|format =|oform =|rescale =" || true
   echo "✓ Texture converted: texture.png"
 else
-  echo "⚠ WARNING: texture conversion failed; texture.img left as-is"
+  echo "$conversion_log"
+  echo "⚠ WARNING: texture conversion failed; texture.img left as-is."
+  echo "  terrain.mtl refers to texture.png, so convert it before viewing:"
+  echo "    tig vicario texture.img texture.png"
 fi
 echo ""
 
@@ -364,7 +369,11 @@ else
 fi
 echo "  - terrain.obj            : 3D mesh (Wavefront OBJ)"
 echo "  - terrain.mtl            : Material file"
-echo "  - texture.png            : Texture image"
+if [ -f texture.png ]; then
+  echo "  - texture.png            : Texture image"
+else
+  echo "  - texture.img            : Texture image (VICAR; PNG conversion failed)"
+fi
 echo ""
 echo "To view the mesh:"
 echo "  - Blender: File → Import → Wavefront (.obj)"
