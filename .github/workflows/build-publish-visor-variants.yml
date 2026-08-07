@@ -120,12 +120,14 @@ jobs:
           VICAR_VERSION="${{ github.event.inputs.vicar_version }}"
           echo "base_tag=${BASE_TAG:-opensource}" >> $GITHUB_OUTPUT
           echo "vicar_version=${VICAR_VERSION:-5.0}" >> $GITHUB_OUTPUT
+          # A repository owner may be mixed case; an image reference may not.
+          echo "image=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.build-args.outputs.image }}
           tags: |
             # The stable per-mission identifier, the counterpart of
             # 'opensource' for the base image
@@ -143,7 +145,7 @@ jobs:
           docker build \
             --platform linux/amd64 \
             --file terrain-intelligence-generator/docker/Dockerfile.visor \
-            --build-arg BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --build-arg BASE_IMAGE=${{ steps.build-args.outputs.image }} \
             --build-arg BASE_TAG=${{ steps.build-args.outputs.base_tag }} \
             --build-arg VICAR_VERSION=${{ steps.build-args.outputs.vicar_version }} \
             --build-arg VISOR_MISSIONS=${{ matrix.mission }} \
@@ -166,7 +168,7 @@ jobs:
         if: always()
         run: |
           SIZE=$(docker image inspect visor-variant:${{ matrix.mission }} \
-            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec || echo "n/a")
+            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec 2>/dev/null || echo "n/a")
           {
             echo "## VISOR variant: ${{ matrix.mission }}"
             echo ""
