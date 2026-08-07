@@ -34,6 +34,10 @@ Sample data (`visor_sample_data_20230623.tar.gz`) is not bundled in any
 variant - it is inputs, not calibration. See
 [Downloading VISOR data](../docs/demos/downloading-visor-data.md).
 
+The bundled calibration comes from the VICAR 5.0 release of
+[NASA-AMMOS/VICAR](https://github.com/NASA-AMMOS/VICAR), which is Apache-2.0,
+and is treated as open source on the same terms as VICAR itself.
+
 ### Building a variant locally
 
 ```bash

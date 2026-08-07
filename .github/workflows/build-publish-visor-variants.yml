@@ -182,10 +182,23 @@ jobs:
           TAGS: ${{ steps.meta.outputs.tags }}
           MISSION: ${{ matrix.mission }}
         run: |
-          echo "${TAGS}" | while read -r tag; do
-            [ -n "$tag" ] || continue
-            docker tag "visor-variant:${MISSION}" "$tag"
-            docker push "$tag"
+          # m20 is 8.75GB, so a rejected push is a plausible failure mode and
+          # must not read as a generic red matrix leg.
+          for tag in ${TAGS}; do
+            docker tag "visor-variant:${MISSION}" "${tag}"
+            if ! docker push "${tag}"; then
+              {
+                echo "## ❌ Push of ${MISSION} failed"
+                echo ""
+                echo "\`${tag}\` ($(docker image inspect "${tag}" \
+                  --format '{{.Size}}' | numfmt --to=iec)) was built and tested"
+                echo "but the registry would not take it. If this is a size or"
+                echo "quota rejection, the mission needs a different"
+                echo "distribution path rather than a workflow retry."
+              } >> $GITHUB_STEP_SUMMARY
+              echo "::error title=Push of ${MISSION} failed::${tag} was rejected by ${REGISTRY}"
+              exit 1
+            fi
           done
 
       - name: Generate build summary
