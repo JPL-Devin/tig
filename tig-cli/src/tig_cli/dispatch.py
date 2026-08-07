@@ -90,6 +90,9 @@ while IFS= read -r job <&3; do
             exit 0
         fi
 
+        # A group of its own, so the command and its children can be
+        # signalled together.
+        set -m 2>/dev/null
         (
             cd "$workdir" || exit 126
             [ -n "$display" ] && export DISPLAY=$display
@@ -547,7 +550,14 @@ class _Job:
         name = "TERM" if signum == signal.SIGTERM else "INT"
         try:
             Engine.detect().exec_detached(
-                self.paths.container, [SHELL, "-c", f"kill -{name} {pid}"]
+                self.paths.container,
+                [
+                    SHELL,
+                    "-c",
+                    # The command's whole group, so nothing of it is left
+                    # running in the shared container.
+                    f"kill -{name} -{pid} 2>/dev/null || kill -{name} {pid}",
+                ],
             )
         except (EngineError, OSError):
             pass

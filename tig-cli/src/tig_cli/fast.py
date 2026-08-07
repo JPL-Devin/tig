@@ -18,7 +18,7 @@ import sys
 import termios
 import tty
 
-from . import dispatch
+from . import broker, dispatch
 from .config import ConfigError, load_config
 from .path_translator import PathTranslator
 from .spec import (
@@ -138,13 +138,12 @@ def _exec(plan: _Plan) -> int | None:
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
 
     if not interactive:
-        # The dispatcher forks the command from a shell already running in
-        # the container, which costs far less than an exec - and proves the
-        # container is running, so nothing has to be asked of the daemon.
-        # It cannot give the command a terminal, so interactive use skips it.
-        code = dispatch.run(
-            plan.name, plan.home, plan.command, plan.workdir, plan.env
-        )
+        # Both warm transports have the command forked by a shell already
+        # running in the container, which costs far less than an exec - and
+        # a command getting there proves the container is running, so
+        # nothing has to be asked of the daemon. Neither can give the
+        # command a terminal, so interactive use skips them.
+        code = _warm(plan)
         if code is not None:
             _revalidate(plan)
             return code
@@ -164,8 +163,27 @@ def _exec(plan: _Plan) -> int | None:
         code = engine.exec_command(
             plan.name, plan.command, plan.workdir, plan.env, tty=interactive
         )
-    dispatch.ensure_running(engine, plan.name, plan.home)
+    _prepare_warm_path(engine, plan)
     return code
+
+
+def _warm(plan: _Plan) -> int | None:
+    """Run the command through whichever in-container runner can serve it."""
+    if broker.preferred():
+        return broker.run(
+            plan.name, plan.home, plan.command, plan.workdir, plan.env
+        )
+    return dispatch.run(
+        plan.name, plan.home, plan.command, plan.workdir, plan.env
+    )
+
+
+def _prepare_warm_path(engine, plan: _Plan) -> None:
+    """Get the in-container runner up, now that the command is done."""
+    if broker.preferred():
+        broker.ensure_running(engine, plan.name, plan.home)
+        return
+    dispatch.ensure_running(engine, plan.name, plan.home)
 
 
 def _is_current(engine, name: str, image: str) -> bool:
@@ -200,6 +218,7 @@ def _revalidate(plan: _Plan) -> None:
     except (EngineError, OSError):
         return
     dispatch.retire(plan.home, plan.name)
+    broker.retire(plan.home, plan.name)
 
 
 class _raw_terminal:

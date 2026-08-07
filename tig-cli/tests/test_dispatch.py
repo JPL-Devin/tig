@@ -7,6 +7,7 @@ just a directory here; nothing else about the exchange differs.
 """
 import errno
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -53,12 +54,11 @@ def home(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def dispatcher(home):
+def dispatcher(home, request):
+    shell = getattr(request, "param", dispatch.SHELL)
     paths = dispatch._Paths(str(home), CONTAINER)
     paths.install()
-    process = subprocess.Popen(
-        [dispatch.SHELL, paths.script, paths.rundir, paths.control]
-    )
+    process = subprocess.Popen([shell, paths.script, paths.rundir, paths.control])
     deadline = time.monotonic() + 10
     while not dispatch._listening(paths.control):
         assert process.poll() is None, "the dispatcher exited at once"
@@ -200,6 +200,59 @@ code = dispatch.run(
 )
 sys.exit(0 if code == index %% 5 else 1)
 """
+
+
+@pytest.mark.parametrize("dispatcher", ["/bin/bash"], indirect=True)
+def test_a_command_and_its_children_can_be_signalled_together(
+    dispatcher, home
+):
+    """Signalling must not leave a tool's children in the container.
+
+    Each job is put in a process group of its own, which needs a shell with
+    job control -- the image's ``/bin/sh`` is bash, so this runs under bash.
+    """
+    marker = home / "child"
+    script = f"sleep 300 & echo $! > {marker}; wait"
+    code = []
+    running = threading.Thread(
+        target=lambda: code.append(dispatcher.run(["sh", "-c", script]))
+    )
+    running.start()
+    _wait_for(marker)
+    child = int(marker.read_text())
+
+    os.killpg(_job_pid(dispatcher), signal.SIGTERM)
+
+    running.join(timeout=30)
+    assert code, "the command never ended"
+    deadline = time.monotonic() + 30
+    while _alive(child):
+        assert time.monotonic() < deadline, "a child of the command was left"
+        time.sleep(0.05)
+
+
+def _job_pid(dispatcher):
+    """The process the dispatcher started for the one job in flight."""
+    for job in os.listdir(dispatcher.paths.rundir):
+        recorded = os.path.join(dispatcher.paths.rundir, job, "pid")
+        if os.path.exists(recorded):
+            return int(open(recorded).read())
+    raise AssertionError("the dispatcher recorded no job")
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_for(path, timeout=30):
+    deadline = time.monotonic() + timeout
+    while not path.exists():
+        assert time.monotonic() < deadline, f"{path} never appeared"
+        time.sleep(0.02)
 
 
 def test_survives_output_nobody_is_reading(dispatcher, monkeypatch):
