@@ -35,6 +35,7 @@ SAMPLE_URL="https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_samp
 SAMPLE_MEMBER="sample_data/RadiometricCorrection/NLB_712299404EDR_F0961766NCAM00353M1.IMG"
 TESTS_PASSED=0
 TESTS_FAILED=0
+STATUS=0
 
 PLATFORM_FLAG="--platform linux/amd64"
 
@@ -46,6 +47,14 @@ print_test_header() {
     echo "============================================"
     echo "$1"
     echo "============================================"
+}
+
+# Each check runs as `check ... ; test_result $STATUS ...` rather than as a
+# bare command, so that a failing check is recorded and the remaining checks
+# still run instead of set -e killing the script.
+check() {
+    STATUS=0
+    "$@" || STATUS=$?
 }
 
 test_result() {
@@ -69,7 +78,7 @@ echo -e "${BLUE}Bundled missions: ${MISSIONS}${NC}"
 
 # Test 1: calibration is bundled, with the structure MARS tools expect
 print_test_header "Test 1: Calibration present for every bundled mission"
-docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
+check docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
     status=0
     for mission in $VISOR_MISSIONS; do
         dir="'"${CALIB_ROOT}"'/$mission"
@@ -82,11 +91,11 @@ docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
     done
     exit $status
 '
-test_result $? "Calibration bundled for every mission in VISOR_MISSIONS"
+test_result $STATUS "Calibration bundled for every mission in VISOR_MISSIONS"
 
 # Test 2: the tools are pointed at it without the user configuring anything
 print_test_header "Test 2: MARS_CONFIG_PATH baked into the image"
-docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
+check docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
     echo "  MARS_CONFIG_PATH=$MARS_CONFIG_PATH"
     [ -n "$MARS_CONFIG_PATH" ] || exit 1
     for mission in $VISOR_MISSIONS; do
@@ -96,25 +105,25 @@ docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
         esac
     done
 '
-test_result $? "MARS_CONFIG_PATH covers every bundled mission"
+test_result $STATUS "MARS_CONFIG_PATH covers every bundled mission"
 
 # Test 3: the compressed archives must not survive into the image
 print_test_header "Test 3: No calibration archives left in the image"
-docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
+check docker run --rm ${PLATFORM_FLAG} "${IMAGE_TAG}" bash -c '
     found=$(find / -xdev -name "visor_*.tar.gz*" 2>/dev/null)
     if [ -n "$found" ]; then
         echo "$found"
         exit 1
     fi
 '
-test_result $? "Downloaded archives deleted in the layer that extracted them"
+test_result $STATUS "Downloaded archives deleted in the layer that extracted them"
 
 # Test 4: a user-supplied calibration mount must fully replace the bundled
 # data, not merge with it
 print_test_header "Test 4: Mounted calibration overrides the bundled data"
 mkdir -p "${TEST_WORKSPACE}/calib/param_files"
 touch "${TEST_WORKSPACE}/calib/param_files/OVERRIDE_marker"
-docker run --rm ${PLATFORM_FLAG} \
+check docker run --rm ${PLATFORM_FLAG} \
     -v "${TEST_WORKSPACE}/calib:${CALIB_ROOT}:ro" \
     "${IMAGE_TAG}" bash -c '
     [ -f "'"${CALIB_ROOT}"'/param_files/OVERRIDE_marker" ] || exit 1
@@ -125,7 +134,7 @@ docker run --rm ${PLATFORM_FLAG} \
         fi
     done
 '
-test_result $? "Mount at ${CALIB_ROOT} shadows the bundled calibration"
+test_result $STATUS "Mount at ${CALIB_ROOT} shadows the bundled calibration"
 
 # Test 5: a MARS tool that cannot run without calibration actually runs
 print_test_header "Test 5: MARS tool using the bundled calibration"
@@ -145,7 +154,7 @@ else
     else
         mkdir -p "${TEST_WORKSPACE}/run"
         cp "${SAMPLE}" "${TEST_WORKSPACE}/run/edr.IMG"
-        docker run --rm ${PLATFORM_FLAG} \
+        check docker run --rm ${PLATFORM_FLAG} \
             -v "${TEST_WORKSPACE}/run:/workspace" \
             "${IMAGE_TAG}" bash -c '
             cd /workspace
@@ -162,7 +171,7 @@ else
             }
             [ -s rad.IMG ]
         '
-        test_result $? "marsrad radiometrically corrected an MSL EDR with no calibration mounted"
+        test_result $STATUS "marsrad radiometrically corrected an MSL EDR with no calibration mounted"
     fi
 fi
 
