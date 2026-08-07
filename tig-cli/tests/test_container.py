@@ -28,15 +28,16 @@ def home_dir(tmp_path):
     return str(tmp_path / "home" / "user")
 
 
-def make_manager(home, image="test-image:latest", client=None, **kwargs):
-    """Build a ContainerManager with Docker mocked out.
+def only_docker_on_path(name):
+    """Stand in for the docker CLI, which test hosts need not have installed."""
+    return "/usr/bin/docker" if name == "docker" else None
 
-    Including the CLI it looks for on PATH, which hosts running these tests
-    (macOS CI runners) do not necessarily have installed.
-    """
+
+def make_manager(home, image="test-image:latest", client=None, **kwargs):
+    """Build a ContainerManager with Docker mocked out."""
     with patch('tig_cli.container.docker.from_env',
                return_value=client or MagicMock()), \
-         patch('tig_cli.container.shutil.which', return_value="/usr/bin/docker"), \
+         patch('tig_cli.container.shutil.which', only_docker_on_path), \
          patch.dict(os.environ, {"HOME": home}):
         return ContainerManager(image, **kwargs)
 
@@ -149,7 +150,7 @@ def test_missing_docker_cli_is_user_facing(home_dir):
 def test_docker_daemon_unavailable_is_user_facing(home_dir):
     with patch('tig_cli.container.docker.from_env',
                side_effect=docker.errors.DockerException("boom")), \
-         patch('tig_cli.container.shutil.which', return_value="/usr/bin/docker"), \
+         patch('tig_cli.container.shutil.which', only_docker_on_path), \
          patch.dict(os.environ, {"HOME": home_dir}):
         with pytest.raises(TigError, match="Is the Docker daemon running"):
             ContainerManager("test-image:latest")
