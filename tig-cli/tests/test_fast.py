@@ -9,6 +9,7 @@ from tig_cli.engine import EngineUnavailable
 from tig_cli.spec import (
     build_run_kwargs,
     build_volume_mounts,
+    container_display,
     container_name_for,
 )
 
@@ -62,8 +63,8 @@ def test_runs_in_the_container_the_cli_would_use(host, engine):
     name, command, workdir, env = engine.exec_command.call_args.args[:4]
     assert name == expected_name(host)
     assert command == ["vicar", "in.img"]
-    assert workdir == str(host)
-    assert env == {"DISPLAY": ":0"}
+    assert workdir == os.path.realpath(host)
+    assert env == {"DISPLAY": container_display()}
 
 
 def test_translates_host_paths(host, engine):

@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import struct
+import tempfile
 import threading
 
 import pytest
@@ -117,18 +118,26 @@ class FakeDaemon:
 
 
 @pytest.fixture
-def daemon(tmp_path):
-    """A fake daemon, with any created one closed at the end of the test."""
+def daemon():
+    """A fake daemon, with any created one closed at the end of the test.
+
+    Its socket lives in a short-named directory of its own: a unix socket
+    path is limited to ~100 characters, which pytest's tmp_path exceeds on
+    macOS.
+    """
     created = []
+    directory = tempfile.mkdtemp(prefix="tig")
 
     def make(**kwargs):
-        instance = FakeDaemon(str(tmp_path / "docker.sock"), **kwargs)
+        instance = FakeDaemon(os.path.join(directory, "d.sock"), **kwargs)
         created.append(instance)
         return instance
 
     yield make
     for instance in created:
         instance.close()
+        os.unlink(instance.path)
+    os.rmdir(directory)
 
 
 @pytest.fixture
