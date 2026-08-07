@@ -129,7 +129,8 @@ export MARS_CONFIG_PATH="$CALIB_DIR"
 abspath() {
   [ -z "$1" ] && return 0
   local dir
-  dir=$(cd "$(dirname "$1")" && pwd)
+  # Fall back to the path as given, so the file checks below report it.
+  dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd) || { echo "$1"; return 0; }
   echo "${dir%/}/$(basename "$1")"
 }
 XYZ_FILE=$(abspath "$XYZ_FILE")
@@ -299,8 +300,13 @@ echo ""
 # Convert texture using Java vicario, which rescales 16-bit VICAR images
 # properly (oform=byte rescale=true).
 echo "Step 3: Converting texture to PNG..."
-tig vicario texture.img texture.png
-echo "✓ Texture converted: texture.png"
+tig vicario texture.img texture.png 2>&1 |
+  grep -E "Image write Done|inp =|out =|format =|oform =|rescale =" || true
+if [ -f texture.png ]; then
+  echo "✓ Texture converted: texture.png"
+else
+  echo "⚠ WARNING: texture conversion failed; texture.img left as-is"
+fi
 echo ""
 
 # List results
