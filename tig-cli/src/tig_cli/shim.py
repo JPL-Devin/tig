@@ -92,7 +92,9 @@ def write_shims(
             dispatcher=DISPATCHER_NAME, tig=shlex.quote(tig)
         )
     )
-    dispatcher.chmod(dispatcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+    dispatcher.chmod(
+        dispatcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    )
 
     for stale in list(_stale_shims(directory, dispatcher)):
         stale.unlink()

@@ -1,5 +1,6 @@
 """Tests for the shim directory of per-tool commands."""
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,9 @@ def test_dispatcher_is_executable_and_calls_tig(tmp_path):
     dispatcher = tmp_path / DISPATCHER_NAME
 
     assert os.access(dispatcher, os.X_OK)
+    # Executable for everyone, so a shared shim directory works.
+    mode = dispatcher.stat().st_mode
+    assert mode & stat.S_IXUSR and mode & stat.S_IXGRP and mode & stat.S_IXOTH
     assert "'/opt/some dir/tig'" in dispatcher.read_text()
 
 
