@@ -34,30 +34,37 @@ trap 'rm -rf "$tmpdir"' EXIT
 started=$tmpdir/started
 status=$tmpdir/status
 diag=$tmpdir/diagnostic
-transcript=$tmpdir/transcript
-mkfifo "$transcript"
+progress=$tmpdir/progress
+capture=0
 
 # A rejection stops the run, so the diagnostic is the last line; matching it
 # anywhere would fail an interactive session that recovered from one. The
 # verdict is published as the stream goes, so nothing has to wait for the
 # stream to end. The Script lines are script(1)'s own banners.
 classify() {
-    awk -v diag="$diag" '
+    awk -v diag="$diag" -v progress="$progress" '
         !/^[[:space:]]*$/ && !/^Script (started|done) on / {
             d = (/\[TAE-/ || /\*\* ABEND called \*\*/) ? "1" : ""
             if (d != prev) { printf "%s", d > diag; close(diag); prev = d }
         }
+        # so the wrapper can tell a reader still catching up from a stalled one
+        NR % 5000 == 0 { printf "%d", NR > progress; close(progress) }
     '
 }
 
 # $1 = forward: also copy the stream to stdout, which the pipe branch needs and
 # the pty branch must not do, since script(1) already writes to the terminal.
 begin_capture() {
+    capture=$((capture + 1))  # a fresh pair, so a stale reader cannot steal input
+    transcript=$tmpdir/transcript-$capture
+    copy=$tmpdir/copy-$capture
+    mkfifo "$transcript" "$copy"
     exec 9<> "$transcript"  # a writer of our own, so the reader cannot block on open
     # The reader closes fd 9 in a subshell: a redirection would only hide it,
-    # since bash keeps a copy to restore and the copy is inherited.
+    # since bash keeps a copy to restore and the copy is inherited. It also
+    # waits for the classifier, so its own exit means the verdict is in.
     if [ "$1" = forward ]; then
-        ( exec 9>&-; tee >(classify) < "$transcript" ) &
+        ( exec 9>&-; classify < "$copy" & tee "$copy" < "$transcript"; wait ) &
     else
         ( exec 9>&-; classify < "$transcript" ) &
     fi
@@ -65,13 +72,22 @@ begin_capture() {
     disown
 }
 
-# A descendant the program leaves running holds the write end open, so the
-# reader can outlive the program; waiting for it would hang the caller.
+# The reader's exit means the verdict is in, so it is worth waiting for while it
+# is still consuming. A descendant the program leaves running holds the write
+# end open, though, so a stalled reader is abandoned rather than hung on.
 end_capture() {
     exec 9>&-
-    local i
-    for i in $(seq 20); do
-        kill -0 "$reader_pid" 2> /dev/null || return
+    local idle=0 total=0 seen="" at
+    while kill -0 "$reader_pid" 2> /dev/null && [ "$total" -lt 1200 ]; do
+        at=$(cat "$progress" 2> /dev/null)
+        if [ "$at" = "$seen" ]; then
+            idle=$((idle + 1))
+            [ "$idle" -ge 20 ] && return
+        else
+            seen=$at
+            idle=0
+        fi
+        total=$((total + 1))
         sleep 0.05
     done
 }
