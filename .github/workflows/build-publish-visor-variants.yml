@@ -6,6 +6,10 @@ name: Build and Publish VISOR Calibration Variants
 # These build FROM the published base image rather than rebuilding VICAR, so
 # this workflow deliberately does not depend on the base image build; run it
 # after a new base image has been pushed.
+#
+# The variant Dockerfile lives outside terrain-intelligence-generator/docker/
+# so that editing it does not also trigger the hour-long base image rebuild,
+# which watches that whole directory.
 
 on:
   push:
@@ -16,7 +20,7 @@ on:
     tags:
       - 'v*'
     paths:
-      - 'terrain-intelligence-generator/docker/Dockerfile.visor'
+      - 'terrain-intelligence-generator/visor/**'
       - 'terrain-intelligence-generator/test-visor-image.sh'
       - '.github/workflows/build-publish-visor-variants.yml'
   pull_request:
@@ -25,7 +29,7 @@ on:
       - master
       - develop
     paths:
-      - 'terrain-intelligence-generator/docker/Dockerfile.visor'
+      - 'terrain-intelligence-generator/visor/**'
       - 'terrain-intelligence-generator/test-visor-image.sh'
       - '.github/workflows/build-publish-visor-variants.yml'
   workflow_dispatch:
@@ -159,13 +163,13 @@ jobs:
         run: |
           docker build \
             --platform linux/amd64 \
-            --file terrain-intelligence-generator/docker/Dockerfile.visor \
+            --file terrain-intelligence-generator/visor/Dockerfile \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "VICAR_VERSION=${VICAR_VERSION}" \
             --build-arg "VISOR_MISSIONS=${MISSION}" \
             --tag "visor-variant:${MISSION}" \
-            terrain-intelligence-generator/docker
+            terrain-intelligence-generator/visor
 
       - name: Test VISOR variant image
         env:

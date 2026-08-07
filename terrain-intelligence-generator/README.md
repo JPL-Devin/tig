@@ -43,10 +43,13 @@ variant - it is inputs, not calibration. See
 ```
 
 The variants are built `FROM` the published base image
-([`docker/Dockerfile.visor`](docker/Dockerfile.visor)) rather than rebuilding
-VICAR, so a variant build is a download and an extraction - minutes, not the
-hour a VICAR build costs. `VISOR_MISSIONS` is a space-separated build
-argument, which is why an all-missions image needs no separate definition.
+([`visor/Dockerfile`](visor/Dockerfile)) rather than rebuilding VICAR, so a
+variant build is a download and an extraction - minutes, not the hour a VICAR
+build costs. It sits outside `docker/` because the base image workflow
+rebuilds on any change under that directory.
+
+`VISOR_MISSIONS` is a space-separated build argument, which is why an
+all-missions image needs no separate definition.
 
 M20 calibration is published as two GitHub release assets
 (`...tar.gzaa`, `...tar.gzab`) because a release asset cannot exceed 2GB. The

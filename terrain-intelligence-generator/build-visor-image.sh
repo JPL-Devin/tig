@@ -40,13 +40,13 @@ docker pull --platform linux/amd64 "${BASE_IMAGE}:${BASE_TAG}"
 
 docker build \
     --platform linux/amd64 \
-    --file "${SCRIPT_DIR}/docker/Dockerfile.visor" \
+    --file "${SCRIPT_DIR}/visor/Dockerfile" \
     --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
     --build-arg "BASE_TAG=${BASE_TAG}" \
     --build-arg "VICAR_VERSION=${VICAR_VERSION}" \
     --build-arg "VISOR_MISSIONS=${MISSIONS}" \
     --tag "${IMAGE_TAG}" \
-    "${SCRIPT_DIR}/docker"
+    "${SCRIPT_DIR}/visor"
 
 echo ""
 docker images "${IMAGE_TAG%%:*}"
