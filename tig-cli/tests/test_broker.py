@@ -260,6 +260,10 @@ def test_declines_when_disabled(session, monkeypatch):
     assert broker.run(CONTAINER, session.home, ["true"], session.home, {}) is None
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="job control is the container's, and macOS's bash 3.2 is not it",
+)
 def test_forwards_an_interrupt_to_the_command(session, home):
     running = session.start(_waits_for(home, "INT", 3))
     _wait_for(home / "ready")
@@ -272,7 +276,7 @@ def test_forwards_an_interrupt_to_the_command(session, home):
 
 @pytest.mark.skipif(
     not sys.platform.startswith("linux"),
-    reason="process groups are the container's business, and it is Linux",
+    reason="job control is the container's, and macOS's bash 3.2 is not it",
 )
 def test_the_command_s_children_are_stopped_too(session, home):
     """A tool that spawns children must not leave them in the container."""
