@@ -54,7 +54,8 @@ tig label /data/scenes/image.vic
 | `--calibration-path PATH` | Host directory with MARS/VISOR calibration files. Defaults to `$MARS_CONFIG_PATH`. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
 | `--selinux-label-disable` / `--no-selinux-label-disable` | Force `--security-opt label=disable` on or off (Linux). Defaults to on when SELinux is Enforcing. |
-| `--shim [PATH]` | Write one command per VICAR tool into `PATH` (default `~/.local/share/tig/shims`), then exit. See [Running tools unqualified](#running-tools-unqualified). |
+| `--shim` | Write one command per VICAR tool into `~/.local/share/tig/shims`, then exit. See [Running tools unqualified](#running-tools-unqualified). |
+| `--shim-dir PATH` | Write those commands somewhere else; implies `--shim`. |
 | `--shim-force` | With `--shim`, also create commands whose names already exist on your `PATH`. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |
@@ -131,7 +132,8 @@ marsmap INP=input.vic OUT=output.vic   # same as: tig marsmap ...
 ```
 
 The tool list comes from the image, so re-run `tig --shim` after switching
-images; commands for tools that disappeared are removed.
+images; commands for tools that disappeared are removed. Pass
+`--shim-dir PATH` to write them somewhere else, such as `~/bin`.
 
 Names that already exist on your `PATH` — VICAR ships a `sort`, a `patch` and a
 `size`, among others — are skipped and reported, so putting the directory first

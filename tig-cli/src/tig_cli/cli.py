@@ -94,13 +94,17 @@ class DynamicHelpCommand(click.Command):
 )
 @click.option(
     "--shim",
-    "shim_dir",
-    is_flag=False,
-    flag_value="",
-    default=None,
-    metavar="[PATH]",
-    help="Write one command per VICAR tool into PATH (default "
+    is_flag=True,
+    default=False,
+    help="Write one command per VICAR tool into a directory on PATH (default "
          "~/.local/share/tig/shims), so tools run unqualified, then exit.",
+)
+@click.option(
+    "--shim-dir",
+    "shim_dir",
+    default=None,
+    metavar="PATH",
+    help="Where --shim writes its commands; implies --shim.",
 )
 @click.option(
     "--shim-force",
@@ -131,6 +135,7 @@ def main(
     calibration_path,
     disable_path_translation,
     selinux_label_disable,
+    shim,
     shim_dir,
     shim_force,
     show_status,
@@ -179,7 +184,12 @@ def main(
         click.echo(f"Removed {removed} container(s).")
         return
 
-    if shim_dir is not None:
+    if shim or shim_dir:
+        if vicar_tool:
+            raise click.UsageError(
+                f"--shim writes commands and exits; it cannot also run "
+                f"'{vicar_tool}'."
+            )
         directory = Path(shim_dir) if shim_dir else default_shim_dir()
         try:
             manager.ensure_container(writable_paths=writable_paths)

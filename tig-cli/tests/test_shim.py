@@ -194,7 +194,7 @@ def test_cli_shim_writes_to_the_given_directory(tmp_path):
 
     with patch("tig_cli.cli.ContainerManager", return_value=manager), \
          patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
-        result = runner.invoke(main, ["--shim", str(tmp_path)])
+        result = runner.invoke(main, ["--shim-dir", str(tmp_path)])
 
     assert result.exit_code == 0
     assert (tmp_path / "marsmap").is_symlink()
@@ -227,7 +227,7 @@ def test_cli_shim_reports_skipped_names(tmp_path, monkeypatch):
 
     with patch("tig_cli.cli.ContainerManager", return_value=manager), \
          patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
-        result = runner.invoke(main, ["--shim", str(tmp_path)])
+        result = runner.invoke(main, ["--shim-dir", str(tmp_path)])
 
     assert "Skipped 1 name(s) already taken (sort)" in result.output
 
@@ -238,6 +238,21 @@ def test_cli_shim_does_not_run_a_vicar_tool(tmp_path):
 
     with patch("tig_cli.cli.ContainerManager", return_value=manager), \
          patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
-        runner.invoke(main, ["--shim", str(tmp_path)])
+        runner.invoke(main, ["--shim-dir", str(tmp_path)])
 
+    manager.execute_vicar_command.assert_not_called()
+
+
+def test_cli_shim_rejects_a_tool_argument(tmp_path):
+    """'tig --shim marsmap in.vic' must not quietly shim instead of running."""
+    runner = CliRunner()
+    manager = _shim_manager(["marsmap"])
+
+    with patch("tig_cli.cli.ContainerManager", return_value=manager), \
+         patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
+        result = runner.invoke(main, ["--shim", "marsmap", "in.vic"])
+
+    assert result.exit_code == 2
+    assert "cannot also run 'marsmap'" in result.output
+    assert not (tmp_path / "marsmap").exists()
     manager.execute_vicar_command.assert_not_called()
