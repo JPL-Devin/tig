@@ -147,7 +147,7 @@ test_result $? "gen command successful"
 
 # Test 6: List image contents
 print_test_header "Test 6: List image contents (list command)"
-# 'list' exits non-zero even when it succeeds, so check that it produced output.
+# Older images report VICAR's raw exit code, so check the output, not $?.
 docker run --rm -v ${TEST_WORKSPACE}:/workspace ${IMAGE_TAG} bash -c '
     list /workspace/test.vic 2>/dev/null | grep -q .
 '
