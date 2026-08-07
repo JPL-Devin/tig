@@ -31,9 +31,9 @@ normalize() {
 # reach rather than at a path reserved by mktemp -u.
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+started=$tmpdir/started
 status=$tmpdir/status
 last_line=$tmpdir/last-line
-produced_output=$tmpdir/produced-output
 transcript=$tmpdir/transcript
 mkfifo "$transcript"
 
@@ -42,12 +42,9 @@ mkfifo "$transcript"
 # lines are script(1)'s own banners around the transcript.
 begin_capture() {
     exec 9<> "$transcript"  # a writer of our own, so the filter cannot block on open
-    awk -v last_line="$last_line" -v produced_output="$produced_output" '
+    awk -v last_line="$last_line" '
         !/^[[:space:]]*$/ && !/^Script (started|done) on / { last = $0 }
-        END {
-            if (NR) print "1" > produced_output
-            if (last != "") print last > last_line
-        }
+        END { if (last != "") print last > last_line }
     ' < "$transcript" 9>&- &
     filter_pid=$!
 }
@@ -77,18 +74,22 @@ foreground() {
 begin_capture
 
 if [ -t 0 ] && [ -t 1 ] && [ -t 2 ] && foreground && command -v script > /dev/null; then
-    # A pty, not a pipe, so prompts and Motif tools still work. The program's
-    # own status goes to a file because script's exit code cannot distinguish
-    # a VICAR run from script failing to start. SHELL is pinned because
-    # script -c runs through it and the quoting is bash's.
-    SHELL=/bin/bash script -qfc \
-        "$(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" "$transcript" 9>&-
+    # A pty, not a pipe, so prompts and Motif tools still work. The inner shell
+    # marks the start and records the status, because script's own exit code
+    # cannot distinguish a VICAR run from script failing to start. SHELL is
+    # pinned because script -c runs through it and the quoting is bash's; -e
+    # returns the shell's status, so a signal is not reported as success.
+    SHELL=/bin/bash script -qefc \
+        "printf 1 > $(printf '%q' "$started"); $(printf '%q ' "$program" "$@"); printf %s \$? > $(printf '%q' "$status")" \
+        "$transcript" 9>&-
     script_code=$?
     end_capture
     if [ -s "$status" ]; then
         exit_code=$(cat "$status")
-    elif [ -s "$produced_output" ]; then
-        exit_code=$script_code  # the program ran; only its status was lost
+    elif [ -s "$started" ]; then
+        # It ran but its status was lost, as when a signal kills the inner
+        # shell; re-running would repeat the work.
+        exit_code=$script_code
     else
         begin_capture  # script never started it
         run_through_pipe "$@"
