@@ -7,7 +7,6 @@ import sys
 
 
 def main() -> None:
-    from .engine import EngineError
     from .fast import run
     from .spec import TigError
 
@@ -15,7 +14,7 @@ def main() -> None:
         exit_code = run(sys.argv[1:])
     except KeyboardInterrupt:
         sys.exit(130)
-    except (TigError, EngineError, OSError) as e:
+    except (TigError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

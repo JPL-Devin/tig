@@ -22,6 +22,8 @@ import socket
 import struct
 import sys
 
+from .spec import TigError
+
 API_VERSION = "v1.41"
 
 DEFAULT_SOCKET = "/var/run/docker.sock"
@@ -40,7 +42,7 @@ STDIN_HIGH_WATER = 1 << 20
 CONNECT_TIMEOUT = 5.0
 
 
-class EngineError(Exception):
+class EngineError(TigError):
     """The daemon was reached but refused or failed the request."""
 
 
@@ -225,6 +227,23 @@ class Engine:
             connection.close()
 
         return self._exit_code(exec_id)
+
+    def exec_detached(self, container: str, command: list[str]) -> None:
+        """Start ``command`` in the container and leave it running."""
+        created = self.post(
+            f"/containers/{_safe(container)}/exec",
+            {
+                "AttachStdin": False,
+                "AttachStdout": False,
+                "AttachStderr": False,
+                "Tty": False,
+                "Cmd": command,
+            },
+        )
+        exec_id = (created or {}).get("Id")
+        if not exec_id:
+            raise EngineUnavailable("Docker did not return an exec id")
+        self.post(f"/exec/{exec_id}/start", {"Detach": True, "Tty": False})
 
     def _resize(self, exec_id: str, tty: bool) -> None:
         """Match the exec's pseudo-terminal to the caller's terminal."""

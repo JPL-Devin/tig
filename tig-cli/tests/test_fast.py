@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tig_cli import fast
-from tig_cli.engine import EngineUnavailable
+from tig_cli.engine import Engine, EngineUnavailable
 from tig_cli.spec import (
     build_run_kwargs,
     build_volume_mounts,
@@ -50,7 +50,7 @@ def engine(monkeypatch):
     }
     fake.inspect_image.return_value = {"Id": IMAGE_ID}
     fake.exec_command.return_value = 0
-    monkeypatch.setattr(fast.Engine, "detect", classmethod(lambda cls: fake))
+    monkeypatch.setattr(Engine, "detect", classmethod(lambda cls: fake))
     return fake
 
 
@@ -132,7 +132,7 @@ def test_declines_when_the_daemon_cannot_be_driven(host, monkeypatch):
     def unavailable(cls):
         raise EngineUnavailable("remote daemon")
 
-    monkeypatch.setattr(fast.Engine, "detect", classmethod(unavailable))
+    monkeypatch.setattr(Engine, "detect", classmethod(unavailable))
 
     assert fast.run(["vicar"]) is None
 
@@ -142,6 +142,46 @@ def test_declines_when_the_configuration_is_unusable(host, engine, tmp_path):
     broken.write_text("image = [")
     with patch.dict(os.environ, {"TIG_CONFIG": str(broken)}):
         assert fast.run(["vicar"]) is None
+
+
+def test_prefers_the_dispatcher_when_it_answers(host, engine, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        fast.dispatch, "run", lambda *args: calls.append(args) or 4
+    )
+
+    assert fast.run(["vicar", "in.img"]) == 4
+
+    engine.exec_command.assert_not_called()
+    container, home, command, workdir, env = calls[0]
+    assert container == expected_name(host)
+    assert home == str(host)
+    assert command == ["vicar", "in.img"]
+    assert workdir == os.path.realpath(host)
+    assert env == {"DISPLAY": container_display()}
+
+
+def test_retires_a_dispatcher_serving_a_stale_image(host, engine, monkeypatch):
+    monkeypatch.setattr(fast.dispatch, "run", lambda *args: 0)
+    monkeypatch.setattr(fast.dispatch, "recently_verified", lambda *args: False)
+    retired = []
+    monkeypatch.setattr(
+        fast.dispatch, "retire", lambda *args: retired.append(args)
+    )
+    engine.inspect_image.return_value = {"Id": "sha256:rebuilt"}
+
+    assert fast.run(["vicar"]) == 0
+
+    assert retired == [(str(host), expected_name(host))]
+
+
+def test_does_not_check_the_daemon_after_every_command(host, engine, monkeypatch):
+    monkeypatch.setattr(fast.dispatch, "run", lambda *args: 0)
+    monkeypatch.setattr(fast.dispatch, "recently_verified", lambda *args: True)
+
+    assert fast.run(["vicar"]) == 0
+
+    engine.inspect_container.assert_not_called()
 
 
 def test_uses_a_tty_only_when_attached_to_one(host, engine, monkeypatch):

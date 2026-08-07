@@ -1,9 +1,10 @@
 """Warm path: run a VICAR command in an already-running container.
 
 This is the case that dominates a terrain pipeline - the container exists, so
-all that is needed is one exec in it. Getting there without importing click or
-the Docker SDK, and without spawning the ``docker`` CLI, is what keeps a tig
-command in the tens of milliseconds.
+all that is needed is to start one command in it. Getting there without
+importing click or the Docker SDK, without spawning the ``docker`` CLI and,
+where the dispatcher can be used, without talking to the Docker daemon at all,
+is what keeps a tig command in the tens of milliseconds.
 
 Whenever anything is not exactly as expected - no container yet, a different
 image, an unusual Docker setup, options that need real parsing - :func:`run`
@@ -17,8 +18,8 @@ import sys
 import termios
 import tty
 
+from . import dispatch
 from .config import ConfigError, load_config
-from .engine import Engine, EngineError
 from .path_translator import PathTranslator
 from .spec import (
     Claim,
@@ -38,6 +39,12 @@ from .spec import (
 )
 
 DISABLE_ENV = "TIG_NO_FAST_PATH"
+
+# How long the dispatcher is trusted to be running the current image before
+# that is checked with the daemon again. The check happens after a command,
+# so a re-pulled tag is picked up on the next one rather than costing every
+# command a daemon round trip.
+REVALIDATE_INTERVAL = 30.0
 
 
 def run(argv: list[str]) -> int | None:
@@ -59,33 +66,43 @@ def run(argv: list[str]) -> int | None:
         return None
 
     try:
-        container, command, workdir = _plan(argv[0], argv[1:])
-    except (ConfigError, TigError, EngineError, OSError):
-        return None
-    if container is None:
+        plan = _plan(argv[0], argv[1:])
+    except (ConfigError, TigError, OSError):
         return None
 
     claim = Claim()
-    claim.acquire(container.name)
+    claim.acquire(plan.name)
     try:
-        return _exec(container, command, workdir)
+        return _exec(plan)
     finally:
         claim.release()
 
 
-class _Target:
-    """A container that is ready to run commands, and how to reach it."""
+class _Plan:
+    """Everything needed to run one command in the container."""
 
-    def __init__(self, engine: Engine, name: str):
-        self.engine = engine
+    def __init__(
+        self,
+        name: str,
+        image: str,
+        home: str,
+        command: list[str],
+        workdir: str,
+    ):
         self.name = name
+        self.image = image
+        self.home = home
+        self.command = command
+        self.workdir = workdir
+        self.env = {"DISPLAY": container_display()}
 
 
-def _plan(tool: str, args: list[str]):
-    """Work out which container and command line to use.
+def _plan(tool: str, args: list[str]) -> _Plan:
+    """Work out which container to use and what to run in it.
 
-    Returns a ``(target, command, workdir)`` triple, with a ``None`` target
-    when no suitable running container exists.
+    Purely local: the same inputs :mod:`tig_cli.container` creates a
+    container from also name it, so which container to address is known
+    without asking the daemon anything.
     """
     config = load_config()
     image = get_container_image(config)
@@ -103,22 +120,55 @@ def _plan(tool: str, args: list[str]):
     )
     name = container_name_for(run_kwargs)
 
-    engine = Engine.detect()
-    if not _is_current(engine, name, image):
-        return None, None, None
-
     if resolve_disable_path_translation(config):
-        return _Target(engine, name), [tool, *args], os.getcwd()
+        return _Plan(name, image, home, [tool, *args], os.getcwd())
 
     translator = PathTranslator(home)
-    return (
-        _Target(engine, name),
+    return _Plan(
+        name,
+        image,
+        home,
         [tool, *translator.translate_args(args)],
         translator.get_container_cwd(os.getcwd()),
     )
 
 
-def _is_current(engine: Engine, name: str, image: str) -> bool:
+def _exec(plan: _Plan) -> int | None:
+    """Run the planned command, wired to this process's stdio."""
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    if not interactive:
+        # The dispatcher forks the command from a shell already running in
+        # the container, which costs far less than an exec - and proves the
+        # container is running, so nothing has to be asked of the daemon.
+        # It cannot give the command a terminal, so interactive use skips it.
+        code = dispatch.run(
+            plan.name, plan.home, plan.command, plan.workdir, plan.env
+        )
+        if code is not None:
+            _revalidate(plan)
+            return code
+
+    from .engine import Engine, EngineError
+
+    try:
+        engine = Engine.detect()
+        if not _is_current(engine, plan.name, plan.image):
+            return None
+    except (EngineError, OSError):
+        return None
+
+    # Allocate a TTY only for interactive use; with a TTY, Docker merges
+    # stderr into stdout and mangles redirected output.
+    with _raw_terminal(interactive):
+        code = engine.exec_command(
+            plan.name, plan.command, plan.workdir, plan.env, tty=interactive
+        )
+    dispatch.ensure_running(engine, plan.name, plan.home)
+    return code
+
+
+def _is_current(engine, name: str, image: str) -> bool:
     """Whether ``name`` is running and built from today's ``image``.
 
     The image is re-checked so that a re-pulled moving tag such as
@@ -130,19 +180,26 @@ def _is_current(engine: Engine, name: str, image: str) -> bool:
     return container.get("Image") == engine.inspect_image(image).get("Id")
 
 
-def _exec(target: _Target, command: list[str], workdir: str) -> int:
-    """Run ``command`` in the container, wired to this process's stdio."""
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    # Allocate a TTY only for interactive use; with a TTY, Docker merges
-    # stderr into stdout and mangles redirected output.
-    with _raw_terminal(interactive):
-        return target.engine.exec_command(
-            target.name,
-            command,
-            workdir,
-            {"DISPLAY": container_display()},
-            tty=interactive,
-        )
+def _revalidate(plan: _Plan) -> None:
+    """Check now and then that the dispatcher's container is still right.
+
+    Run after the command, so this costs nothing in the common case and a
+    daemon round trip once every :data:`REVALIDATE_INTERVAL`. A container
+    left behind by a re-pulled tag is retired by taking its dispatcher out
+    of service, which sends the next command down the full path.
+    """
+    if dispatch.recently_verified(plan.home, plan.name, REVALIDATE_INTERVAL):
+        return
+
+    from .engine import Engine, EngineError
+
+    try:
+        if _is_current(Engine.detect(), plan.name, plan.image):
+            dispatch.mark_verified(plan.home, plan.name)
+            return
+    except (EngineError, OSError):
+        return
+    dispatch.retire(plan.home, plan.name)
 
 
 class _raw_terminal:

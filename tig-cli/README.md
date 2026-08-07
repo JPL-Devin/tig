@@ -144,13 +144,33 @@ container up for the next one; `tig --shutdown` removes it.
 
 ## Warm command latency
 
-Once the container is up, `tig <tool> <args...>` runs on a warm path that talks
-to the Docker daemon socket directly, so a command costs neither the `docker`
-CLI's startup nor the Docker SDK's and click's imports. Anything the warm path
-does not recognise - options, a container that is not running, a re-pulled
-image, a Docker setup it cannot drive (TLS, an unknown context) - falls back to
-the full path, which behaves exactly as before. Set `TIG_NO_FAST_PATH=1` to
-always take the full path.
+Once the container is up, `tig <tool> <args...>` runs on a warm path that costs
+neither the `docker` CLI's startup nor the Docker SDK's and click's imports.
+Commands are handed to a small POSIX shell dispatcher already running in the
+container over FIFOs under `~/.cache/tig/`, which starts them without a
+container exec and without the daemon being involved at all. On this machine,
+against the `:opensource` image:
+
+| per command | |
+| --- | --- |
+| `tig <tool>` | 27 ms |
+| `docker exec` in a sidecar (what vicar-native-toolkit does) | 32-34 ms |
+| `tig <tool>` without the dispatcher | 55 ms |
+| `tig <tool>` before this path existed | 158 ms |
+
+The dispatcher is started in the background after a command that had to go the
+slow way, so nothing waits for it, and it needs nothing of the image beyond
+`/bin/sh`. Because a command reaching it proves the container is running, the
+daemon is asked whether the container still matches its image only every 30
+seconds, after the command rather than before it; a container left behind by a
+re-pulled tag is retired then and replaced on the next command.
+
+Anything the warm path does not recognise - options, a container that is not
+running, an interactive terminal, a Docker setup it cannot drive (TLS, an
+unknown context), a host that cannot share FIFOs with the container (anything
+but Linux) - falls back, and behaves exactly as before. Set
+`TIG_NO_DISPATCHER=1` to use the daemon socket directly and
+`TIG_NO_FAST_PATH=1` to always take the full path.
 
 ## MARS / VISOR calibration files
 

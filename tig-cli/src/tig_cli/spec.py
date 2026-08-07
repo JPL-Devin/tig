@@ -315,11 +315,12 @@ class Claim:
 
     @staticmethod
     def directory() -> Path:
-        import tempfile
-
-        runtime = os.environ.get("XDG_RUNTIME_DIR")
-        base = Path(runtime) if runtime else Path(tempfile.gettempdir())
-        return base / f"{CLAIM_DIR_NAME}-{os.getuid()}"
+        base = (
+            os.environ.get("XDG_RUNTIME_DIR")
+            or os.environ.get("TMPDIR")
+            or "/tmp"
+        )
+        return Path(base) / f"{CLAIM_DIR_NAME}-{os.getuid()}"
 
     def acquire(self, container_name: str) -> None:
         """Record that this process is about to use ``container_name``."""
