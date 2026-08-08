@@ -39,6 +39,13 @@ STATUS=0
 
 PLATFORM_FLAG="--platform linux/amd64"
 
+# Enforcing SELinux otherwise denies the container the bind mounts below. Same
+# flag, and same choice of it over ':z'/':Z' relabeling, as the tig CLI.
+SELINUX_FLAG=""
+if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
+    SELINUX_FLAG="--security-opt label=disable"
+fi
+
 TEST_WORKSPACE=$(mktemp -d)
 trap 'rm -rf "${TEST_WORKSPACE}"' EXIT
 
@@ -123,7 +130,7 @@ test_result $STATUS "Downloaded archives deleted in the layer that extracted the
 print_test_header "Test 4: Mounted calibration overrides the bundled data"
 mkdir -p "${TEST_WORKSPACE}/calib/param_files"
 touch "${TEST_WORKSPACE}/calib/param_files/OVERRIDE_marker"
-check docker run --rm ${PLATFORM_FLAG} \
+check docker run --rm ${PLATFORM_FLAG} ${SELINUX_FLAG} \
     -v "${TEST_WORKSPACE}/calib:${CALIB_ROOT}:ro" \
     "${IMAGE_TAG}" bash -c '
     [ -f "'"${CALIB_ROOT}"'/param_files/OVERRIDE_marker" ] || exit 1
@@ -154,7 +161,7 @@ else
     else
         mkdir -p "${TEST_WORKSPACE}/run"
         cp "${SAMPLE}" "${TEST_WORKSPACE}/run/edr.IMG"
-        check docker run --rm ${PLATFORM_FLAG} \
+        check docker run --rm ${PLATFORM_FLAG} ${SELINUX_FLAG} \
             -v "${TEST_WORKSPACE}/run:/workspace" \
             "${IMAGE_TAG}" bash -c '
             cd /workspace
