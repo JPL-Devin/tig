@@ -163,6 +163,20 @@ def main(
     except ConfigError as e:
         raise click.ClickException(str(e)) from e
 
+    # --shim writes commands and exits, so anything else asked for in the same
+    # invocation would be silently dropped. Checked before any container work.
+    if shim or shim_dir:
+        if vicar_tool:
+            raise click.UsageError(
+                f"--shim writes commands and exits; it cannot also run "
+                f"'{vicar_tool}'."
+            )
+        for option, other in ((show_status, "--status"), (shutdown, "--shutdown")):
+            if option:
+                raise click.UsageError(
+                    f"--shim writes commands and exits; run {other} separately."
+                )
+
     lifecycle_only = shutdown or show_status
     try:
         manager = ContainerManager(
@@ -185,17 +199,6 @@ def main(
         return
 
     if shim or shim_dir:
-        if vicar_tool:
-            raise click.UsageError(
-                f"--shim writes commands and exits; it cannot also run "
-                f"'{vicar_tool}'."
-            )
-        if show_status:
-            # --status skips the calibration mount, so a shim run alongside it
-            # would start a second container instead of reusing the warm one.
-            raise click.UsageError(
-                "--shim writes commands and exits; run --status separately."
-            )
         directory = Path(shim_dir) if shim_dir else default_shim_dir()
         try:
             manager.ensure_container(writable_paths=writable_paths)

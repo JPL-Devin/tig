@@ -139,7 +139,11 @@ STEREO_RIGHT=$(abspath "$STEREO_RIGHT")
 TEXTURE_FILE=$(abspath "$TEXTURE_FILE")
 
 # Validate inputs before the workspace is touched, so a mistyped path cannot
-# cost an earlier run's results.
+# cost an earlier run's results, nor be found only after the stereo run.
+if [ -n "$TEXTURE_FILE" ] && [ ! -f "$TEXTURE_FILE" ]; then
+  echo "ERROR: Texture file not found: $TEXTURE_FILE"
+  exit 1
+fi
 if [ -n "$XYZ_FILE" ]; then
   if [ ! -f "$XYZ_FILE" ]; then
     echo "ERROR: XYZ file not found: $XYZ_FILE"
@@ -149,12 +153,11 @@ if [ -n "$XYZ_FILE" ]; then
     echo "ERROR: No texture specified"
     exit 1
   fi
-  for input in "$TEXTURE_FILE" "$STEREO_LEFT"; do
-    if [ -n "$input" ] && [ ! -f "$input" ]; then
-      echo "ERROR: Texture file not found: $input"
-      exit 1
-    fi
-  done
+  # The left image is the texture when no --texture was given.
+  if [ -z "$TEXTURE_FILE" ] && [ ! -f "$STEREO_LEFT" ]; then
+    echo "ERROR: Texture file not found: $STEREO_LEFT"
+    exit 1
+  fi
 else
   if [ ! -f "$STEREO_LEFT" ]; then
     echo "ERROR: Left stereo file not found: $STEREO_LEFT"

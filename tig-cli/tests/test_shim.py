@@ -288,3 +288,20 @@ def test_cli_shim_rejects_status(tmp_path):
     assert "run --status separately" in result.output
     assert not (tmp_path / "marsmap").exists()
     manager.ensure_container.assert_not_called()
+
+
+def test_cli_shim_rejects_shutdown(tmp_path):
+    """--shutdown runs first, so the shims would silently not be written."""
+    runner = CliRunner()
+    manager = _shim_manager(["marsmap"])
+
+    with patch("tig_cli.cli.ContainerManager", return_value=manager), \
+         patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
+        result = runner.invoke(
+            main, ["--shutdown", "--shim-dir", str(tmp_path)]
+        )
+
+    assert result.exit_code == 2
+    assert "run --shutdown separately" in result.output
+    assert not (tmp_path / "marsmap").exists()
+    manager.shutdown.assert_not_called()
