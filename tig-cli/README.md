@@ -142,6 +142,51 @@ to see which containers exist and what each has mounted read-write.
 Interrupting a command (Ctrl-C, `SIGTERM`) stops that command and leaves the
 container up for the next one; `tig --shutdown` removes it.
 
+## Warm command latency
+
+Once the container is up, `tig <tool> <args...>` runs on a warm path that costs
+neither the `docker` CLI's startup nor the Docker SDK's and click's imports.
+Commands are handed to a small shell runner already running in the container,
+which starts them without a container exec and without the daemon being
+involved at all. On Linux the two meet over FIFOs under `~/.cache/tig/`; on
+macOS, where a bind-mounted FIFO does not cross into the Docker Desktop VM,
+the runner instead dials back to a broker on the host (see below). On this
+machine, against the `:opensource` image:
+
+| per command | |
+| --- | --- |
+| `tig <tool>` | 27 ms |
+| `docker exec` in a sidecar (what vicar-native-toolkit does) | 32-34 ms |
+| `tig <tool>` without the in-container runner | 55 ms |
+| `tig <tool>` before this path existed | 158 ms |
+
+The runner is started in the background after a command that had to go the
+slow way, so nothing waits for it, and it needs nothing of the image beyond
+`/bin/sh` (`/bin/bash` for the broker's agent). Each command is run in a
+process group of its own, so interrupting `tig` stops what the tool started
+too. Because a command reaching it proves the container is running, the
+daemon is asked whether the container still matches its image only every 30
+seconds, after the command rather than before it; a container left behind by a
+re-pulled tag is retired then and replaced on the next command.
+
+Anything the warm path does not recognise - options, a container that is not
+running, an interactive terminal, a Docker setup it cannot drive (TLS, an
+unknown context) - falls back, and behaves exactly as before. Set
+`TIG_NO_DISPATCHER=1` to use the daemon socket directly and
+`TIG_NO_FAST_PATH=1` to always take the full path.
+
+### The macOS broker
+
+Where FIFOs cannot be shared, `tig` starts a broker process on the host and an
+agent in the container; the agent reaches the broker through
+`host.docker.internal`, and each `tig` hands its own standard input, output
+and error to the broker over a unix socket in `~/.cache/tig/`, which only the
+invoking user can reach. A token in the agent's greeting means nothing else
+on the machine can push commands into the container. If the broker or the
+agent cannot be started, the command goes to the daemon socket as before. Set
+`TIG_NO_BROKER=1` to leave it out, `TIG_BROKER=1` to use it where the FIFO
+dispatcher would otherwise be preferred.
+
 ## MARS / VISOR calibration files
 
 VICAR's MARS programs need mission calibration data, which is not in the image.
