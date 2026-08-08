@@ -57,8 +57,14 @@ all-missions image needs no separate definition.
 
 M20 calibration is published as two GitHub release assets
 (`...tar.gzaa`, `...tar.gzab`) because a release asset cannot exceed 2GB. The
-Dockerfile discovers the split parts by probing suffixes and streams them
-through a single `tar`, so nothing about it is specific to M20.
+Dockerfile discovers the split parts by probing suffixes and concatenates them
+into a single `tar`, so nothing about it is specific to M20.
+
+Every asset is verified against a pinned SHA-256 in
+[`visor/calibration.sha256`](visor/calibration.sha256) before extraction, and
+an asset missing from that file fails the build rather than being bundled
+unverified. After changing `VICAR_VERSION` or the calibration date stamp,
+regenerate it with `visor/update-calibration-checksums.sh`.
 
 ### Testing a variant
 
