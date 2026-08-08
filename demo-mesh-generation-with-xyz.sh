@@ -187,13 +187,21 @@ stage() {
   [ "$1" = "$PWD/$2" ] || cp "$1" "$2"
 }
 
+# A supplied cloud is staged under its own name: it is not the filtered product
+# marsrfilt writes, and a re-mesh must not overwrite that product either.
+if [ -n "$XYZ_FILE" ]; then
+  MESH_INPUT=pointcloud_input.xyz
+else
+  MESH_INPUT=pointcloud_filtered.xyz
+fi
+
 # Each step below is judged by whether its output appeared, so clear the
 # outputs of an earlier run: a leftover file would make a failure look like
 # success and mesh the previous scene's data. Only what this run regenerates,
 # and never an input: re-meshing an earlier run's cloud is a documented
 # workflow, and it must not cost that run's stereo results.
 # marsmesh writes .obj/.mtl/.lbl/.iv siblings named after its out= argument.
-stale_outputs="pointcloud_filtered.xyz texture.img texture.png
+stale_outputs="$MESH_INPUT texture.img texture.png
   terrain.obj terrain.mtl terrain.lbl terrain.iv"
 if [ -z "$XYZ_FILE" ]; then
   stale_outputs="$stale_outputs left.vic right.vic
@@ -207,7 +215,7 @@ done
 if [ -n "$XYZ_FILE" ]; then
   # Use pre-computed XYZ
   echo "Step 1: Using pre-computed XYZ point cloud..."
-  stage "$XYZ_FILE" pointcloud_filtered.xyz
+  stage "$XYZ_FILE" "$MESH_INPUT"
   echo "✓ XYZ copied: $(du -h "$XYZ_FILE" | cut -f1)"
 
   # Set texture
@@ -299,12 +307,12 @@ else
   echo ""
   echo "  Step 1c: Filtering rover hardware (marsrfilt)..."
   echo "  This removes rover body, wheels, mast from point cloud..."
-  tig marsrfilt inp=pointcloud.xyz out=pointcloud_filtered.xyz 2>&1 |
+  tig marsrfilt inp=pointcloud.xyz out="$MESH_INPUT" 2>&1 |
     grep -E "MARSRFILT|Version|Filtering|points|removed" || true
 
-  if [ ! -f pointcloud_filtered.xyz ]; then
+  if [ ! -f "$MESH_INPUT" ]; then
     echo "  ⚠ WARNING: marsrfilt failed, using unfiltered XYZ"
-    cp pointcloud.xyz pointcloud_filtered.xyz
+    cp pointcloud.xyz "$MESH_INPUT"
   else
     echo "  ✓ Rover hardware filtered"
   fi
@@ -321,7 +329,7 @@ echo ""
 echo "Step 2: Generating 3D mesh..."
 echo "  This takes ~30-90 seconds..."
 echo "  Note: Using adaptive decimation with filtered XYZ to match M20 IDS pipeline"
-tig marsmesh inp=pointcloud_filtered.xyz out=terrain.obj in_skin=texture.img \
+tig marsmesh inp="$MESH_INPUT" out=terrain.obj in_skin=texture.img \
   x_subsample=1 y_subsample=1 \
   range_min=0.2 range_mid=100 range_max=100 \
   lod_levels=10 max_angle=87.5 \
@@ -356,7 +364,7 @@ echo ""
 
 # List results, naming only what this run produced
 echo "Step 4: Results summary"
-results="pointcloud_filtered.xyz terrain.obj terrain.mtl texture.png"
+results="$MESH_INPUT terrain.obj terrain.mtl texture.png"
 [ -n "$XYZ_FILE" ] || results="pointcloud.xyz $results"
 # shellcheck disable=SC2086
 ls -lh $results 2>/dev/null || true
@@ -369,7 +377,7 @@ if [ -z "$XYZ_FILE" ]; then
   echo "  - pointcloud.xyz         : Raw 3D point cloud"
   echo "  - pointcloud_filtered.xyz: Filtered point cloud (rover hardware removed)"
 else
-  echo "  - pointcloud_filtered.xyz: The point cloud that was meshed"
+  echo "  - pointcloud_input.xyz    : The supplied point cloud, as meshed"
 fi
 echo "  - terrain.obj            : 3D mesh (Wavefront OBJ)"
 echo "  - terrain.mtl            : Material file"

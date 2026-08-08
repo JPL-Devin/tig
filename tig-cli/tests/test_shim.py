@@ -178,8 +178,24 @@ def test_tig_executable_resolves_a_bare_name(monkeypatch):
 def test_tig_executable_uses_an_invoked_path(monkeypatch, tmp_path):
     executable = tmp_path / "tig"
     executable.touch()
+    executable.chmod(0o755)
     monkeypatch.setattr(sys, "argv", [str(executable)])
     assert tig_executable() == str(executable.resolve())
+
+
+def test_tig_executable_skips_a_module_path(monkeypatch, tmp_path):
+    """'python -m tig_cli --shim' must not point shims at __main__.py."""
+    module = tmp_path / "tig_cli" / "__main__.py"
+    module.parent.mkdir()
+    module.touch()
+    console_script = tmp_path / "bin" / "tig"
+    console_script.parent.mkdir()
+    console_script.write_text("#!/bin/sh\n")
+    console_script.chmod(0o755)
+    monkeypatch.setattr(sys, "argv", [str(module)])
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "bin" / "python"))
+
+    assert tig_executable() == str(console_script)
 
 
 def _shim_manager(tools):

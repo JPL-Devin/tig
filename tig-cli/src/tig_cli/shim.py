@@ -34,8 +34,16 @@ def tig_executable() -> str:
     """Absolute path of the running tig, for the shims to call."""
     invoked = sys.argv[0] if sys.argv else ""
     if os.sep in invoked:
-        return str(Path(invoked).resolve())
-    return shutil.which(invoked or "tig") or "tig"
+        resolved = Path(invoked).resolve()
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return str(resolved)
+        # 'python -m tig_cli' leaves a module file here, which no shim can exec;
+        # the console script beside the interpreter is the real command.
+        console_script = Path(sys.executable).parent / "tig"
+        if os.access(console_script, os.X_OK):
+            return str(console_script)
+    name = invoked if invoked and os.sep not in invoked else "tig"
+    return shutil.which(name) or "tig"
 
 
 def default_shim_dir() -> Path:

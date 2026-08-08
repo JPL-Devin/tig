@@ -79,6 +79,7 @@ Skips stereo correlation, ~90 seconds total.
 - `terrain.obj` - 3D mesh (~179M, 752K vertices)
 - `terrain.mtl` - Material file
 - `texture.png` - Texture image (1280x960)
+- `pointcloud_input.xyz` - The supplied cloud, as meshed
 
 ### Data source
 
