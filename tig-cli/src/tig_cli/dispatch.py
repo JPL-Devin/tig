@@ -20,7 +20,6 @@ from __future__ import annotations
 import errno
 import os
 import selectors
-import signal
 import sys
 
 from .spec import RUNNER_MARKER, TigError, forwarded_signals
@@ -230,12 +229,18 @@ def _expressible(command: list[str], workdir: str, env: dict[str, str]) -> bool:
     return not any("\n" in text for text in [workdir, display, *command])
 
 
-def _listening(control: str) -> bool:
-    """Whether a dispatcher has the control FIFO open for reading."""
+def _listening(control: str, missing: bool = False) -> bool:
+    """Whether a dispatcher has the control FIFO open for reading.
+
+    ``missing`` is the answer when the FIFO is gone rather than unread: a
+    retired dispatcher takes no new jobs but still runs the ones it has.
+    """
     try:
         os.close(os.open(control, os.O_WRONLY | os.O_NONBLOCK))
     except OSError as e:
-        if e.errno in (errno.ENXIO, errno.ENOENT):
+        if e.errno == errno.ENOENT:
+            return missing
+        if e.errno == errno.ENXIO:
             return False
         raise
     return True
@@ -408,7 +413,7 @@ class _Job:
         try:
             while True:
                 events = selector.select(LIVENESS_INTERVAL)
-                if not events and not _listening(self.paths.control):
+                if not events and not _listening(self.paths.control, missing=True):
                     raise TigError(
                         "The container's command dispatcher went away"
                     )
@@ -548,7 +553,6 @@ class _Job:
             return
         from .engine import Engine, EngineError
 
-        name = "TERM" if signum == signal.SIGTERM else "INT"
         try:
             Engine.detect().exec_detached(
                 self.paths.container,
@@ -557,7 +561,7 @@ class _Job:
                     "-c",
                     # The command's whole group, so nothing of it is left
                     # running in the shared container.
-                    f"kill -{name} -{pid} 2>/dev/null || kill -{name} {pid}",
+                    f"kill -{signum} -{pid} 2>/dev/null || kill -{signum} {pid}",
                 ],
             )
         except (EngineError, OSError):

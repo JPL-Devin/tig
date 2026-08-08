@@ -23,7 +23,7 @@ import os
 import socket
 import sys
 
-from .spec import TigError
+from .spec import TigError, forwarded_signals
 
 DISABLE_ENV = "TIG_NO_BROKER"
 
@@ -298,7 +298,7 @@ def _submit(
 
     # Past this point the command may have run, so the broker going quiet is
     # an error: telling the caller nothing ran would have it run a second time.
-    with _forwarded_signals(connection):
+    with forwarded_signals(lambda signum: _forward(connection, signum)):
         answer = _read_line(connection)
     return _status(answer)
 
@@ -343,43 +343,12 @@ def _status(answer: bytes) -> int | None:
         ) from None
 
 
-class _forwarded_signals:
-    """Send interrupts to the container's command instead of only exiting."""
-
-    def __init__(self, connection: socket.socket):
-        import signal
-
-        self.connection = connection
-        self.handled = (signal.SIGINT, signal.SIGTERM)
-        self.previous: dict[int, object] = {}
-
-    def __enter__(self) -> "_forwarded_signals":
-        import signal
-
-        for signum in self.handled:
-            try:
-                self.previous[signum] = signal.signal(
-                    signum, lambda number, frame: self.forward(number)
-                )
-            except (ValueError, OSError):
-                pass
-        return self
-
-    def __exit__(self, *exc_info) -> bool:
-        import signal
-
-        for signum, handler in self.previous.items():
-            try:
-                signal.signal(signum, handler)
-            except (ValueError, OSError):
-                pass
-        return False
-
-    def forward(self, signum: int) -> None:
-        try:
-            self.connection.sendall(f"signal {signum}\n".encode())
-        except OSError:
-            pass
+def _forward(connection: socket.socket, signum: int) -> None:
+    """Ask the broker to pass a signal on to the command's process group."""
+    try:
+        connection.sendall(f"signal {signum}\n".encode())
+    except OSError:
+        pass
 
 
 def main(argv: list[str]) -> int:

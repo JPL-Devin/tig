@@ -336,6 +336,16 @@ def test_retiring_stops_new_commands(dispatcher):
     assert dispatcher.run(["true"]) is None
 
 
+def test_a_running_command_outlives_the_dispatcher_being_retired(
+    dispatcher, monkeypatch
+):
+    """Retiring only stops new commands; a quiet one in flight is not dead."""
+    monkeypatch.setattr(dispatch, "LIVENESS_INTERVAL", 0.05)
+    threading.Timer(0.2, dispatch.retire, (dispatcher.home, CONTAINER)).start()
+
+    assert dispatcher.run(["sh", "-c", "sleep 1; exit 3"]) == 3
+
+
 def test_a_new_script_gets_its_own_dispatcher(dispatcher, home, monkeypatch):
     """An upgraded CLI must not talk to a dispatcher from the old one."""
     monkeypatch.setattr(dispatch, "SCRIPT", dispatch.SCRIPT + "\n# changed\n")

@@ -21,7 +21,7 @@ import time
 import pytest
 
 from tig_cli import broker
-from tig_cli.server import Broker
+from tig_cli.server import Broker, Job
 from tig_cli.spec import TigError
 
 CONTAINER = "tig-vicar-test"
@@ -359,6 +359,15 @@ def test_a_broker_leaves_its_successor_s_socket_alone(home):
     assert os.path.exists(second.address)
     second._close()
     assert not os.path.exists(second.address)
+
+
+def test_a_job_whose_grace_has_passed_asks_for_no_wakeup():
+    """A deadline in the past would have select() return at once, spinning."""
+    job = Job.__new__(Job)
+    job.deadline = 0.0
+    job.grace_until = time.monotonic() - 1
+
+    assert job.next_deadline() is None
 
 
 def test_a_broker_that_goes_quiet_is_an_error_not_a_second_run():

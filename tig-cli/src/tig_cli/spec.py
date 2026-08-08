@@ -53,7 +53,12 @@ class forwarded_signals:
     container that outlives it.
     """
 
-    HANDLED = (signal.SIGINT, signal.SIGTERM)
+    # SIGHUP too: closing the terminal must not leave the tool running.
+    HANDLED = tuple(
+        getattr(signal, name)
+        for name in ("SIGINT", "SIGTERM", "SIGHUP")
+        if hasattr(signal, name)
+    )
 
     def __init__(self, forward):
         self.forward = forward

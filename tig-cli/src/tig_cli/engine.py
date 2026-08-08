@@ -87,8 +87,15 @@ def _safe(reference: str) -> str:
 
     Docker references only ever contain URL-safe characters, so anything
     else is a sign the caller is not describing a real container or image.
+    Path segments matter too: a reference may contain slashes, but one that
+    walks the path would reach an endpoint other than the one intended.
     """
-    if not reference or any(c.isspace() or c in "?#%" or ord(c) < 32 for c in reference):
+    unusable = (
+        not reference
+        or any(c.isspace() or c in "?#%" or ord(c) < 32 for c in reference)
+        or any(segment in ("", ".", "..") for segment in reference.split("/"))
+    )
+    if unusable:
         raise EngineUnavailable(f"Unusable Docker reference: {reference!r}")
     return reference
 

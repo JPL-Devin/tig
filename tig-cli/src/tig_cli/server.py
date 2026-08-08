@@ -364,7 +364,11 @@ class Job:
         """When this job next needs looking at, whatever it is waiting on."""
         if self.deadline:
             return self.deadline
-        return self.grace_until or None
+        # Once the grace period is past there is nothing to wake for: output
+        # left over finishes the job when its reader next takes it.
+        if self.grace_until and self.grace_until > time.monotonic():
+            return self.grace_until
+        return None
 
     # Moving bytes -------------------------------------------------------
 

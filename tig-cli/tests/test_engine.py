@@ -223,7 +223,19 @@ def test_connecting_to_a_missing_socket(tmp_path):
 
 # --- references ---
 
-@pytest.mark.parametrize("reference", ["", "a b", "who?", "line\nbreak", "50%"])
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "",
+        "a b",
+        "who?",
+        "line\nbreak",
+        "50%",
+        "/containers/other/json",
+        "image/../../containers/other/json",
+        "image//json",
+    ],
+)
 def test_unusable_references_are_refused(reference):
     with pytest.raises(EngineUnavailable):
         _safe(reference)

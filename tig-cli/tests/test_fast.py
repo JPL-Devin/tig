@@ -1,5 +1,6 @@
 """Tests for the warm path that runs commands without click or the Docker SDK."""
 import os
+import signal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from tig_cli.spec import (
     build_volume_mounts,
     container_display,
     container_name_for,
+    forwarded_signals,
 )
 
 IMAGE = "test-image:latest"
@@ -200,6 +202,11 @@ def test_does_not_check_the_daemon_after_every_command(host, engine, monkeypatch
     assert fast.run(["vicar"]) == 0
 
     engine.inspect_container.assert_not_called()
+
+
+def test_a_hangup_is_passed_on_like_an_interrupt():
+    """Closing a terminal must not leave the tool running in the container."""
+    assert signal.SIGHUP in forwarded_signals.HANDLED
 
 
 def test_uses_a_tty_only_when_attached_to_one(host, engine, monkeypatch):
