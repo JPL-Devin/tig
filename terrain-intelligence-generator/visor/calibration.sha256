@@ -1,0 +1,10 @@
+# SHA-256 of the VISOR calibration assets of the VICAR 5.0 release. The build
+# refuses to bundle an asset that is absent from this file or fails its digest.
+# Regenerate with ./update-calibration-checksums.sh after changing releases.
+a6e01d2be15439b07527e860feac0164f82abb110197c3ec0474faa65407fa7c  visor_calibration_20230608_m20.tar.gzaa
+fe90483fd37e1254bd3919b1b7a9e3aa3cc59a9c06eae35e680025a4ab5a38b8  visor_calibration_20230608_m20.tar.gzab
+2cbf6ae4faf961de37c750abe4e9b720654a619701f88f8c4a58903d258e8fa2  visor_calibration_20230608_mer.tar.gz
+f03aed57a75dde0dbccc25b53480f6ff133df7ea7eea9a8e18cf8672b4c4d3f5  visor_calibration_20230608_msl.tar.gz
+e74c4f277862aa1fc3ffadcb1fcc6a255fbc8ce011d601283002cb347eea42c3  visor_calibration_20230608_msam.tar.gz
+58d79eed7f9dcf36f991d24b96fedb397c865e12d7ce56b21adea4cbbf6a0e64  visor_calibration_20230608_phx.tar.gz
+b46c169e3670db5b7f8fdc5723d7c20813f129b78d80faf3085f62d33aae0ac5  visor_calibration_20230608_nsyt.tar.gz
