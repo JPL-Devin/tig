@@ -9,7 +9,7 @@
 # each time and produce byte-different copies of the same thing.
 #
 #   docker build --platform linux/amd64 \
-#       -f Dockerfile.visor \
+#       -f visor/Dockerfile \
 #       --build-arg VISOR_MISSIONS=nsyt \
 #       -t terrain-intelligence-generator:visor-nsyt .
 #
@@ -34,7 +34,9 @@ ARG VISOR_SPLIT_SUFFIXES="aa ab ac ad ae af ag ah"
 
 LABEL org.opencontainers.image.title="Terrain Intelligence Generator (VISOR calibration)"
 LABEL org.opencontainers.image.description="Terrain Intelligence Generator with VISOR mission calibration data bundled"
-LABEL org.opencontainers.image.source="https://github.com/NASA-AMMOS/VICAR"
+# Where the calibration itself comes from; image.source is left to CI, which
+# sets it to the repository holding this recipe.
+LABEL org.nasa.ammos.visor.calibration.source="https://github.com/NASA-AMMOS/VICAR/releases/tag/5.0"
 
 # Where the tig CLI mounts user-supplied calibration, and what MARS tools
 # call CONFIG_PATH. Keeping the bundled data here means a user mount at the

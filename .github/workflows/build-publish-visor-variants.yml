@@ -160,7 +160,17 @@ jobs:
           BASE_TAG: ${{ steps.build-args.outputs.base_tag }}
           VICAR_VERSION: ${{ steps.build-args.outputs.vicar_version }}
           MISSION: ${{ matrix.mission }}
+          LABELS: ${{ steps.meta.outputs.labels }}
         run: |
+          # docker/metadata-action emits newline-separated key=value labels;
+          # plain docker build has no labels input to hand them to.
+          label_args=()
+          while read -r label; do
+            if [ -n "${label}" ]; then
+              label_args+=(--label "${label}")
+            fi
+          done <<< "${LABELS}"
+
           docker build \
             --platform linux/amd64 \
             --file terrain-intelligence-generator/visor/Dockerfile \
@@ -168,6 +178,9 @@ jobs:
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "VICAR_VERSION=${VICAR_VERSION}" \
             --build-arg "VISOR_MISSIONS=${MISSION}" \
+            "${label_args[@]}" \
+            --label "org.opencontainers.image.title=Terrain Intelligence Generator (VISOR ${MISSION} calibration)" \
+            --label "org.opencontainers.image.description=Terrain Intelligence Generator with VISOR ${MISSION} calibration data bundled" \
             --tag "visor-variant:${MISSION}" \
             terrain-intelligence-generator/visor
 
@@ -207,7 +220,8 @@ jobs:
           MISSION: ${{ matrix.mission }}
         run: |
           SIZE=$(docker image inspect "visor-variant:${MISSION}" \
-            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec 2>/dev/null || echo "n/a")
+            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec 2>/dev/null) || true
+          SIZE="${SIZE:-n/a}"
           {
             echo "## VISOR variant: ${{ matrix.mission }}"
             echo ""
