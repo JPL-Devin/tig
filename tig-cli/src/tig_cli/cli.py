@@ -190,6 +190,12 @@ def main(
                 f"--shim writes commands and exits; it cannot also run "
                 f"'{vicar_tool}'."
             )
+        if show_status:
+            # --status skips the calibration mount, so a shim run alongside it
+            # would start a second container instead of reusing the warm one.
+            raise click.UsageError(
+                "--shim writes commands and exits; run --status separately."
+            )
         directory = Path(shim_dir) if shim_dir else default_shim_dir()
         try:
             manager.ensure_container(writable_paths=writable_paths)

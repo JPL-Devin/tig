@@ -256,3 +256,19 @@ def test_cli_shim_rejects_a_tool_argument(tmp_path):
     assert "cannot also run 'marsmap'" in result.output
     assert not (tmp_path / "marsmap").exists()
     manager.execute_vicar_command.assert_not_called()
+
+
+def test_cli_shim_rejects_status(tmp_path):
+    """--status drops the calibration mount, so shimming would start a
+    second container and the status would never be printed."""
+    runner = CliRunner()
+    manager = _shim_manager(["marsmap"])
+
+    with patch("tig_cli.cli.ContainerManager", return_value=manager), \
+         patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
+        result = runner.invoke(main, ["--status", "--shim-dir", str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert "run --status separately" in result.output
+    assert not (tmp_path / "marsmap").exists()
+    manager.ensure_container.assert_not_called()
