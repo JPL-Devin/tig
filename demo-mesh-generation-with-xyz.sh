@@ -192,8 +192,9 @@ stage() {
 # success and mesh the previous scene's data. Only what this run regenerates,
 # and never an input: re-meshing an earlier run's cloud is a documented
 # workflow, and it must not cost that run's stereo results.
+# marsmesh writes .obj/.mtl/.lbl/.iv siblings named after its out= argument.
 stale_outputs="pointcloud_filtered.xyz texture.img texture.png
-  terrain.obj terrain.mtl"
+  terrain.obj terrain.mtl terrain.lbl terrain.iv"
 if [ -z "$XYZ_FILE" ]; then
   stale_outputs="$stale_outputs left.vic right.vic
     disparity_init.img disparity.img pointcloud.xyz"
@@ -353,9 +354,12 @@ else
 fi
 echo ""
 
-# List results
+# List results, naming only what this run produced
 echo "Step 4: Results summary"
-ls -lh pointcloud.xyz pointcloud_filtered.xyz terrain.obj terrain.mtl texture.png 2>/dev/null || true
+results="pointcloud_filtered.xyz terrain.obj terrain.mtl texture.png"
+[ -n "$XYZ_FILE" ] || results="pointcloud.xyz $results"
+# shellcheck disable=SC2086
+ls -lh $results 2>/dev/null || true
 echo ""
 
 echo "=== Demo Complete ==="
