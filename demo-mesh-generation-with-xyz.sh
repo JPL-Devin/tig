@@ -176,18 +176,20 @@ echo ""
 
 cd "$WORKSPACE"
 
+# -ef compares the files themselves, so a symlinked workspace or any other
+# spelling of the same path is still recognised as an input and never deleted.
 is_input() {
-  local candidate="$PWD/$1"
   local given
   for given in "$XYZ_FILE" "$STEREO_LEFT" "$STEREO_RIGHT" "$TEXTURE_FILE"; do
-    [ "$given" = "$candidate" ] && return 0
+    [ -n "$given" ] && [ "$given" -ef "$1" ] && return 0
   done
   return 1
 }
 
 # Copy an input into place, unless it is already the file we want.
 stage() {
-  [ "$1" = "$PWD/$2" ] || cp "$1" "$2"
+  [ -e "$2" ] && [ "$1" -ef "$2" ] && return 0
+  cp "$1" "$2"
 }
 
 # A supplied cloud is staged under its own name: it is not the filtered product
