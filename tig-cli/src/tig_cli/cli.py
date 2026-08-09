@@ -10,9 +10,6 @@ from .config import (
     ConfigError,
     PROJECT_CONFIG_NAME,
     SYSTEM_CONFIG_PATH,
-    env_disable_path_translation,
-    env_selinux_label_disable,
-    env_writable_paths,
     load_config,
     user_config_path,
 )
@@ -23,6 +20,11 @@ from .container import (
     get_container_image,
 )
 from .shim import default_shim_dir, tig_executable, write_shims
+from .spec import (
+    resolve_disable_path_translation,
+    resolve_selinux_label_disable,
+    resolve_writable_paths,
+)
 
 
 class DynamicHelpCommand(click.Command):
@@ -145,21 +147,13 @@ def main(
         config = load_config(config_path)
         image = get_container_image(config)
 
-        from_env = env_writable_paths()
-        writable_paths = list(writable_path) if writable_path else (
-            from_env if from_env is not None else config.writable_paths
+        writable_paths = resolve_writable_paths(config, list(writable_path))
+        disable_path_translation = resolve_disable_path_translation(
+            config, disable_path_translation
         )
-
-        if not disable_path_translation:
-            override = env_disable_path_translation()
-            if override is None:
-                override = config.disable_path_translation
-            disable_path_translation = bool(override)
-
-        if selinux_label_disable is None:
-            selinux_label_disable = env_selinux_label_disable()
-        if selinux_label_disable is None:
-            selinux_label_disable = config.selinux_label_disable
+        selinux_label_disable = resolve_selinux_label_disable(
+            config, selinux_label_disable
+        )
     except ConfigError as e:
         raise click.ClickException(str(e)) from e
 

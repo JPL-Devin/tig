@@ -15,7 +15,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 
 [project.scripts]
-tig = "tig_cli.cli:main"
+tig = "tig_cli.entry:main"
 
 [project.optional-dependencies]
 dev = [
