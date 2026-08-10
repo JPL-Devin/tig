@@ -57,7 +57,11 @@ On an 8-core VM, five 1280x960 NavCam frames take about 8 seconds end to end.
 - `panorama.png` — the same mosaic, display-stretched, 8-bit
 - `panorama_rad/` — the radiometrically corrected frames
 - `panorama_overlaps.xml` — overlap statistics from `marsmap`
+- `panorama_overlap_mosaic.img` — the zoomed-out mosaic the overlap pass had to
+  build to measure them; of no further use
 - `panorama_brtcorr.xml` — per-frame brightness corrections from `marsbrt`
+- `panorama_stretched.img` — the display-stretched copy the PNG was written
+  from, unless `--no-stretch`
 
 ## Choosing frames
 
@@ -75,7 +79,8 @@ frame spans just under 100 degrees of azimuth. The `NCAM00501` sequence is four
 frames stepped about 90 degrees apart — the mast azimuths in the sol 300 labels
 below are 2.0, 91.5, 181.8 and 271.8 degrees — which closes the circle with
 overlap at every seam, including between the last frame and the first. Its
-fifth frame is at the same azimuth as the fourth but a different elevation;
+fifth frame is within a few degrees of the fourth in azimuth but at a
+different elevation;
 frames at a second elevation tier extend the panorama vertically and do not
 need to line up with the ring.
 
@@ -285,8 +290,10 @@ What came out, on this machine:
 | Polar | `--projection polar --top-el 30` | 3097 x 3097 x 3 |
 | Vertical | `--projection vertical --min-x -15 --max-x 15 --min-y -15 --max-y 15 --vert-scale 0.03` | 1000 x 1000 x 3 |
 
-The overlap pass found 177 overlapping regions and `marsbrt` solved gains of
-1.232, 1.079, 0.903, 1.015 and 0.771 for the five frames.
+The overlap pass found about 177 overlapping regions — repeated runs on the same
+frames have also reported 176, with no effect on the solved gains or the mosaic
+— and `marsbrt` solved gains of 1.232, 1.079, 0.903, 1.015 and 0.771 for the
+five frames.
 
 ## Troubleshooting
 
