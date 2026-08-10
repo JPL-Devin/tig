@@ -191,6 +191,18 @@ for i in "${!FRAMES[@]}"; do
   fi
 done
 
+# The stale-output cleanup below would delete an input living in the workspace.
+for frame in "${FRAMES[@]}"; do
+  case "$frame" in
+    "$WORKSPACE"/*)
+      echo "ERROR: frame lives in the workspace this run would overwrite:"
+      echo "         $frame"
+      echo "       Run from a different directory, or copy the frames out."
+      exit 1
+      ;;
+  esac
+done
+
 mkdir -p "$WORKSPACE"
 echo "✓ Created workspace: $WORKSPACE"
 echo "  Frames to mosaic: ${#FRAMES[@]}"
