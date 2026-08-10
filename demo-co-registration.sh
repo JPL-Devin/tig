@@ -129,8 +129,16 @@ abspath() {
   echo "${dir%/}/$(basename "$1")"
 }
 
-# Build one absolute-path list: the MARS programs read the list from inside the
-# container, where a relative path would resolve against a different directory.
+# tig mounts $HOME at its host path and the rest of the filesystem read-only under
+# /host, and it translates paths in arguments but not inside a list file. So the
+# list has to carry the path the container will see.
+container_path() {
+  case "$1" in
+    "$HOME"/*) echo "$1" ;;
+    *) echo "/host$1" ;;
+  esac
+}
+
 INPUTS=()
 if [ -n "$IMAGE_LIST" ]; then
   IMAGE_LIST=$(abspath "$IMAGE_LIST")
@@ -177,7 +185,9 @@ rm -f frames.lis overlap_left.lis overlap_right.lis marschkovl.log \
       tiepoints.tpt tiepoints_kept.tpt pointing.nav marsnav.log \
       tiepoints_nav2.tpt pointing_nav2.nav marsnav2.log
 
-printf '%s\n' "${INPUTS[@]}" > frames.lis
+for input in "${INPUTS[@]}"; do
+  container_path "$input" >> frames.lis
+done
 echo "Input frames: ${#INPUTS[@]}"
 echo ""
 
