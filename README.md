@@ -146,6 +146,7 @@ M20, MSL, MER and other missions. Not bundled in the image; mount it at runtime.
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
 - **[Architecture](docs/architecture/components.md)** - How the pieces fit together
+- **[Airflow + Kubernetes Pipeline](examples/airflow-k8s-pipeline/README.md)** - Event-driven terrain mesh generation example
 
 ## Key Tools
 
@@ -211,6 +212,9 @@ tig/
 ├── find-calibration.sh                 # Calibration helper
 ├── tig-cli/                            # The tig command-line client (PyPI: tig-cli)
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
+├── QUICKSTART.md                       # Common workflows end to end
+├── examples/
+│   └── airflow-k8s-pipeline/           # Airflow + Kubernetes terrain pipeline example
 └── docs/
     ├── demos/                          # Demo guides
     ├── architecture/                   # System design
