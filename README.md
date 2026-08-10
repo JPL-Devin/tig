@@ -205,6 +205,7 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 - **[Getting Started](docs/getting-started.md)** - Installation and setup
 - **[Quick Start](QUICKSTART.md)** - Common workflows end to end
 - **[Mesh Generation Demo](docs/demos/mesh-generation.md)** - Step-by-step mesh creation
+- **[Panorama Mosaic Demo](docs/demos/panorama-mosaic.md)** - 360-degree in-situ NavCam panorama
 - **[Command Reference](docs/demos/commands.md)** - Tour of the VICAR toolset
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
