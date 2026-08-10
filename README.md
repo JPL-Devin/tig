@@ -5,63 +5,106 @@ built on NASA JPL's VICAR.
 
 ## Overview
 
-TIG turns raw instrument imagery into the visual and geometric products that
-surface and orbital mission operations run on: terrain meshes, point clouds,
-slope and roughness maps, map-projected mosaics, and format conversions that
-carry instrument metadata through the pipeline.
+TIG works with the instrument-specific formats planetary missions produce,
+converting between them and into interchange formats while retaining the
+acquisition metadata that travels in the image label. It processes raw
+instrument image products into the visual and geometric products that surface
+mission operations run on: disparity maps, XYZ point clouds, textured terrain
+meshes, slope, roughness and reachability rasters, and map-projected mosaics
+that can cover a full 360 degrees in azimuth. Camera-model and coordinate-frame
+tools bring products from different instruments into a common frame, so views
+from several cameras can be combined; radiometric calibration and image
+co-registration are available where the mission's calibration data and tiepoint
+workflows are supplied. Every tool is an ordinary command, so terrain
+generation can be automated as ordinary scripts or workflow tasks.
 
 It packages VICAR — NASA JPL's general-purpose image processing system, used on
-planetary missions since the 1960s — as a container image with ~546 commands,
-plus [`tig`](tig-cli/README.md), a CLI that runs any of them from your own shell
-as if they were installed locally. Products come out in interchange formats
-(Wavefront OBJ, PNG/JPEG/TIFF, map-projected VICAR) that downstream AMMOS
-visualization tools such as MMGIS, ASTTRO and Astria consume; TIG itself does
-not talk to those services.
+planetary missions since the 1960s — as a container image with ~546 commands
+(74 of them the mission-specific `mars*` terrain programs), plus
+[`tig`](tig-cli/README.md), a CLI that runs any of them from your own shell as
+if they were installed locally. Products come out in interchange formats
+(Wavefront OBJ, glTF/GLB, PNG/JPEG/TIFF, map-projected VICAR) that downstream
+AMMOS visualization tools such as MMGIS, ASTTRO and Astria consume; TIG itself
+does not talk to those services and ships no adapter for them.
 
-## Capabilities
+Scope note: processing starts at instrument image products (EDR/FDR-level VICAR
+images). There is no telemetry ingest or depacketization in this repository —
+"raw" here means uncalibrated image products, not raw downlink.
 
-### Surface reconstruction
+## Key Capabilities
 
-Stereo in-situ imagery to terrain products:
+### Surface Reconstruction
+
+Terrain meshes, point clouds and slope/roughness maps from in-situ imagery:
 
 | Stage | Tools |
 | --- | --- |
 | Stereo correlation | `marscorr`, `marscor3`, `marsecorr`, `marsjplstereo` |
 | Point clouds | `marsxyz`, `marsxyzmerge`, `marsxyzsurf`, `marsrfilt` |
-| Meshes | `marsmesh`, `marsrefmesh` (Wavefront OBJ + OpenInventor) |
+| Meshes | `marsmesh`, `marsrefmesh` (Wavefront OBJ + OpenInventor), `obj2gltf` (glTF/GLB) |
 | Surface characteristics | `marsslope`, `marsrough`, `marsirough`, `marsuvw` (surface normals), `marsgreach` (goodness/reachability) |
 | Range and depth | `marsrange`, `marsdepth`, `marsinvrange` |
 
 The [mesh generation demo](docs/demos/mesh-generation.md) runs the stereo →
-disparity → XYZ → mesh path end to end on Mars 2020 NavCam pairs. The slope,
-roughness and reachability tools are part of the same MARS toolset and take the
-XYZ products as input; this repository does not yet ship a worked example for
-them.
+disparity → XYZ → mesh path end to end on Mars 2020 NavCam pairs, and the
+[Airflow example](examples/airflow-k8s-pipeline/README.md) runs the same path as
+scheduled tasks. The surface-characteristic tools — including `marsgreach`,
+which produces the goodness/reachability rasters used for traversability
+assessment — are part of the same MARS toolset and take the XYZ products as
+input; this repository ships no worked example for them, so treat them as
+available programs rather than demonstrated workflows.
 
-### Orbital and large-area mapping
+### Orbital Mapping and Monitoring
 
-`marsmap` orthoprojects and map-projects images; `marsmos`, `marsremos` and
-`marsunmosaic` build and unbuild large-area mosaics; `marsnav`, `marsnav2`,
-`marsautotie`, `marstie` and `marsautoloco` tie images together and refine
-pointing, which is how images are co-registered before mosaicking or change
-comparison. Change detection over time is a workflow built on these, not a
-single command.
+Map-projected, large-area products are built by mosaicking overlapping frames.
+`marsmap` assembles a mosaic in a cylindrical, polar, vertical or (experimental)
+sinusoidal projection and handles azimuth wrap-around, which is how a panorama
+covering up to 360 degrees is produced; `marsmos` assembles frames under a
+synthetic wide-field camera model; `marsortho` produces orthographic mosaics and
+DEMs from XYZ data; `marsremos` and `marsunmosaic` rebuild and invert mosaics.
+`map3`, `maptran` and `mapcoord` from the general VICAR toolset perform
+cartographic map projection and reprojection.
 
-### Multi-instrument and multi-mission products
+Co-registration is a tiepoint-and-pointing workflow rather than a single
+command: `marsautotie` / `marsautotie2` / `marstie` generate tiepoints,
+`marsnav`, `marsnav2` (bundle adjustment) and `marsautoloco` solve for corrected
+pointing, and `marsfidfinder` locates fiducials. Once images are registered,
+change comparison over time is composed from the general image-processing tools
+— there is no change-detection program in the image.
 
-Camera models in CAHV/CAHVOR/CAHVORE (`marscahv`, `marsmake_cm`, `marsget_cm`)
-let products from different instruments be brought into a common frame
-(`marscoordtrans`, `marsproj`), so surface and orbital views can be combined.
-Radiometric correction (`marsrad`), colour handling (`marscolor`, `marsdebayer`)
-and brightness matching (`marsbrt`, `marsrcorr`) depend on mission calibration
-data, which is not bundled — see [Calibration Data](docs/reference/calibration-data.md).
+Both the mosaic and the co-registration workflows are undemonstrated here: this
+repository ships no panorama or co-registration demo, doc or test. Note also
+that the `mars*` mosaicking programs are built around in-situ camera geometry
+(spherical coordinates about a landing site); orbital imagery is handled by the
+general cartographic programs above.
+
+### Integrated Data Products
+
+Camera models in CAHV/CAHVOR/CAHVORE (`marscahv`, `marsmake_cm`, `marsget_cm`,
+`marscheckcm`) and frame transforms (`marscoordtrans`, `marsproj`,
+`marsrelabel`) bring products from different instruments and coordinate frames
+into a common frame, which is what allows high-resolution surface views and
+broader context imagery to be combined into one product. Radiometric
+calibration (`marsrad`) plus brightness matching and colour handling
+(`marsbrt`, `marsrcorr`, `marsbias`, `marscolor`, `marsdebayer`) normalize
+inputs beforehand; `marsrad` reads flat fields from `MARS_CONFIG_PATH`, so it
+needs mission calibration data that the base image does not bundle — see
+[Calibration Data](docs/reference/calibration-data.md) for mounting VISOR data
+or using the `:visor-<mission>` image variants. `marsrad` is exercised as the
+`rad_left` / `rad_right` tasks of the [Airflow
+example](examples/airflow-k8s-pipeline/README.md).
+
+## Supporting Capabilities
 
 ### Format conversion with metadata retention
 
 VICAR's label system carries acquisition metadata through processing, so
-intermediate and final products keep their provenance. `vicario` converts VICAR
-images to PNG/JPEG/TIFF (see the [reference](docs/reference/vicario.md));
-`vtiff`, `visis2` and related tools handle other interchange formats.
+intermediate and final products keep their provenance (`label`, `clabel` and
+`marsrelabel` inspect and update it). `vicario` converts VICAR images to
+PNG/JPEG/TIFF (see the [reference](docs/reference/vicario.md)); `vtiff` handles
+TIFF, `visis2` / `visisx` / `isislab` handle ISIS, and `obj2gltf` / `obj2plane`
+/ `marstile` convert mesh and tiled products. There is no PDS4 reader or writer
+in the image; metadata retention here means VICAR-label retention.
 
 ### General image processing
 
@@ -71,9 +114,28 @@ images to PNG/JPEG/TIFF (see the [reference](docs/reference/vicario.md));
 ### Automation
 
 Every tool is an ordinary command, so pipelines are ordinary scripts — the
-[demo script](demo-mesh-generation-with-xyz.sh) is one. `tig` keeps a container
-warm between invocations, so per-command overhead is tens of milliseconds rather
-than a container start.
+[demo script](demo-mesh-generation-with-xyz.sh) is one, and the
+[Airflow + Kubernetes example](examples/airflow-k8s-pipeline/README.md) runs
+radiometric correction, correlation, XYZ and meshing as event-driven DAG tasks.
+`tig` keeps a container warm between invocations, so per-command overhead is
+tens of milliseconds rather than a container start.
+
+### Not currently provided
+
+So the scope is unambiguous:
+
+- No telemetry ingest or depacketization; inputs are instrument image products.
+- No MMGIS, ASTTRO or Astria adapter, exporter or tiling recipe. TIG writes
+  interchange formats those tools can consume; connecting them is up to you.
+- No PDS4 reader or writer.
+- No change-detection program; change monitoring is a composed workflow.
+- No calibration data in the base image (the `:visor-<mission>` variants bundle
+  it per mission).
+- No worked example for panoramas/mosaics, co-registration, or the
+  slope/roughness/reachability products — the programs are present, the demos
+  are not. Automated checks cover the CLI, format conversion, and the presence
+  of the MARS commands; the end-to-end product paths that are demonstrated are
+  the mesh demo and the Airflow example.
 
 ## Quick Start
 
@@ -129,7 +191,8 @@ plus the Java `vicario` converter. Published as
 ### VISOR
 
 VICAR Institutional Stereo Observation Repository — camera calibration files for
-M20, MSL, MER and other missions. Not bundled in the image; mount it at runtime.
+M20, MSL, MER and other missions. Not bundled in the base image; mount it at
+runtime, or use a `:visor-<mission>` image variant that bundles it.
 
 📖 [Downloading VISOR Data](docs/demos/downloading-visor-data.md) · [Calibration Data](docs/reference/calibration-data.md)
 
@@ -160,8 +223,9 @@ M20, MSL, MER and other missions. Not bundled in the image; mount it at runtime.
 | `marsrfilt` | Rover hardware filtering | XYZ | Filtered XYZ |
 | `marsmesh` | Surface triangulation | XYZ + texture | 3D mesh (OBJ) |
 | `marsslope`, `marsrough` | Surface characteristics | XYZ | Slope / roughness maps |
-| `marsmap` | Orthoprojection | Images + geometry | Map-projected images |
-| `marsmos` | Mosaicking | Map-projected images | Mosaic |
+| `marsmap` | Projected mosaicking (cylindrical / polar / vertical) | Images + geometry | Map-projected mosaic |
+| `marsmos` | Camera-model mosaicking | Images + geometry | Wide-field mosaic |
+| `marsortho` | Orthographic mosaic / DEM | XYZ + skin | Ortho image, DEM |
 
 ### General image processing
 
