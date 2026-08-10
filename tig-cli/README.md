@@ -54,6 +54,9 @@ tig label /data/scenes/image.vic
 | `--calibration-path PATH` | Host directory with MARS/VISOR calibration files. Defaults to `$MARS_CONFIG_PATH`. |
 | `--disable-path-translation` | Disable automatic host→container path translation (debugging). |
 | `--selinux-label-disable` / `--no-selinux-label-disable` | Force `--security-opt label=disable` on or off (Linux). Defaults to on when SELinux is Enforcing. |
+| `--shim` | Write one command per VICAR tool into `~/.local/share/tig/shims`, then exit. See [Running tools unqualified](#running-tools-unqualified). |
+| `--shim-dir PATH` | Write those commands somewhere else; implies `--shim`. |
+| `--shim-force` | With `--shim`, also create commands whose names already exist on your `PATH`. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |
 | `--help` | Show help, including the active container image and the config files in use. |
@@ -106,7 +109,7 @@ selinux_label_disable = true
 | --- | --- | --- |
 | `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
 | `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
-| `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. Same variable the `vicar-native-toolkit` uses, so an activated toolkit environment is picked up automatically. |
+| `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. |
 | `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
 | `TIG_SELINUX_LABEL_DISABLE` | `selinux_label_disable` | `1`/`true`/`yes`/`on` to force `label=disable`; `0`/`false` to force it off. |
 | `TIG_CONFIG` | (all files) | Load only this config file instead of the layered files. |
@@ -115,6 +118,27 @@ selinux_label_disable = true
 export CONTAINER_IMAGE=ghcr.io/my-org/custom-vicar:latest
 tig marsmap input.vic output.vic
 ```
+
+## Running tools unqualified
+
+`tig --shim` writes one small command per VICAR tool, so scripts and habits that
+call the tools directly keep working:
+
+```bash
+tig --shim
+export PATH="$HOME/.local/share/tig/shims:$PATH"
+
+marsmap INP=input.vic OUT=output.vic   # same as: tig marsmap ...
+```
+
+The tool list comes from the image, so re-run `tig --shim` after switching
+images; commands for tools that disappeared are removed. Pass
+`--shim-dir PATH` to write them somewhere else, such as `~/bin`.
+
+Names that already exist on your `PATH` — VICAR ships a `sort`, a `patch` and a
+`size`, among others — are skipped and reported, so putting the directory first
+on `PATH` cannot shadow your system commands. Reach those as `tig sort ...`, or
+pass `--shim-force` if you want the VICAR ones to win.
 
 ## Container reuse
 
@@ -141,6 +165,51 @@ to see which containers exist and what each has mounted read-write.
 
 Interrupting a command (Ctrl-C, `SIGTERM`) stops that command and leaves the
 container up for the next one; `tig --shutdown` removes it.
+
+## Warm command latency
+
+Once the container is up, `tig <tool> <args...>` runs on a warm path that costs
+neither the `docker` CLI's startup nor the Docker SDK's and click's imports.
+Commands are handed to a small shell runner already running in the container,
+which starts them without a container exec and without the daemon being
+involved at all. On Linux the two meet over FIFOs under `~/.cache/tig/`; on
+macOS, where a bind-mounted FIFO does not cross into the Docker Desktop VM,
+the runner instead dials back to a broker on the host (see below). On this
+machine, against the `:opensource` image:
+
+| per command | |
+| --- | --- |
+| `tig <tool>` | 27 ms |
+| `docker exec` in a sidecar container | 32-34 ms |
+| `tig <tool>` without the in-container runner | 55 ms |
+| `tig <tool>` before this path existed | 158 ms |
+
+The runner is started in the background after a command that had to go the
+slow way, so nothing waits for it, and it needs nothing of the image beyond
+`/bin/sh` (`/bin/bash` for the broker's agent). Each command is run in a
+process group of its own, so interrupting `tig` stops what the tool started
+too. Because a command reaching it proves the container is running, the
+daemon is asked whether the container still matches its image only every 30
+seconds, after the command rather than before it; a container left behind by a
+re-pulled tag is retired then and replaced on the next command.
+
+Anything the warm path does not recognise - options, a container that is not
+running, an interactive terminal, a Docker setup it cannot drive (TLS, an
+unknown context) - falls back, and behaves exactly as before. Set
+`TIG_NO_DISPATCHER=1` to use the daemon socket directly and
+`TIG_NO_FAST_PATH=1` to always take the full path.
+
+### The macOS broker
+
+Where FIFOs cannot be shared, `tig` starts a broker process on the host and an
+agent in the container; the agent reaches the broker through
+`host.docker.internal`, and each `tig` hands its own standard input, output
+and error to the broker over a unix socket in `~/.cache/tig/`, which only the
+invoking user can reach. A token in the agent's greeting means nothing else
+on the machine can push commands into the container. If the broker or the
+agent cannot be started, the command goes to the daemon socket as before. Set
+`TIG_NO_BROKER=1` to leave it out, `TIG_BROKER=1` to use it where the FIFO
+dispatcher would otherwise be preferred.
 
 ## MARS / VISOR calibration files
 

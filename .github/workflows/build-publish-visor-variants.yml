@@ -1,0 +1,234 @@
+name: Build and Publish VISOR Calibration Variants
+
+# Per-mission images that bundle VISOR calibration on top of the base
+# Terrain Intelligence Generator image, published as :visor-<mission>.
+#
+# These build FROM the published base image rather than rebuilding VICAR, so
+# this workflow deliberately does not depend on the base image build; run it
+# after a new base image has been pushed.
+#
+# The variant Dockerfile lives outside terrain-intelligence-generator/docker/
+# so that editing it does not also trigger the hour-long base image rebuild,
+# which watches that whole directory.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    tags:
+      - 'v*'
+    paths:
+      - 'terrain-intelligence-generator/visor/**'
+      - 'terrain-intelligence-generator/test-visor-image.sh'
+      - '.github/workflows/build-publish-visor-variants.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'terrain-intelligence-generator/visor/**'
+      - 'terrain-intelligence-generator/test-visor-image.sh'
+      - '.github/workflows/build-publish-visor-variants.yml'
+  workflow_dispatch:
+    inputs:
+      missions:
+        description: 'Space-separated missions to build (default: all)'
+        required: false
+        default: 'm20 mer msl msam phx nsyt'
+      base_tag:
+        description: 'Tag of the base image to build on top of'
+        required: false
+        default: 'opensource'
+      vicar_version:
+        description: 'VICAR release holding the calibration assets'
+        required: false
+        default: '5.0'
+      push_to_registry:
+        description: 'Push to GitHub Container Registry'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/terrain-intelligence-generator
+
+jobs:
+  select-missions:
+    name: Select missions
+    runs-on: ubuntu-latest
+    outputs:
+      missions: ${{ steps.select.outputs.missions }}
+    steps:
+      - name: Select missions
+        id: select
+        # The input arrives as an environment variable rather than through
+        # template interpolation, which would splice it into this script.
+        env:
+          MISSIONS_INPUT: ${{ github.event.inputs.missions }}
+        run: |
+          MISSIONS="${MISSIONS_INPUT:-m20 mer msl msam phx nsyt}"
+          for mission in ${MISSIONS}; do
+            case "${mission}" in
+              m20|mer|msl|msam|phx|nsyt) ;;
+              *) echo "Unknown mission '${mission}'" >&2; exit 1;;
+            esac
+          done
+          echo "missions=$(echo "${MISSIONS}" | jq -Rc 'split(" ") | map(select(length > 0))')" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    name: ${{ matrix.mission }}
+    needs: select-missions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        mission: ${{ fromJSON(needs.select-missions.outputs.missions) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+
+          # m20 alone is 5.3GB extracted on top of a 3.12GB base image, so a
+          # hosted runner needs the same cleanup the base image build does.
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+          docker system prune -af --volumes
+
+          echo ""
+          echo "Disk space after cleanup:"
+          df -h
+
+      # Deliberately no docker/setup-buildx-action: its container driver
+      # would keep the built image out of the local daemon, and the image has
+      # to be in the daemon for the test step below to run it.
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine build arguments
+        id: build-args
+        env:
+          BASE_TAG_INPUT: ${{ github.event.inputs.base_tag }}
+          VICAR_VERSION_INPUT: ${{ github.event.inputs.vicar_version }}
+        run: |
+          echo "base_tag=${BASE_TAG_INPUT:-opensource}" >> $GITHUB_OUTPUT
+          echo "vicar_version=${VICAR_VERSION_INPUT:-5.0}" >> $GITHUB_OUTPUT
+          # A repository owner may be mixed case; an image reference may not.
+          echo "image=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.build-args.outputs.image }}
+          tags: |
+            # The stable per-mission identifier, the counterpart of
+            # 'opensource' for the base image
+            type=raw,value=visor-${{ matrix.mission }}
+            type=ref,event=branch,suffix=-visor-${{ matrix.mission }}
+            type=ref,event=pr,suffix=-visor-${{ matrix.mission }}
+            type=semver,pattern={{version}},suffix=-visor-${{ matrix.mission }}
+            type=sha,prefix=sha-,format=short,suffix=-visor-${{ matrix.mission }}
+
+      # Built to the local daemon first so the image can be tested before it
+      # is published. Nothing is cached: the layer is the calibration data
+      # itself, so a cache would only store another copy of it.
+      - name: Build VISOR variant image
+        env:
+          BASE_IMAGE: ${{ steps.build-args.outputs.image }}
+          BASE_TAG: ${{ steps.build-args.outputs.base_tag }}
+          VICAR_VERSION: ${{ steps.build-args.outputs.vicar_version }}
+          MISSION: ${{ matrix.mission }}
+          LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          # docker/metadata-action emits newline-separated key=value labels;
+          # plain docker build has no labels input to hand them to.
+          label_args=()
+          while read -r label; do
+            if [ -n "${label}" ]; then
+              label_args+=(--label "${label}")
+            fi
+          done <<< "${LABELS}"
+
+          docker build \
+            --platform linux/amd64 \
+            --file terrain-intelligence-generator/visor/Dockerfile \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "BASE_TAG=${BASE_TAG}" \
+            --build-arg "VICAR_VERSION=${VICAR_VERSION}" \
+            --build-arg "VISOR_MISSIONS=${MISSION}" \
+            "${label_args[@]}" \
+            --label "org.opencontainers.image.title=Terrain Intelligence Generator (VISOR ${MISSION} calibration)" \
+            --label "org.opencontainers.image.description=Terrain Intelligence Generator with VISOR ${MISSION} calibration data bundled" \
+            --tag "visor-variant:${MISSION}" \
+            terrain-intelligence-generator/visor
+
+      - name: Test VISOR variant image
+        env:
+          MISSION: ${{ matrix.mission }}
+        run: ./terrain-intelligence-generator/test-visor-image.sh "visor-variant:${MISSION}"
+
+      - name: Push VISOR variant image
+        if: github.event_name != 'pull_request' && github.event.inputs.push_to_registry != 'false'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          MISSION: ${{ matrix.mission }}
+        run: |
+          # m20 is 8.75GB, so a rejected push is a plausible failure mode and
+          # must not read as a generic red matrix leg.
+          for tag in ${TAGS}; do
+            docker tag "visor-variant:${MISSION}" "${tag}"
+            if ! docker push "${tag}"; then
+              {
+                echo "## ❌ Push of ${MISSION} failed"
+                echo ""
+                echo "\`${tag}\` ($(docker image inspect "${tag}" \
+                  --format '{{.Size}}' | numfmt --to=iec)) was built and tested"
+                echo "but the registry would not take it. If this is a size or"
+                echo "quota rejection, the mission needs a different"
+                echo "distribution path rather than a workflow retry."
+              } >> $GITHUB_STEP_SUMMARY
+              echo "::error title=Push of ${MISSION} failed::${tag} was rejected by ${REGISTRY}"
+              exit 1
+            fi
+          done
+
+      - name: Generate build summary
+        if: always()
+        env:
+          MISSION: ${{ matrix.mission }}
+        run: |
+          SIZE=$(docker image inspect "visor-variant:${MISSION}" \
+            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec 2>/dev/null) || true
+          SIZE="${SIZE:-n/a}"
+          {
+            echo "## VISOR variant: ${{ matrix.mission }}"
+            echo ""
+            echo "- Base image: \`${{ steps.build-args.outputs.base_tag }}\`"
+            echo "- Calibration release: VICAR \`${{ steps.build-args.outputs.vicar_version }}\`"
+            echo "- Image size: \`${SIZE}\`"
+            echo "- Published tag: \`visor-${{ matrix.mission }}\`"
+            echo ""
+            df -h / | tail -1
+          } >> $GITHUB_STEP_SUMMARY

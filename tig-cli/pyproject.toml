@@ -1,6 +1,6 @@
 [project]
 name = "tig-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "TIG CLI for running VICAR commands via Docker"
 requires-python = ">=3.9"
 dependencies = [
@@ -15,7 +15,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 
 [project.scripts]
-tig = "tig_cli.cli:main"
+tig = "tig_cli.entry:main"
 
 [project.optional-dependencies]
 dev = [

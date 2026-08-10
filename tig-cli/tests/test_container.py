@@ -12,6 +12,7 @@ from tig_cli.container import (
     ContainerManager,
     IMAGE_PLATFORM,
     MAX_KEPT_CONTAINERS,
+    RUNNER_MARKER,
     TigError,
     ensure_x11_ready,
     get_calibration_path,
@@ -28,10 +29,18 @@ def home_dir(tmp_path):
     return str(tmp_path / "home" / "user")
 
 
+def only_docker_on_path(name):
+    """Stand in for the docker CLI, which test hosts need not have installed."""
+    return "/usr/bin/docker" if name == "docker" else None
+
+
 def make_manager(home, image="test-image:latest", client=None, **kwargs):
     """Build a ContainerManager with Docker mocked out."""
+    # which() is stubbed too: Docker is mocked, and the CLI is absent from the
+    # macOS runners.
     with patch('tig_cli.container.docker.from_env',
                return_value=client or MagicMock()), \
+         patch('tig_cli.container.shutil.which', only_docker_on_path), \
          patch.dict(os.environ, {"HOME": home}):
         return ContainerManager(image, **kwargs)
 
@@ -144,6 +153,7 @@ def test_missing_docker_cli_is_user_facing(home_dir):
 def test_docker_daemon_unavailable_is_user_facing(home_dir):
     with patch('tig_cli.container.docker.from_env',
                side_effect=docker.errors.DockerException("boom")), \
+         patch('tig_cli.container.shutil.which', only_docker_on_path), \
          patch.dict(os.environ, {"HOME": home_dir}):
         with pytest.raises(TigError, match="Is the Docker daemon running"):
             ContainerManager("test-image:latest")
@@ -389,6 +399,34 @@ def test_ensure_container_api_error_is_user_facing(home_dir):
         manager.ensure_container([])
 
 
+def test_ensure_container_reuse_failure_is_user_facing(home_dir):
+    """A container that cannot be started is an error, not a traceback."""
+    client = make_client()
+    existing = MagicMock(status="exited")
+    existing.image.id = "sha256:image"
+    existing.start.side_effect = docker.errors.APIError("denied")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    with pytest.raises(TigError, match="Failed to reuse container"):
+        manager.ensure_container([])
+
+
+def test_ensure_container_replacement_failure_is_user_facing(home_dir):
+    """So is a container that cannot be replaced."""
+    client = make_client(image_id="sha256:new")
+    existing = MagicMock(status="running")
+    existing.image.id = "sha256:old"
+    existing.remove.side_effect = docker.errors.APIError("in use")
+    client.containers.get.side_effect = None
+    client.containers.get.return_value = existing
+
+    manager = make_manager(home_dir, client=client)
+    with pytest.raises(TigError, match="Failed to replace container"):
+        manager.ensure_container([])
+
+
 # --- shutdown / status ---
 
 def test_shutdown_removes_every_tig_container(home_dir):
@@ -483,15 +521,42 @@ def test_reaping_never_touches_the_container_in_use(home_dir):
 
 def test_reaping_skips_a_container_running_a_command_started_outside_tig(home_dir):
     """A hand-run 'docker exec' also keeps a container alive."""
-    busy = make_container(f"{CONTAINER_PREFIX}-busy", exec_ids=["exec1"])
-    idle = make_container(f"{CONTAINER_PREFIX}-idle")
-    client = make_client(containers=[busy, idle])
-    client.api.exec_inspect.return_value = {"Running": True}
+    newer = make_container(f"{CONTAINER_PREFIX}-newer", "2022-01-01T00:00:00Z")
+    busy = make_container(
+        f"{CONTAINER_PREFIX}-busy", "2020-01-01T00:00:00Z", exec_ids=["exec1"]
+    )
+    client = make_client(containers=[newer, busy])
+    client.api.exec_inspect.return_value = {
+        "Running": True,
+        "ProcessConfig": {"entrypoint": "vicar", "arguments": ["in.img"]},
+    }
 
     manager = make_manager(home_dir, client=client)
     manager.ensure_container([])
 
     busy.remove.assert_not_called()
+
+
+def test_reaping_still_removes_a_container_running_only_tigs_runner(home_dir):
+    """The dispatcher and agent live as long as the container; they are not
+    a command anyone is waiting on."""
+    newer = make_container(f"{CONTAINER_PREFIX}-newer", "2022-01-01T00:00:00Z")
+    surplus = make_container(
+        f"{CONTAINER_PREFIX}-surplus", "2020-01-01T00:00:00Z", exec_ids=["exec1"]
+    )
+    client = make_client(containers=[newer, surplus])
+    client.api.exec_inspect.return_value = {
+        "Running": True,
+        "ProcessConfig": {
+            "entrypoint": "/bin/sh",
+            "arguments": ["/run/dispatch.sh", "/run", "/run/control", RUNNER_MARKER],
+        },
+    }
+
+    manager = make_manager(home_dir, client=client)
+    manager.ensure_container([])
+
+    surplus.remove.assert_called_once()
 
 
 def test_reaping_skips_a_container_when_docker_cannot_say(home_dir):
@@ -601,7 +666,33 @@ def test_reusing_a_container_does_not_reap(home_dir):
 
 # --- SELinux ---
 
-def test_selinux_enforcing_reads_getenforce():
+def test_selinux_enforcing_reads_the_kernel_state(tmp_path, monkeypatch):
+    enforce = tmp_path / "enforce"
+    enforce.write_text("1\n")
+    monkeypatch.setattr('tig_cli.spec.SELINUX_ENFORCE_PATH', str(enforce))
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.container.subprocess.run') as run:
+        assert selinux_enforcing() is True
+
+    # The kernel state answers on its own; no process is spawned for it.
+    run.assert_not_called()
+
+
+def test_selinux_permissive_is_not_enforcing(tmp_path, monkeypatch):
+    enforce = tmp_path / "enforce"
+    enforce.write_text("0\n")
+    monkeypatch.setattr('tig_cli.spec.SELINUX_ENFORCE_PATH', str(enforce))
+
+    with patch('sys.platform', 'linux'):
+        assert selinux_enforcing() is False
+
+
+def test_selinux_falls_back_to_getenforce(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
+
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
          patch('tig_cli.container.subprocess.run',
@@ -609,7 +700,11 @@ def test_selinux_enforcing_reads_getenforce():
         assert selinux_enforcing() is True
 
 
-def test_selinux_permissive_is_not_enforcing():
+def test_selinux_permissive_from_getenforce(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
+
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value="/usr/sbin/getenforce"), \
          patch('tig_cli.container.subprocess.run',
@@ -617,17 +712,11 @@ def test_selinux_permissive_is_not_enforcing():
         assert selinux_enforcing() is False
 
 
-def test_selinux_falls_back_to_the_kernel_state(tmp_path):
-    enforce = tmp_path / "enforce"
-    enforce.write_text("1\n")
+def test_selinux_absent_when_there_is_no_selinux(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        'tig_cli.spec.SELINUX_ENFORCE_PATH', str(tmp_path / "missing")
+    )
 
-    with patch('sys.platform', 'linux'), \
-         patch('tig_cli.container.shutil.which', return_value=None), \
-         patch('tig_cli.container.Path', return_value=enforce):
-        assert selinux_enforcing() is True
-
-
-def test_selinux_absent_when_there_is_no_selinux():
     with patch('sys.platform', 'linux'), \
          patch('tig_cli.container.shutil.which', return_value=None):
         assert selinux_enforcing() is False
@@ -916,11 +1005,39 @@ def test_signal_command_forwards_to_the_running_client(home_dir):
     command = MagicMock()
     manager.command = command
 
-    manager.signal_command(15)
+    with patch("tig_cli.container.subprocess.run"):
+        manager.signal_command(15)
 
     command.send_signal.assert_called_once_with(15)
     # Waiting here would deadlock against the wait() the main flow is in.
     command.wait.assert_not_called()
+
+
+def test_signal_command_kills_the_processes_in_the_container(home_dir):
+    """Docker does not proxy signals to an exec, so tig has to do it."""
+    manager = make_manager(home_dir)
+    manager.command = MagicMock()
+    manager.container_name = "tig-vicar-abc"
+    manager.exec_id = "deadbeef"
+
+    with patch("tig_cli.container.subprocess.run") as run:
+        manager.signal_command(15)
+
+    command = run.call_args[0][0]
+    assert command[:3] == ["docker", "exec", "tig-vicar-abc"]
+    assert "TIG_EXEC_ID=deadbeef" in command[-1]
+    assert "kill -15" in command[-1]
+
+
+def test_signal_command_tolerates_a_failing_kill(home_dir):
+    manager = make_manager(home_dir)
+    manager.command = MagicMock()
+    manager.exec_id = "deadbeef"
+
+    with patch("tig_cli.container.subprocess.run", side_effect=OSError):
+        manager.signal_command(15)  # should not raise
+
+    manager.command.send_signal.assert_called_once_with(15)
 
 
 def test_signal_command_tolerates_an_exited_client(home_dir):
@@ -929,8 +1046,65 @@ def test_signal_command_tolerates_an_exited_client(home_dir):
         send_signal=MagicMock(side_effect=ProcessLookupError)
     )
 
-    manager.signal_command(15)  # should not raise
+    with patch("tig_cli.container.subprocess.run"):
+        manager.signal_command(15)  # should not raise
 
 
 def test_signal_command_without_running_command(home_dir):
     make_manager(home_dir).signal_command(15)  # should not raise
+
+# --- list_tools ---
+
+def test_list_tools_returns_sorted_unique_names(home_dir):
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(
+            return_value=Mock(exit_code=0, output=b"marsmesh\nmarsmap\nmarsmap\n")
+        )
+    )
+
+    assert manager.list_tools() == ["marsmap", "marsmesh"]
+
+
+def test_list_tools_asks_only_for_executables(home_dir):
+    """The tool directories also hold payloads such as vicario.jar."""
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(return_value=Mock(exit_code=0, output=b"marsmap\n"))
+    )
+
+    assert manager.list_tools() == ["marsmap"]
+    command = manager.container.exec_run.call_args[0][0]
+    assert command[0] == "find"
+    assert "-executable" in command
+
+
+def test_list_tools_without_a_container(home_dir):
+    with pytest.raises(TigError):
+        make_manager(home_dir).list_tools()
+
+
+def test_list_tools_reports_a_failed_listing(home_dir):
+    """A failing 'ls' must not turn its stderr into a tool name."""
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(
+            return_value=Mock(
+                exit_code=2,
+                output=b"ls: cannot access '/usr/local/bin': No such file\n",
+            )
+        )
+    )
+
+    with pytest.raises(TigError, match="cannot access"):
+        manager.list_tools()
+
+
+def test_list_tools_reports_a_docker_failure(home_dir):
+    manager = make_manager(home_dir)
+    manager.container = MagicMock(
+        exec_run=MagicMock(side_effect=docker.errors.APIError("boom"))
+    )
+
+    with pytest.raises(TigError):
+        manager.list_tools()

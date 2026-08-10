@@ -7,6 +7,7 @@ Mark: pytest.ini_options in pyproject.toml defines the 'integration' marker.
 """
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -74,6 +75,43 @@ def test_cli_help_invocation():
     # --help should exit 0
     assert result.returncode == 0
     assert "CONTAINER_IMAGE" in result.stdout
+
+
+@pytest.mark.integration
+def test_interrupting_tig_stops_the_tool_in_the_container():
+    """Killing tig must not leave the tool running in the shared container."""
+    manager = ContainerManager(get_container_image())
+    try:
+        manager.ensure_container([])
+        tig = subprocess.Popen(
+            [sys.executable, "-m", "tig_cli", "sh", "-c", "sleep 120"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not _sleepers(manager):
+            time.sleep(0.5)
+        assert _sleepers(manager), "the tool never started in the container"
+
+        tig.terminate()
+        tig.wait(timeout=30)
+
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and _sleepers(manager):
+            time.sleep(0.5)
+        assert not _sleepers(manager)
+    finally:
+        manager.shutdown()
+
+
+def _sleepers(manager) -> bool:
+    """Whether the test's sleep is still running inside the container."""
+    listing = subprocess.run(
+        ["docker", "exec", manager.container_name, "ps", "-e", "-o", "args"],
+        capture_output=True,
+        text=True,
+    )
+    return "sleep 120" in listing.stdout
 
 
 @pytest.mark.integration

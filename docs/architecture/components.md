@@ -23,12 +23,11 @@ Overview of the Terrain Intelligence Generator system components and VICAR image
 │  └─────────────┘  └──────────────┘  └──────────────┘  │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐  │
-│  │      Multi-Mission Calibration Data (VISOR)     │  │
+│  │   Calibration mount (VISOR, supplied by you)    │  │
+│  │   /usr/local/vicar/mars_calib  (read-only)      │  │
 │  │  - M20, MSL, MER, Phoenix camera models         │  │
 │  │  - Flat field corrections                       │  │
 │  │  - Geometric distortion models                  │  │
-│  │  - 1,461 calibration files                      │  │
-│  │  - 249 sample data files                        │  │
 │  └─────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
          │                    │                    │
@@ -73,9 +72,16 @@ XYZ Point Cloud (.IMG)
         (texture convert)
 ```
 
+## Execution Model
+
+[`tig`](../../tig-cli/README.md) keeps one container warm and runs each tool in
+it via `docker exec`, as your host user, with host paths translated so files
+resolve the same inside and out. `tig --shim` additionally writes one command per
+VICAR tool onto your `PATH`.
+
 ## Core Tools
 
-### VICAR Commands (~550 Available)
+### VICAR Commands (~546 Available)
 - **Base**: Full VICAR image processing suite for planetary science
 - **Categories**:
   - **Image Generation**: gen, copy
@@ -166,9 +172,10 @@ mars_calibration_phoenix/
     ├── MSL_camera_mapping.xml
     └── MER_camera_mapping.xml
 
-Total: 1,461 calibration files across all missions
-       249 sample data files
 ```
+
+Calibration is not part of the image; tig mounts a host directory of it
+read-only. See [Calibration Data](../reference/calibration-data.md).
 
 ### Camera Models
 - **CAHVORE**: Camera model format (Center, Axis, Horizontal, Vertical, Optical, Radial, Entrance)
@@ -184,18 +191,21 @@ Base Layer: Oracle Linux 8
     ↓
 Builder Stage: downloads pre-built VICAR + external library releases
     ↓
-Runtime Layer: VICAR binaries (~550 commands) + MARS tools (~74) + Java + vicario.jar + multi-mission calibration
+Runtime Layer: VICAR binaries (~546 commands) + MARS tools (~74) + Java + vicario.jar
     ↓
-Command Wrappers: ~550 CLI wrappers generated under /usr/local/bin
+Command Wrappers: ~546 CLI wrappers generated under /usr/local/bin
     ↓
 Entry Point: Shell with VICAR environment
 ```
 
 ### Volume Mounts
 
-- `/workspace` - Input/output files (VICAR images, meshes, point clouds, processed data)
-- `/usr/local/vicar/mars_calib` - Multi-mission calibration data (M20, MSL, MER, Phoenix) (read-only)
-- `/usr/local/vicar/visor_data` - Sample data files (optional)
+tig mounts these; see the [tig-cli README](../../tig-cli/README.md).
+
+- `$HOME` and the current directory - read-write, at their host paths
+- `/host` - the rest of the host filesystem, read-only
+- `/usr/local/vicar/mars_calib` - calibration data, read-only
+- extra read-write paths via `--writable-path`
 
 ### Environment Variables
 
@@ -230,7 +240,8 @@ Entry Point: Shell with VICAR environment
 
 ## Security Considerations
 
-- Container runs as root (VICAR requirement)
-- Volume mounts use `:Z` flag for SELinux compatibility
-- Calibration mounted read-only (`:ro`)
-- No network access required
+- Commands run as your host user, so outputs are owned by you
+- On SELinux Enforcing hosts tig passes `--security-opt label=disable`
+- Host filesystem outside `$HOME` and the working directory is read-only
+- Calibration mounted read-only
+- No network access required, apart from pulling the image

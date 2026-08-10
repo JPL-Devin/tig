@@ -1,11 +1,29 @@
 """Path translation for host-to-container path mapping."""
-import os
-import re
-from pathlib import Path
-from typing import List
+from __future__ import annotations
 
-# VICAR parameter names (``INP=``), optionally written as CLI-style flags.
-KEYWORD_RE = re.compile(r"^-{0,2}[A-Za-z_][A-Za-z0-9_.-]*$")
+import os
+from pathlib import Path
+
+KEYWORD_EXTRA_CHARACTERS = "_.-"
+
+
+def is_keyword(text: str) -> bool:
+    """Whether ``text`` looks like a VICAR parameter name.
+
+    That is ``INP``, optionally written as a CLI-style flag (``--inp``).
+    Spelled out rather than matched with a regular expression, which would
+    cost more to import than every path this module translates.
+    """
+    name = text.lstrip("-")
+    if len(text) - len(name) > 2 or not name:
+        return False
+    if not (name[0].isascii() and (name[0].isalpha() or name[0] == "_")):
+        return False
+    return all(
+        character.isascii()
+        and (character.isalnum() or character in KEYWORD_EXTRA_CHARACTERS)
+        for character in name[1:]
+    )
 
 
 class PathTranslator:
@@ -70,7 +88,7 @@ class PathTranslator:
             return self.translate(arg)
 
         keyword, sep, value = arg.partition("=")
-        if not KEYWORD_RE.match(keyword):
+        if not is_keyword(keyword):
             return self.translate(arg)
 
         return f"{keyword}{sep}{self._translate_value(value)}"
@@ -83,7 +101,7 @@ class PathTranslator:
 
         return self.translate(value)
 
-    def translate_args(self, args: List[str]) -> List[str]:
+    def translate_args(self, args: list[str]) -> list[str]:
         """Translate a list of arguments.
 
         Args:
