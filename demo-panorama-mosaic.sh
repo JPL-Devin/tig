@@ -314,7 +314,13 @@ PNG_INPUT=panorama.img
 if [ "$STRETCH" -eq 1 ]; then
   tig stretch inp=panorama.img out=panorama_stretched.img \
     -astretch percent=2 dnmin=0 dnmax=255 2>&1 | grep -E "AUTO-STRETCH:" || true
-  [ -f panorama_stretched.img ] && PNG_INPUT=panorama_stretched.img
+  if [ -f panorama_stretched.img ]; then
+    PNG_INPUT=panorama_stretched.img
+  else
+    STRETCH=0
+    echo "  ⚠ WARNING: stretch wrote nothing; the PNG comes from the raw"
+    echo "    radiance mosaic and will look nearly black."
+  fi
 fi
 
 conversion_log=$(tig vicario "$PNG_INPUT" panorama.png 2>&1) || true
