@@ -17,13 +17,9 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# marsmap and marsremos are linked against MPI, and MPI_Init asks hwloc to
-# discover the machine topology before the program prints anything. The hwloc
-# bundled in the image divides by zero in its x86 backend on some host CPUs,
-# so marsmap dies with SIGFPE at startup on those hosts, with no output at all.
-# Disabling that one backend makes hwloc read the topology from Linux sysfs
-# instead, which is all a single-node run needs. Harmless where marsmap
-# already works, so it is always set. See docs/demos/panorama-mosaic.md.
+# The hwloc bundled in the image divides by zero in its x86 backend on some
+# host CPUs, so MPI_Init kills marsmap with SIGFPE before it prints anything.
+# Disabling that backend falls back to sysfs. See docs/demos/panorama-mosaic.md.
 marsmap() { tig env HWLOC_COMPONENTS=-x86 marsmap "$@"; }
 marsbrt() { tig env HWLOC_COMPONENTS=-x86 marsbrt "$@"; }
 
@@ -162,9 +158,8 @@ if [ ${#FRAMES[@]} -lt 2 ]; then
   print_usage
 fi
 
-# A 360-degree mosaic is what this demo is for, and marsmap's own help asks for
-# the azimuth limits to be given by hand for mosaics near 360 degrees rather
-# than fitted to the frames.
+# marsmap's help asks for the azimuth limits to be given by hand near 360
+# degrees rather than fitted to the frames.
 if [ "$PROJECTION" = "cylindrical" ]; then
   [ -z "$LEFTAZ" ] && LEFTAZ=0
   [ -z "$RIGHTAZ" ] && RIGHTAZ=360
@@ -176,9 +171,7 @@ if [ ! -d "$CALIB_DIR" ]; then
   exit 1
 fi
 
-# tig mounts this read-only at /usr/local/vicar/mars_calib and points the MARS
-# programs at it. Resolve it now: tig runs from the workspace directory below,
-# where a relative calibration path would no longer resolve.
+# Resolve before the cd below, where a relative calibration path would not.
 CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
 export MARS_CONFIG_PATH="$CALIB_DIR"
 
@@ -206,27 +199,18 @@ echo ""
 
 cd "$WORKSPACE"
 
-# Each step below is judged by whether its output appeared, so clear the
-# outputs of an earlier run: a leftover file would make a failure look like
-# success and show the previous scene. Inputs live outside the workspace, so
-# nothing here can be one.
+# Each step is judged by whether its output appeared, so an earlier run's
+# outputs would make a failure look like success.
 rm -rf panorama_rad
 rm -f panorama_frames.txt panorama_overlaps.xml panorama_overlap_mosaic.img \
       panorama_brtcorr.xml panorama.img panorama_stretched.img panorama.png
 
-# Step 1: Radiometric correction
-#
-# marsmap would do this itself (RAD is its default), but doing it as its own
-# step keeps the corrected frames around: they are what marsbrt measures and
-# what a second mosaic in another projection reuses.
+# Step 1: Radiometric correction. marsmap would do this itself, but a separate
+# step keeps the corrected frames for marsbrt and for further mosaics.
 echo "Step 1: Radiometric correction (marsrad)..."
 mkdir -p panorama_rad
-# marsmap, marsbrt and marsmos all take either a list of files or a text file
-# with one filename per line. The list file keeps the command short and fixes
-# the frame order, which is also the stacking order in the mosaic, so it is
-# written in the order the frames were given rather than from a directory
-# listing. The index prefix keeps two frames of the same name, from different
-# directories, from overwriting each other.
+# The list file fixes the frame order, which is the stacking order in the
+# mosaic; the index prefix keeps same-named frames from colliding.
 : > panorama_frames.txt
 for i in "${!FRAMES[@]}"; do
   frame="${FRAMES[$i]}"
@@ -243,9 +227,8 @@ for i in "${!FRAMES[@]}"; do
 done
 echo ""
 
-# Assemble the projection arguments once: the overlap pass and the mosaic pass
-# have to agree on the projection, or the overlap statistics describe pixels
-# that are not the ones being corrected.
+# Assembled once: the overlap pass and the mosaic pass have to agree, or the
+# statistics describe pixels other than the ones being corrected.
 PROJ_ARGS=(projection="$PROJECTION")
 add_arg() { [ -n "$2" ] && [ "$2" != "auto" ] && PROJ_ARGS+=("$1=$2"); return 0; }
 case "$PROJECTION" in
@@ -264,13 +247,9 @@ case "$PROJECTION" in
 esac
 add_arg wrap_az "$WRAP_AZ"
 
-# Step 2 + 3: brightness matching
-#
-# Frames of a panorama are minutes apart, with the camera pointed in different
-# directions, so radiometric correction alone leaves visible seams. marsmap
-# measures the overlaps, marsbrt solves for a per-frame correction, and the
-# mosaic pass applies it. The overlap pass is a full mosaic run, so it is done
-# zoomed out - marsmap's help notes this barely affects the statistics.
+# Step 2 + 3: brightness matching. Frames minutes apart pointing different ways
+# leave visible seams, so marsmap measures the overlaps and marsbrt solves a
+# per-frame correction. The overlap pass is a full mosaic run, hence zoomed out.
 if [ "$BRIGHTNESS_MATCH" -eq 1 ]; then
   echo "Step 2: Measuring frame overlaps (marsmap ovr_out)..."
   marsmap inp=panorama_frames.txt out=panorama_overlap_mosaic.img \
@@ -285,10 +264,8 @@ if [ "$BRIGHTNESS_MATCH" -eq 1 ]; then
   echo ""
 
   echo "Step 3: Solving brightness corrections (marsbrt)..."
-  # DO_MULT solves one gain per frame. marsbrt's default, DO_LINEAR, also
-  # solves an offset; on a five-frame ring that extra freedom is only
-  # sometimes well conditioned, and on a set with the sun in frame it returned
-  # gains two orders of magnitude apart. Gain-only is stable on both.
+  # DO_MULT solves one gain per frame. The default DO_LINEAR also solves an
+  # offset, which on a five-frame ring is not always well conditioned.
   marsbrt inp=panorama_frames.txt in_ovr=panorama_overlaps.xml \
     out=panorama_brtcorr.xml out_solution_id=TIGDEMO do_what=DO_MULT 2>&1 |
     grep -A100 "^Image  " || true
@@ -318,12 +295,8 @@ fi
 echo "  ✓ panorama.img"
 echo ""
 
-# Step 5: PNG
-#
-# The mosaic holds scaled radiance, and a Mars scene uses a small part of that
-# range, so a straight conversion is very dark. stretch -astretch maps the
-# middle 98% of the histogram to 0-255 for display; panorama.img keeps the
-# photometry.
+# Step 5: PNG. The mosaic holds scaled radiance and a Mars scene uses little of
+# that range, so stretch the middle 98% for display; panorama.img is untouched.
 echo "Step 5: Converting to PNG..."
 PNG_INPUT=panorama.img
 if [ "$STRETCH" -eq 1 ]; then
