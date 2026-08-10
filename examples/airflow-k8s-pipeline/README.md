@@ -16,9 +16,9 @@ Apache Airflow + Kubernetes pipeline for event-driven VICAR terrain mesh generat
 1. Seed uploads stereo FDR pairs to LocalStack S3
 2. S3 ObjectCreated → SNS → SQS (`.VIC` filter)
 3. Listener polls SQS, buffers stereo pairs by frame id, triggers DAG once both L+R arrive
-4. Airflow launches `ids_terrain_ncam` DAG: `rad_left/right` → `correlate` → `xyz_left/right` → `mesh_left/right`
+4. Airflow launches the 8-task `ids_terrain_ncam` DAG: `rad_left/right` → `correlate_left/right` → `xyz_left/right` → `mesh_left/right`
 5. Each task = ephemeral tig-worker pod (download → VICAR → upload)
-6. Final outputs: `.obj/.mtl/.png` in `s3://ids-pipeline/output/<run_id>/`
+6. Final outputs: `.obj/.mtl/.png` under the ODS prefix `s3://ids-pipeline/output/sol/<NNNNN>/ids/rdr/ncam/` (sol 1835 → `output/sol/01835/ids/rdr/ncam/`)
 
 ## Prerequisites
 
@@ -27,8 +27,8 @@ Apache Airflow + Kubernetes pipeline for event-driven VICAR terrain mesh generat
 - **Helm 3**
 - **Docker** (for building listener + worker images)
 - **TIG base image:** `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`
-- **Calibration data:** VISOR M20 calibration data (see [Calibration Setup](#calibration-setup))
-- **Sample data:** Stereo FDR image pairs (see [Sample Data](#sample-data))
+- **Calibration data:** VISOR M20 calibration (see [Calibration Setup](#5-calibration-setup))
+- **Sample data:** Stereo FDR image pairs (see [Sample Data](#6-sample-data))
 
 ## Setup
 
@@ -69,22 +69,16 @@ minikube image load tig-worker:latest
 
 ### 5. Calibration Setup
 
-Download M20 calibration data from VISOR:
+VISOR calibration is published as assets of the [VICAR 5.0 release](https://github.com/NASA-AMMOS/VICAR/releases/tag/5.0), not as a git repository. M20 calibration is 2.69 GB compressed / 5.3 GB extracted, split across two parts because GitHub caps a release asset at 2 GB:
 
 ```bash
-# Clone VISOR repository (contains M20 calibration)
-git clone https://github.com/NASA-AMMOS/VISOR.git
-cd VISOR
-
-# Extract M20 calibration subset (~15GB: camera_models/, flat_fields/, param_files/)
-# Location: VISOR/missions/m20/calibration/
+mkdir -p visor_data
+curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_m20.tar.gzaa" \
+        "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_m20.tar.gzab" | \
+  tar -zxf - -C visor_data
 ```
 
-Mount calibration into minikube (run in separate terminal, keep running):
-
-```bash
-minikube mount /path/to/VISOR/missions/m20/calibration:/mnt/calib &
-```
+The mission directory `visor_data/calibration/m20` (the one directly containing `camera_models/`) is what gets mounted at `/mnt/calib` in [step 7](#7-start-required-minikube-mounts). See [Downloading VISOR Data](../../docs/demos/downloading-visor-data.md) for the other missions and for sample data.
 
 ### 6. Sample Data
 
@@ -97,32 +91,22 @@ sample-data/
   NRM_<sol>_<frame>_<product>FDR_<id>.VIC  # Right eye
 ```
 
-#### Option B: Download from PDS
+#### Option B: Download M2020 archive data
 
-```bash
-# M20 NavCam images available at:
-# https://pds-imaging.jpl.nasa.gov/volumes/m20.html
-# Filter by: NCAM, FDR product type, stereo pairs (NLM/NRM prefix match)
-```
-
-Mount sample data into minikube:
-
-```bash
-minikube mount /path/to/sample-data:/mnt/sample-data &
-```
+M2020 NavCam products are archived at the [PDS Geosciences Node](https://pds-geosciences.wustl.edu/missions/mars2020/); the [MMGIS layer index](https://mars.nasa.gov/mmgis-maps/M20/Layers/json/) lists per-sol product locations. Filter by: NCAM, FDR product type, stereo pairs (matching NLM/NRM basenames).
 
 ### 7. Start required minikube mounts
 
-Three host directories must stay mounted (run each in terminal or background):
+Three host directories must stay mounted — run each in its own terminal, or background them, and keep them running for the whole session:
 
 ```bash
 # DAGs → Airflow scheduler/webserver/workers
 minikube mount $(pwd)/dags:/mnt/dags &
 
-# VICAR calibration → every VICAR pod at /usr/local/vicar/mars_calib
-minikube mount /path/to/VISOR/missions/m20/calibration:/mnt/calib &
+# VICAR calibration (step 5) → every VICAR pod at /usr/local/vicar/mars_calib
+minikube mount /path/to/visor_data/calibration/m20:/mnt/calib &
 
-# Sample data → seed job
+# Sample data (step 6) → seed job
 minikube mount /path/to/sample-data:/mnt/sample-data &
 ```
 
@@ -224,12 +208,13 @@ kubectl logs -l dag_id=ids_terrain_ncam --tail=100 --prefix --all-containers
 # Port-forward LocalStack
 kubectl port-forward svc/localstack 4566:4566 -n tig-airflow
 
-# List outputs
+# List outputs (ODS layout: output/sol/<NNNNN>/ids/rdr/ncam/)
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-west-2
 aws --endpoint-url=http://localhost:4566 s3 ls s3://ids-pipeline/output/ --recursive
 
-# Download
-aws --endpoint-url=http://localhost:4566 s3 cp s3://ids-pipeline/output/<run_id>/ ./outputs/ --recursive
+# Download (seeded sol 1835)
+aws --endpoint-url=http://localhost:4566 s3 cp \
+  s3://ids-pipeline/output/sol/01835/ids/rdr/ncam/ ./outputs/ --recursive
 ```
 
 ## Project Structure
@@ -243,7 +228,7 @@ aws --endpoint-url=http://localhost:4566 s3 cp s3://ids-pipeline/output/<run_id>
 │   ├── localstack/
 │   │   └── deployment.yaml      # S3+SNS+SQS pod
 │   ├── seed/
-│   │   └── job.yaml             # Setup job
+│   │   └── job.yaml             # Setup job (embeds seed.sh in a ConfigMap)
 │   ├── listener/
 │   │   ├── Dockerfile
 │   │   ├── listener.py          # SQS poller + Airflow trigger
@@ -262,6 +247,8 @@ aws --endpoint-url=http://localhost:4566 s3 cp s3://ids-pipeline/output/<run_id>
 ```
 
 ## VICAR Pipeline (per DAG run)
+
+Eight tasks, two per stage:
 
 1. **rad_left, rad_right** (parallel): `marsrad` FDR→RAS radiometric correction
 2. **correlate_left, correlate_right** (parallel): `marsecorr` + `marscor3` → disparity maps
@@ -292,10 +279,10 @@ aws --endpoint-url=http://localhost:4566 s3 cp s3://ids-pipeline/output/<run_id>
 - **Calibration:** Wrappers set `MARS_CONFIG_PATH=/usr/local/vicar/mars_calib`; DAG mounts calib hostPath read-only
 - **Helm chart pin:** Chart 1.11.0 (Airflow 2.7.1). Newer charts ship Airflow 3.x, breaking listener `/api/v1` usage
 - **Log persistence:** `logs.persistence` + `existingClaim: airflow-logs-host` preserves logs after pod deletion
-- **Webserver secret:** Static key prevents restart churn. Name it `ids-webserver-secret-key` (NOT `airflow-webserver-secret-key`, Helm-owned)
+- **Webserver secret:** Static key prevents restart churn (the chart otherwise generates a random one per upgrade, invalidating sessions). Create it with the `kubectl create secret` command in step 9 — there is no manifest for it, so no key is ever committed. The data key must be exactly `webserver-secret-key`, and the secret must NOT be named `airflow-webserver-secret-key` (Helm owns that name and prunes it mid-upgrade)
 
 ## References
 
 - **TIG repository:** https://github.com/NASA-AMMOS/tig
-- **VISOR calibration:** https://github.com/NASA-AMMOS/VISOR
-- **M20 PDS archive:** https://pds-imaging.jpl.nasa.gov/volumes/m20.html
+- **VISOR calibration:** [Downloading VISOR Data](../../docs/demos/downloading-visor-data.md) · [VICAR 5.0 release assets](https://github.com/NASA-AMMOS/VICAR/releases/tag/5.0)
+- **M2020 archive:** https://pds-geosciences.wustl.edu/missions/mars2020/ · https://mars.nasa.gov/mmgis-maps/M20/Layers/json/

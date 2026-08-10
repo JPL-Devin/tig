@@ -4,13 +4,13 @@ M20 IDS Terrain Processing DAG — per-eye, RAS-named products.
 Converts BPMN chain: rad -> correlate -> xyz -> mesh, run genuinely per-eye
 (left = NLM, right = NRM) to reproduce production IDS behavior.
 
-Graph (9 tasks):
+Graph (8 tasks):
     rad_left  ─┐
                ├─> correlate_left  (l2r) ─> xyz_left  ─> mesh_left   (NLM_...M777RAS)
     rad_right ─┤
                └─> correlate_right (r2l) ─> xyz_right ─> mesh_right  (NRM_...M777RAS)
 
-Naming (Section 2): FDR key -> RAS basename via `_777FDR_` -> `M777RAS`.
+Naming: FDR key -> RAS basename via `_777FDR_` -> `M777RAS`.
 Downstream products reuse the RAS basename, swapping only the product-type
 field [23:26] (RAS -> XYZ/XYM/...) + extension. Mesh outputs keep the RAS token.
 Nominal ODS output path: output/<sol_path>/ids/rdr/ncam/ where
@@ -26,7 +26,7 @@ from kubernetes.client import models as k8s
 # ---------------------------------------------------------------------------
 S3_ENDPOINT = "http://localstack.tig-airflow.svc.cluster.local:4566"
 BUCKET = "ids-pipeline"
-VICAR_IMAGE = "tig-m20-worker:latest"  # tig-m20 base + AWS CLI v2 (k8s/worker/Dockerfile)
+VICAR_IMAGE = "tig-worker:latest"  # TIG :opensource base + AWS CLI v2 (k8s/worker/Dockerfile)
 
 default_args = {
     "owner": "ids-pipeline",
@@ -39,7 +39,7 @@ default_args = {
 
 
 # ---------------------------------------------------------------------------
-# Section 2 — product name derivation (STUB — filled in S2)
+# Product name derivation
 # ---------------------------------------------------------------------------
 def _basename(key: str) -> str:
     """S3 key -> filename without directory or extension."""
@@ -150,9 +150,9 @@ def vicar_task(
 
 
 # ---------------------------------------------------------------------------
-# DAG — 9-task per-eye graph (task args are STUBS, wired in S1)
+# DAG — 8-task per-eye graph
 # ---------------------------------------------------------------------------
-# S3 key templates. All name derivation happens in Jinja via the S2 helpers,
+# S3 key templates. All name derivation happens in Jinja via the helpers above,
 # which are registered as user_defined_macros so runtime conf (left_key/right_key)
 # drives naming. Conf shape: {bucket, left_key, right_key, run_id}.
 #
@@ -257,7 +257,7 @@ with DAG(
         cpu="2", memory="6Gi",
     )
 
-    # Dependencies (Section 1): both RAS feed each correlate direction.
+    # Dependencies: both RAS feed each correlate direction.
     [rad_left, rad_right] >> correlate_left
     [rad_left, rad_right] >> correlate_right
     correlate_left >> xyz_left >> mesh_left
