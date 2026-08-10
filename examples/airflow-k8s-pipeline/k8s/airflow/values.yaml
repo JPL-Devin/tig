@@ -7,7 +7,8 @@ executor: "KubernetesExecutor"
 # Static webserver secret key (Flask session signing). Without this the chart
 # generates a new random key each deploy, causing avoidable webserver restarts
 # and logout churn. The referenced Secret must exist BEFORE install — create it
-# from k8s/airflow/webserver-secret.yaml (see that file for the generator cmd).
+# with the `kubectl create secret generic ids-webserver-secret-key` command in
+# step 9 of the example README.
 webserverSecretKeySecretName: ids-webserver-secret-key
 
 # DAGs location (mount from external git or local path)
