@@ -91,8 +91,9 @@ The parameters that decide coverage:
 | `box_radius` | 5 m | 1000 m | X/Y bounding box around `x_center`/`y_center`; effectively disabled here, as the help recommends for slope mode. |
 
 Coverage on the sol-650 cloud: 76.2% of pixels have XYZ, and **75.6%** end up
-with a normal. Leaving `error` at its default instead gives **5.0%** — this one
-parameter is the difference between a usable slope map and a speckle.
+with a normal. Leaving `error` at its default, changing nothing else, gives
+**4.3%** — this one parameter is the difference between a usable slope map and a
+speckle.
 
 In the site and local-level frames Z points **down**, so a normal pointing out
 of level ground is `w ≈ -1`, which is what this run produces.
@@ -163,7 +164,7 @@ centimetre of them.
 
 Result: **52.3%** of pixels got a roughness value, median **5.6 mm**, 99th
 percentile **35.6 mm**. The remainder is `0.1` (not computable), which is why
-the PNG is white outside the near field. A few pixels (0.3%) are slightly
+the PNG is white outside the near field. 0.3% of the valid pixels are slightly
 negative, an artefact of the plane fit on near-degenerate point sets.
 
 ### 5-7. Instrument placement: tilt, roughness, goodness
@@ -216,9 +217,10 @@ this stage unless you supply a reachability product with `--reach FILE`:
 ./demo-surface-characteristics.sh --xyz pointcloud.xyz --reach data.reach
 ```
 
-`marsgreach` will happily run on a file that is not a reachability product — it
-only checks band count — and produce meaningless output, so do not point it at
-an XYZ, tilt or slope product to "see what happens".
+`marsgreach` does not validate its input: given a 3-band REAL product it still
+reports `Processing band 1/2/3! Selected for processing.` and writes a goodness
+image. Whatever you pass it, it will produce something, so do not point it at an
+XYZ, tilt or slope product to "see what happens".
 
 ### 9. PNG conversion
 

@@ -176,12 +176,17 @@ is_input() {
 # outputs of an earlier run: a leftover file would make a failure look like
 # success and describe the previous scene's terrain.
 stale_outputs="normals_slope.uvw normals_arm.uvw
-  slope.img heading.img ntilt.img solar.img roughness.img
-  tilt_${INSTRUMENT}.img uix_${INSTRUMENT}.img zix_${INSTRUMENT}.img
-  iroughness_${INSTRUMENT}.img goodness_${INSTRUMENT}.img reach_goodness.img
+  slope.img heading.img ntilt.img solar.img roughness.img reach_goodness.img
   slope.png heading.png ntilt.png solar.png roughness.png normals.png
-  tilt_${INSTRUMENT}.png iroughness_${INSTRUMENT}.png
-  goodness_${INSTRUMENT}.png reach_goodness.png scene.png"
+  reach_goodness.png scene.png"
+# Every instrument, not just this run's: switching --instrument would otherwise
+# leave the previous instrument's products sitting in the workspace.
+for inst in heli seis hp3 wts; do
+  stale_outputs="$stale_outputs
+    tilt_$inst.img uix_$inst.img zix_$inst.img
+    iroughness_$inst.img goodness_$inst.img
+    tilt_$inst.png iroughness_$inst.png goodness_$inst.png"
+done
 for stale in $stale_outputs; do
   is_input "$stale" || rm -f "$stale"
 done
