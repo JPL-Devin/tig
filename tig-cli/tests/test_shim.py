@@ -305,3 +305,23 @@ def test_cli_shim_rejects_shutdown(tmp_path):
     assert "run --shutdown separately" in result.output
     assert not (tmp_path / "marsmap").exists()
     manager.shutdown.assert_not_called()
+
+
+def test_cli_shim_reports_an_unwritable_directory(tmp_path):
+    """A protected --shim-dir must read as an error, not a traceback."""
+    directory = tmp_path / "locked" / "shims"
+    directory.parent.mkdir()
+    directory.parent.chmod(0o500)
+    runner = CliRunner()
+    manager = _shim_manager(["marsmap"])
+
+    try:
+        with patch("tig_cli.cli.ContainerManager", return_value=manager), \
+             patch("tig_cli.cli.get_container_image", return_value=DEFAULT_IMAGE):
+            result = runner.invoke(main, ["--shim-dir", str(directory)])
+    finally:
+        directory.parent.chmod(0o700)
+
+    assert result.exit_code == 1
+    assert f"Failed to write commands to {directory}" in result.output
+    assert not isinstance(result.exception, OSError)

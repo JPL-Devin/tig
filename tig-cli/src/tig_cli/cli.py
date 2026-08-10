@@ -202,9 +202,14 @@ def main(
         finally:
             manager.release_claim()
 
-        written, skipped = write_shims(
-            directory, tools, tig_executable(), force=shim_force
-        )
+        try:
+            written, skipped = write_shims(
+                directory, tools, tig_executable(), force=shim_force
+            )
+        except OSError as e:
+            raise click.ClickException(
+                f"Failed to write commands to {directory}: {e}"
+            ) from e
         click.echo(f"Wrote {len(written)} command(s) to {directory}.")
         if skipped:
             click.echo(
