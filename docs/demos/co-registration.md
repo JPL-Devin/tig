@@ -149,7 +149,8 @@ tig marsmap inp=frames.lis out=mosaic.img navtable=pointing.nav projection=CYLIN
 ```
 
 `marsmos` mosaics under a synthetic wider-field camera model derived from the
-inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection;
+inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection (see the
+`HWLOC_COMPONENTS` note below if it dies with a floating-point exception);
 `marsortho` produces orthographic mosaics and DEMs from XYZ data. `marsrelabel`
 copies a product with an updated label (`-cm` camera model, `-pm` pointing model,
 `navtable=`) — its `.pdf` states the image data is unchanged and only the label is
@@ -217,6 +218,7 @@ Observed:
 | `marsautotie density=50 grid_spacing=15` | 312 tiepoints; `Input image 10 not represented by tiepoints` |
 | `marsnav -remove max_residual=10 max_remove=50` | mean pixel error 37.348320 → 4.729342; 182 of 312 tiepoints kept |
 | `marsnav2` | 303 tracks (96% two-observation); mean 0.361996 px, median 0.262287 px; **six disconnected groups**; pointing changes all 0.000000 |
+| `marsmos` ± `navtable=` | two 30000×30000 mosaics differing in 57,126,946 pixels |
 
 Reading those numbers honestly:
 
@@ -224,16 +226,21 @@ Reading those numbers honestly:
   `marsnav2` explains why: the 19 frames form six disconnected groups (13 frames
   in the largest, four frames alone), and 96% of tracks are seen by only two
   images. The set is under-tied, not mis-solved.
-- Image 10 had no tiepoints, and `marsnav` still emitted a "correction" for it of
-  −824.547° azimuth and +3165.039° elevation. An unconstrained frame produces
-  garbage rather than being skipped. Always read the `not represented` lines.
+- Image 10 had no tiepoints, and `marsnav` still emitted a "correction" for it
+  anyway — tens to hundreds of degrees, and by far the largest delta of the set,
+  in every run (−824.547°/+3165.039°, +15.147°/−19.078° and −193.604°/−79.518° in
+  three runs on identical inputs). An unconstrained frame produces garbage rather
+  than being skipped. Always read the `not represented` lines.
 - `marsnav2` converged without moving any pointing (cost change 0.000000e+00,
   seven unsuccessful steps): with `Nominal Pointing Errors 0.0630°` for this
   instrument, the sparse two-observation tracks bought no improvement over the
   nominal pointing. Its 0.36 px mean is a residual against simultaneously
   adjusted ground points, not a measure of registration quality.
-- Tiepoint counts vary by one or two between runs of `marsautotie` on identical
-  inputs.
+- **These numbers are not exactly reproducible.** Repeat runs on identical inputs
+  gave 311–313 tiepoints, 37.35–37.45 px initial and 4.68–4.74 px final error,
+  and 300–303 `marsnav2` tracks with means of 0.362–0.367 px. The disconnected
+  groups and their membership were identical every time. Expect agreement in
+  magnitude, not in digits.
 
 The corrected pointing does reach the mosaic. Rendering the same 19 frames twice,
 with and without the table, gives two 30000×30000 mosaics differing in 57,126,946
@@ -248,6 +255,17 @@ tig difpic inp=\( mosaic_raw.img mosaic_nav.img \)
 `marsmos` prints `Unable to find ANY entries for solution id 'COREG'. Using best
 available.` and then `19 values read from navigation file` — it reads and applies
 the table regardless of that message.
+
+`marsmap` on the same set dies with a floating-point exception (exit 136) on this
+host. That is an MPI/hwloc CPU-detection problem, not a `marsmap` one, and it is
+worked around per invocation:
+
+```bash
+tig env HWLOC_COMPONENTS=-x86 marsmap inp=all.lis out=mosaic.img \
+  navtable=pointing.nav
+```
+
+which completes and writes a 32 MB cylindrical mosaic.
 
 ## Worked example — M20 NavCam repeat coverage, verified
 
@@ -275,6 +293,10 @@ Observed:
 | `marsnav` | mean pixel error 0.826029 → 0.799630; 224 of 224 tiepoints kept |
 | pointing deltas | ≤ 0.005° in azimuth and elevation |
 
+As with the MSL example the residuals move between runs (a repeat gave 0.916035 →
+0.901525 from the same 224 tiepoints); the sub-pixel scale and the tiny pointing
+deltas are the reproducible part.
+
 The frames were already co-registered to sub-pixel accuracy: the commanded
 pointing is identical across the three, and the solution barely moves it. That is
 the expected and desirable result for a repeat-coverage set, and it is what makes
@@ -300,16 +322,14 @@ normalisation before the difference step.
 ## What is documented but not verified here
 
 Executed end to end, with the results above: `marschkovl`, `marsautotie`,
-`marsnav`, `marsnav2`, `marsmos` (with and without a navigation table), `difpic`,
+`marsnav`, `marsnav2`, `marsmos` (with and without a navigation table), `marsmap`
+(with a navigation table, under the `HWLOC_COMPONENTS=-x86` workaround), `difpic`,
 `f2`, `hist`, `marscheckcm` (all components `OK` at `tol=0.001` on an MSL frame).
 
 Not verified:
 
 - **`marsautotie2`, `marstie`, `marsfidfinder`, `marsautoloco`** — described from
   their `.pdf` files only. Not run.
-- **`marsmap`** — aborted with a floating-point exception on the MSL sample set
-  used here, both with and without a navigation table, so its `navtable=`
-  behaviour is unverified. `marsmos` was used instead.
 - **`marsrelabel navtable=`** — the program runs, but the output with a navigation
   table was byte-identical to the output without one apart from the history label,
   and the pointing it printed was the uncorrected label pointing. Whether, and
@@ -335,6 +355,7 @@ Not verified:
 | Mean pixel error barely improves | Often the tracks are all two-observation; the geometry cannot be constrained. Check the track statistics `marsnav2` prints. |
 | `Unable to find ANY entries for solution id 'X'. Using best available.` | Printed by the mosaic programs; they still read the table. Confirm with the `N values read from navigation file` line that follows. |
 | Output tiepoint file not written | The tiepoint programs will not overwrite an existing file; remove it first. |
+| `Floating point exception (core dumped)`, exit 136 | MPI/hwloc CPU detection, seen here from `marsmap`. Re-run as `tig env HWLOC_COMPONENTS=-x86 <prog> ...`. |
 
 ## Data sources
 
