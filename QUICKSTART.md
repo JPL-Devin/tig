@@ -2,9 +2,30 @@
 
 TIG provides ~550 VICAR image processing commands. This guide focuses on the flagship terrain reconstruction workflow, but you can use TIG for general image processing, format conversion, enhancement, and analysis.
 
-## Option 1: Original Demo (Temporary Container)
+## Install
 
-Fast, one-time mesh generation from stereo pairs or XYZ files.
+```bash
+pip install tig-cli
+```
+
+You need Docker running and Python 3.9+. The VICAR image is pulled on first use.
+
+```bash
+tig gen test.vic 64 64      # writes test.vic in the current directory
+tig vicario test.vic test.png
+```
+
+Run any of the ~550 tools as `tig <tool> ...`. To drop the prefix:
+
+```bash
+tig --shim
+export PATH="$HOME/.local/share/tig/shims:$PATH"
+gen test2.vic 64 64
+```
+
+---
+
+## Generate a terrain mesh
 
 ### With Pre-computed XYZ
 
@@ -29,72 +50,11 @@ Fast, one-time mesh generation from stereo pairs or XYZ files.
 **Requirements:**
 - Left and right images from **same acquisition** (matching SCLK timestamp)
 - Full-resolution or subframe images (not downsampled/thumbnails)
-- MARS calibration files mounted at `./calibration/` (see setup below)
+- MARS calibration files (see [calibration setup](docs/reference/calibration-data.md))
 
-**Output:** `terrain-intelligence-generator/docker/workspace/terrain.obj`, `texture.png`
+**Output:** `workspace/terrain.obj`, `workspace/texture.png`
 
-**Cleanup:**
-```bash
-docker stop tig-mesh-demo && docker rm tig-mesh-demo
-```
-
----
-
-## Option 2: Native Toolkit Demo (Persistent Container)
-
-Native-looking commands for interactive development and full VICAR access. Container stays running, providing access to all ~550 VICAR commands beyond just mesh generation.
-
-### One-time Setup
-
-```bash
-# 1. Install direnv
-sudo apt install direnv  # Ubuntu/Debian
-brew install direnv      # macOS
-
-# 2. Add to shell (choose one)
-echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
-echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
-
-# 3. Restart shell
-source ~/.bashrc  # or source ~/.zshrc
-
-# 4. Trust the toolkit directory
-cd vicar-native-toolkit
-direnv allow
-cd ..
-```
-
-### With Pre-computed XYZ
-
-```bash
-./demo-mesh-native-toolkit.sh \
-  --xyz /path/to/pointcloud.xyz \
-  --texture /path/to/texture.img
-```
-
-### With Stereo Pair
-
-```bash
-./demo-mesh-native-toolkit.sh \
-  --stereo-left /path/to/NLM_*_FDR_*.VIC \
-  --stereo-right /path/to/NRM_*_FDR_*.VIC
-```
-
-**Output:** `vicar-native-toolkit/workspace/terrain.obj`, `texture.png`
-
-**Container Management:**
-```bash
-cd vicar-native-toolkit
-
-# Check status
-toolkit-status
-
-# Open shell in container
-toolkit-shell
-
-# Stop container
-toolkit-stop
-```
+**Cleanup:** the container is reused across runs; remove it with `tig --shutdown`.
 
 ---
 
@@ -131,31 +91,22 @@ VISOR provides pre-computed XYZ point clouds:
 
 ### "MARS calibration not found"
 
-```bash
-# Calibration must be mounted at runtime (not included in image)
-# Check calibration location
-ls calibration/camera_models/
+Calibration is not in the image; point tig at it:
 
-# If missing, download from: https://github.com/NASA-AMMOS/VICAR
-# Place in ./calibration/ directory
+```bash
+export MARS_CONFIG_PATH=/path/to/mars_calibration
+tig bash -c 'ls $MARS_CONFIG_PATH/camera_models | head'
 ```
+
+`find-calibration.sh` searches the usual locations. See
+[Calibration Data](docs/reference/calibration-data.md).
 
 ### "Stereo images don't match"
 
 **Error:** Disparity calculation fails or produces garbage
 
-**Solution:** Verify images are from same acquisition:
-```bash
-# Check SCLK timestamp in filename
-# Must match exactly between left (NLM) and right (NRM)
-```
-
-### "direnv not allowed"
-
-```bash
-cd vicar-native-toolkit
-direnv allow
-```
+**Solution:** Verify images are from the same acquisition — the SCLK timestamp in
+the left (NLM) and right (NRM) filenames must match exactly.
 
 ### "Out of memory"
 
@@ -166,94 +117,60 @@ direnv allow
 - Use subframe/windowed images instead of full resolution
 - Reduce marsmesh `res_max` parameter
 
-### "Container won't start"
+### "Failed to connect to Docker"
 
-```bash
-# Check Docker running
-docker ps
-
-# Remove stale container
-docker stop vicar-sidecar && docker rm vicar-sidecar
-
-# Re-enter toolkit directory
-cd vicar-native-toolkit
-cd .. && cd vicar-native-toolkit
-```
-
----
-
-## Comparison: Which Demo to Use?
-
-| Feature | Original Demo | Native Toolkit |
-|---------|--------------|----------------|
-| **Setup** | None | direnv one-time setup |
-| **Speed** | Container startup each run (~5s) | Instant (persistent) |
-| **Use case** | One-off processing | Interactive development |
-| **Cleanup** | Manual | Automatic (optional) |
-| **Commands** | `docker exec ...` | Native-looking |
-| **Best for** | Production pipelines | Exploration, testing |
+The daemon is not running, or your user is not in the `docker` group.
+`tig --status` shows what tig currently has running; `tig --shutdown` clears it.
 
 ---
 
 ## Example Workflows
 
-### Quick Test with Sample Data
-
-```bash
-# Using vicar-native-toolkit workspace data
-./demo-mesh-generation-with-xyz.sh \
-  --xyz vicar-native-toolkit/workspace/pointcloud.xyz \
-  --texture vicar-native-toolkit/workspace/texture.img
-```
-
 ### Process Real Mars 2020 Data
 
 ```bash
-# 1. Download stereo pair from VISOR
+# 1. Download a stereo pair from VISOR
 cd /tmp
 wget https://mars.nasa.gov/.../NLM_1835_0829848458_777FDR_*.VIC
 wget https://mars.nasa.gov/.../NRM_1835_0829848458_777FDR_*.VIC
 
-# 2. Generate mesh
+# 2. Generate the mesh
 cd /path/to/tig
 ./demo-mesh-generation-with-xyz.sh \
   --stereo-left /tmp/NLM_*.VIC \
   --stereo-right /tmp/NRM_*.VIC
 
-# 3. View mesh
-# Import terrain-intelligence-generator/docker/workspace/terrain.obj into Blender/MeshLab
+# 3. View it
+# Import workspace/terrain.obj into Blender/MeshLab
 ```
 
 ### Interactive Exploration
 
 ```bash
-# 1. Setup toolkit (one-time)
-cd vicar-native-toolkit
-direnv allow
-
-# 2. Work interactively with VICAR commands
-cd workspace
+mkdir -p ~/vicar-play && cd ~/vicar-play
 
 # Generate test images
-gen out=test.img nl=100 ns=100
+tig gen out=test.img nl=100 ns=100
 
 # View image metadata
-label test.img
+tig label test.img
 
 # Image processing examples
-stretch inp=test.img out=stretched.img
-filter inp=test.img out=filtered.img
-geom inp=test.img out=rotated.img rotate=45
+tig stretch inp=test.img out=stretched.img
+tig filter inp=test.img out=filtered.img
+tig geom inp=test.img out=rotated.img rotate=45
 
 # Terrain processing
-marsmesh inp=pointcloud.xyz out=custom.obj
+tig marsmesh inp=pointcloud.xyz out=custom.obj
 
 # Convert VICAR to standard formats
-vicario inp=test.img out=test.png
+tig vicario inp=test.img out=test.png
 
-# 3. Container stays running for next session
-# Access all ~550 VICAR commands the same way
+# GUI display
+tig xvd test.img
 ```
+
+The container stays up between commands, so each one starts instantly.
 
 ---
 
@@ -285,12 +202,12 @@ ls -lh terrain.obj
 
 ### Terrain Reconstruction
 - Read full documentation: `docs/demos/mesh-generation.md`
-- Customize processing: Edit marsmesh/marsxyz parameters in demo scripts
+- Customize processing: Edit marsmesh/marsxyz parameters in the demo script
 - Integrate into pipelines: Use as reference for your own scripts
 
 ### General Image Processing
-- Explore VICAR commands: `toolkit-shell` then `ls /usr/local/bin` (see ~550 commands)
-- Image enhancement: Try `stretch`, `filter`, `hist` commands
+- Explore VICAR commands: `tig bash -c 'ls /usr/local/bin'` (~550 commands)
+- Image enhancement: Try `stretch`, `filter`, `hist`
 - Format conversion: Use `vicario` for VICAR ↔ PNG/JPEG/TIFF
 - Geometric operations: Experiment with `geom`, `rotate`, `size`
-- Learn VICAR: See vicar-native-toolkit documentation for command usage
+- CLI details: [tig-cli README](tig-cli/README.md)

@@ -5,25 +5,27 @@ Quick setup guide for TIG - a VICAR image processing environment with ~550 comma
 ## Prerequisites
 
 - **Docker** or Podman installed
+- **Python 3.9+**
 - **8GB RAM** minimum (16GB recommended)
 - **M2020 stereo images** (NavCam or Mastcam-Z)
 
 ## Installation
 
-### Option 1: Use Pre-built Image (Recommended)
-
 ```bash
-docker pull ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource
+pip install tig-cli
+tig gen test.vic 64 64      # pulls the image on first use
 ```
 
-### Option 2: Build Locally
+`tig` runs any VICAR tool inside the container, translating paths so files in
+your current directory and home directory just work:
 
 ```bash
-cd terrain-intelligence-generator/docker
-docker build -t terrain-intelligence-generator:opensource .
+tig label image.vic
+tig vicario image.vic image.png
 ```
 
-**Note**: Local build requires `vicario.jar` (see [Vicario Reference](../reference/vicario.md))
+To build the image yourself instead of using the published one, see the
+[TIG VICAR image](../terrain-intelligence-generator/README.md).
 
 ## Running Your First Demo
 
@@ -86,15 +88,13 @@ blender workspace/terrain.obj
 
 ## Troubleshooting
 
-### Container Name Conflict
+### Stale Container
+
+tig reuses one container across runs. To start clean:
 
 ```bash
-docker: Error response from daemon: Conflict. The container name "/tig-mesh-demo" is already in use
-```
-
-**Solution**:
-```bash
-docker stop tig-mesh-demo && docker rm tig-mesh-demo
+tig --status      # what is running
+tig --shutdown    # remove it
 ```
 
 ### Out of Memory
@@ -111,7 +111,8 @@ no additional memory available
 ERROR: MARS calibration not found
 ```
 
-**Solution**: Ensure calibration files are in `terrain-intelligence-generator/docker/mars_calibration_m20/`
+**Solution**: Point `MARS_CONFIG_PATH` at your calibration directory; see
+[Calibration Data](reference/calibration-data.md).
 
 ## Next Steps
 
@@ -121,17 +122,18 @@ ERROR: MARS calibration not found
 
 ### General Image Processing
 - **[Vicario Reference](reference/vicario.md)** - Image format conversion
-- **VICAR Commands** - Access ~550 commands for enhancement, filtering, geometric operations via vicar-native-toolkit
+- **[tig-cli](../tig-cli/README.md)** - Running any of the ~550 VICAR commands, config, X11, shims
 
 ## Configuration
 
 ### Using Custom Calibration
 
-Mount your own M2020 calibration:
-
 ```bash
-docker run -v /path/to/calib:/usr/local/vicar/mars_calib:ro ...
+export MARS_CONFIG_PATH=/path/to/calib
 ```
+
+tig mounts it read-only at `/usr/local/vicar/mars_calib`; see
+[Calibration Data](reference/calibration-data.md).
 
 ### Using Pre-computed XYZ
 

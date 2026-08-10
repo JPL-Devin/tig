@@ -19,6 +19,7 @@ from .container import (
     get_calibration_path,
     get_container_image,
 )
+from .shim import default_shim_dir, tig_executable, write_shims
 from .spec import (
     resolve_disable_path_translation,
     resolve_selinux_label_disable,
@@ -94,6 +95,27 @@ class DynamicHelpCommand(click.Command):
          "Defaults to enabled when SELinux is Enforcing.",
 )
 @click.option(
+    "--shim",
+    is_flag=True,
+    default=False,
+    help="Write one command per VICAR tool into a directory on PATH (default "
+         "~/.local/share/tig/shims), so tools run unqualified, then exit.",
+)
+@click.option(
+    "--shim-dir",
+    "shim_dir",
+    default=None,
+    metavar="PATH",
+    help="Where --shim writes its commands; implies --shim.",
+)
+@click.option(
+    "--shim-force",
+    is_flag=True,
+    default=False,
+    help="With --shim, also create commands whose names already exist on "
+         "PATH (such as 'sort').",
+)
+@click.option(
     "--status",
     "show_status",
     is_flag=True,
@@ -115,6 +137,9 @@ def main(
     calibration_path,
     disable_path_translation,
     selinux_label_disable,
+    shim,
+    shim_dir,
+    shim_force,
     show_status,
     shutdown,
 ):
@@ -131,6 +156,20 @@ def main(
         )
     except ConfigError as e:
         raise click.ClickException(str(e)) from e
+
+    # --shim writes commands and exits, so anything else asked for in the same
+    # invocation would be silently dropped. Checked before any container work.
+    if shim or shim_dir:
+        if vicar_tool:
+            raise click.UsageError(
+                f"--shim writes commands and exits; it cannot also run "
+                f"'{vicar_tool}'."
+            )
+        for option, other in ((show_status, "--status"), (shutdown, "--shutdown")):
+            if option:
+                raise click.UsageError(
+                    f"--shim writes commands and exits; run {other} separately."
+                )
 
     lifecycle_only = shutdown or show_status
     try:
@@ -151,6 +190,35 @@ def main(
     if shutdown:
         removed = manager.shutdown()
         click.echo(f"Removed {removed} container(s).")
+        return
+
+    if shim or shim_dir:
+        directory = Path(shim_dir) if shim_dir else default_shim_dir()
+        try:
+            manager.ensure_container(writable_paths=writable_paths)
+            tools = manager.list_tools()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
+        finally:
+            manager.release_claim()
+
+        try:
+            written, skipped = write_shims(
+                directory, tools, tig_executable(), force=shim_force
+            )
+        except OSError as e:
+            raise click.ClickException(
+                f"Failed to write commands to {directory}: {e}"
+            ) from e
+        click.echo(f"Wrote {len(written)} command(s) to {directory}.")
+        if skipped:
+            click.echo(
+                f"Skipped {len(skipped)} name(s) already taken "
+                f"({', '.join(skipped)}); run these as 'tig <tool>'. "
+                f"--shim-force covers names that merely exist elsewhere "
+                f"on PATH, not files already in {directory}."
+            )
+        click.echo(f'Add to your shell profile: export PATH="{directory}:$PATH"')
         return
 
     if show_status:

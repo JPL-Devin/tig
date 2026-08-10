@@ -11,7 +11,7 @@ New here? Start with **[Getting Started](getting-started.md)**.
 
 ### Demos
 - **[Mesh Generation](demos/mesh-generation.md)** — Mars 2020 NavCam stereo terrain reconstruction walkthrough (flagship capability).
-- **[Demo Commands](demos/commands.md)** — Complete VICAR pipeline using direct Docker commands.
+- **[Demo Commands](demos/commands.md)** — Complete VICAR pipeline, command by command.
 - **[Downloading VISOR Data](demos/downloading-visor-data.md)** — Obtaining calibration and sample data from VICAR releases.
 
 ### Architecture
@@ -19,9 +19,10 @@ New here? Start with **[Getting Started](getting-started.md)**.
 
 ### Reference
 - **[Vicario](reference/vicario.md)** — Java VicarIO library for VICAR image-format conversion.
+- **[Calibration Data](reference/calibration-data.md)** — Mounting MARS/VISOR calibration files.
 
 ## Related
 
 - **[Project README](../README.md)** — Top-level project overview.
-- **[vicar-native-toolkit](../vicar-native-toolkit/README.md)** — Native-like command execution for all ~550 VICAR tools.
-- **[Quick Reference](../vicar-native-toolkit/docs/QUICKREF.md)** — Toolkit command cheat sheet.
+- **[tig-cli](../tig-cli/README.md)** — The command-line client that runs all ~550 VICAR tools.
+- **[TIG VICAR image](../terrain-intelligence-generator/README.md)** — Building and testing the container image.

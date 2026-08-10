@@ -42,6 +42,9 @@ CREATE_RETRY_DELAY = 0.2
 # new one is created, so working in many directories does not pile them up.
 MAX_KEPT_CONTAINERS = 2
 
+# Directories in the image holding the VICAR tools users invoke by name.
+TOOL_PATHS = ("/usr/local/bin",)
+
 # Seconds allowed for the in-container kill, which runs from a signal handler.
 SIGNAL_TIMEOUT = 5
 
@@ -392,6 +395,36 @@ class ContainerManager:
                 continue
             paths.append(source)
         return sorted(paths)
+
+    def list_tools(self) -> List[str]:
+        """Return the VICAR tool names available in the container.
+
+        Requires a container to be running; call ``ensure_container`` first.
+        """
+        if self.container is None:
+            raise TigError("No container is running.")
+        try:
+            # Executable files only: the tool directories also hold payloads
+            # such as vicario.jar, which is not a command.
+            result = self.container.exec_run(
+                [
+                    "find", *TOOL_PATHS, "-maxdepth", "1",
+                    "-type", "f", "-executable", "-printf", "%f\\n",
+                ],
+                demux=False,
+            )
+        except docker.errors.APIError as e:
+            raise TigError(f"Failed to list VICAR tools: {e}") from e
+
+        output = result.output.decode("utf-8", "replace")
+        if result.exit_code != 0:
+            raise TigError(
+                f"Failed to list VICAR tools in the container: {output.strip()}"
+            )
+        return sorted({
+            line.strip() for line in output.splitlines()
+            if line.strip() and "/" not in line
+        })
 
     def execute_vicar_command(
         self,
