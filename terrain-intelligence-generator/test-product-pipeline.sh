@@ -153,7 +153,9 @@ EOF
     for f in left.vic right.vic left.cahv right.cahv; do
         [ -s \$f ] || { echo \"missing fixture file: \$f\"; exit 1; }
     done
-    label -list left.vic 2>/dev/null | grep -q \"PRODUCT_ID='SYNTH_left'\" || {
+    # Redirect, never pipe: closing a wrapper's output early blocks it on write.
+    label -list left.vic > left.label.txt 2>/dev/null
+    grep -q \"PRODUCT_ID='SYNTH_left'\" left.label.txt || {
         echo 'PRODUCT_ID not written to left.vic label'; exit 1; }
     echo \"fixture: two ${IMG_SIZE}x${IMG_SIZE} images, baseline ${BASELINE_M} m, true range ${TRUE_RANGE_M} m\"
 "
@@ -239,7 +241,7 @@ else
     # Content check: every vertex coordinate must be a finite number, and the
     # reconstructed wall must sit at the range the fixture geometry implies.
     print_test_header "Test 5: Mesh coordinates are finite and physically plausible"
-    awk -v truth=${TRUE_RANGE_M} '
+    awk -v truth=${TRUE_RANGE_M} -v minv=${MIN_VERTICES} '
         { gsub(/\r/, "") }   # marsmesh writes CRLF line endings
         $1 == "v" {
             n++
@@ -253,7 +255,7 @@ else
             if (n == 1 || $2 + 0 > xmax) xmax = $2 + 0
         }
         END {
-            if (n == 0) { print "no vertices"; exit 1 }
+            if (n < minv) { printf "only %d vertices\n", n + 0; exit 1 }
             xmean = xsum / n
             printf "vertices=%d non-finite/out-of-range coords=%d range(X) mean=%.3f min=%.3f max=%.3f (truth %.1f m)\n",
                    n, bad + 0, xmean, xmin, xmax, truth
