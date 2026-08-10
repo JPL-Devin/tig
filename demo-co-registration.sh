@@ -138,7 +138,7 @@ if [ -n "$IMAGE_LIST" ]; then
     echo "ERROR: Image list not found: $IMAGE_LIST"
     exit 1
   fi
-  while IFS= read -r line; do
+  while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     INPUTS+=("$(abspath "$line")")
   done < "$IMAGE_LIST"
