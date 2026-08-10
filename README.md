@@ -132,11 +132,12 @@ So the scope is unambiguous:
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
   it per mission).
-- No worked example for panoramas/mosaics, co-registration, or the
-  slope/roughness/reachability products — the programs are present, the demos
-  are not. Automated checks cover the CLI, format conversion, and the presence
-  of the MARS commands; the end-to-end product paths that are demonstrated are
-  the mesh demo and the Airflow example.
+- No worked example for panoramas/mosaics or co-registration, and none for
+  `marsgreach` reachability, whose input-producing program is not in the image —
+  those programs are present, the demos are not. Automated checks cover the CLI,
+  format conversion, and the presence of the MARS commands; the end-to-end
+  product paths that are demonstrated are the mesh demo, the surface
+  characteristics demo and the Airflow example.
 
 ## Quick Start
 
@@ -200,6 +201,8 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 ### Demos
 
 📁 `demo-mesh-generation-with-xyz.sh` · 📖 [Mesh Generation](docs/demos/mesh-generation.md) · [Command Reference](docs/demos/commands.md)
+
+📁 `demo-surface-characteristics.sh` · 📖 [Surface Characteristics](docs/demos/surface-characteristics.md)
 
 ## Documentation
 
@@ -276,6 +279,7 @@ raw code.
 ```
 tig/
 ├── demo-mesh-generation-with-xyz.sh    # Mesh demo (stereo pair or pre-computed XYZ)
+├── demo-surface-characteristics.sh     # Slope, roughness, normals and goodness from XYZ
 ├── find-calibration.sh                 # Calibration helper
 ├── tig-cli/                            # The tig command-line client (PyPI: tig-cli)
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
