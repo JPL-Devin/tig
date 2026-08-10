@@ -221,8 +221,16 @@ rm -f panorama_frames.txt panorama_overlaps.xml panorama_overlap_mosaic.img \
 # what a second mosaic in another projection reuses.
 echo "Step 1: Radiometric correction (marsrad)..."
 mkdir -p panorama_rad
-for frame in "${FRAMES[@]}"; do
-  out="panorama_rad/$(basename "${frame%.*}").rad.img"
+# marsmap, marsbrt and marsmos all take either a list of files or a text file
+# with one filename per line. The list file keeps the command short and fixes
+# the frame order, which is also the stacking order in the mosaic, so it is
+# written in the order the frames were given rather than from a directory
+# listing. The index prefix keeps two frames of the same name, from different
+# directories, from overwriting each other.
+: > panorama_frames.txt
+for i in "${!FRAMES[@]}"; do
+  frame="${FRAMES[$i]}"
+  out=$(printf 'panorama_rad/%03d_%s.rad.img' "$i" "$(basename "${frame%.*}")")
   tig marsrad inp="$frame" out="$out" > /dev/null 2>&1 || true
   if [ ! -f "$out" ]; then
     echo "  ❌ ERROR: marsrad produced nothing for $(basename "$frame")"
@@ -230,13 +238,9 @@ for frame in "${FRAMES[@]}"; do
     echo "       tig marsrad inp=$frame out=/tmp/x.img"
     exit 1
   fi
+  echo "$out" >> panorama_frames.txt
   echo "  ✓ $(basename "$out")"
 done
-
-# marsmap, marsbrt and marsmos all take either a list of files or a text file
-# with one filename per line. The list file keeps the command short and fixes
-# the frame order, which is also the stacking order in the mosaic.
-ls panorama_rad/*.rad.img > panorama_frames.txt
 echo ""
 
 # Assemble the projection arguments once: the overlap pass and the mosaic pass
