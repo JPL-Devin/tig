@@ -17,24 +17,6 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# Find calibration files using helper script
-if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
-    source "$SCRIPT_DIR/find-calibration.sh"
-    # Guard the assignment: under 'set -e' a failed lookup would otherwise end
-    # the script before the help below is printed.
-    CALIB_DIR=$(find_calibration) || true
-    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
-        echo "ERROR: MARS calibration not found."
-        echo ""
-        print_calibration_help
-        exit 1
-    fi
-else
-    echo "ERROR: find-calibration.sh not found next to this script."
-    echo "Set MARS_CONFIG_PATH to a mission calibration directory and retry."
-    exit 1
-fi
-
 IMAGE_LIST=""
 IMAGES=()
 OVERLAP=40
@@ -170,6 +152,25 @@ for input in "${INPUTS[@]}"; do
     exit 1
   fi
 done
+
+# Find calibration files using helper script. After argument parsing, so that
+# --help and usage errors work without calibration installed.
+if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
+    source "$SCRIPT_DIR/find-calibration.sh"
+    # Guard the assignment: under 'set -e' a failed lookup would otherwise end
+    # the script before the help below is printed.
+    CALIB_DIR=$(find_calibration) || true
+    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
+        echo "ERROR: MARS calibration not found."
+        echo ""
+        print_calibration_help
+        exit 1
+    fi
+else
+    echo "ERROR: find-calibration.sh not found next to this script."
+    echo "Set MARS_CONFIG_PATH to a mission calibration directory and retry."
+    exit 1
+fi
 
 echo "Using calibration from: $CALIB_DIR"
 # tig mounts this read-only at /usr/local/vicar/mars_calib and points the MARS
