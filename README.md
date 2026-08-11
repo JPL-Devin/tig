@@ -48,11 +48,12 @@ Terrain meshes, point clouds and slope/roughness maps from in-situ imagery:
 The [mesh generation demo](docs/demos/mesh-generation.md) runs the stereo →
 disparity → XYZ → mesh path end to end on Mars 2020 NavCam pairs, and the
 [Airflow example](examples/airflow-k8s-pipeline/README.md) runs the same path as
-scheduled tasks. The surface-characteristic tools — including `marsgreach`,
-which produces the goodness/reachability rasters used for traversability
-assessment — are part of the same MARS toolset and take the XYZ products as
-input; this repository ships no worked example for them, so treat them as
-available programs rather than demonstrated workflows.
+scheduled tasks. The [surface characteristics demo](docs/demos/surface-characteristics.md)
+takes that XYZ and derives slope, roughness, surface normals and placement
+goodness. `marsgreach`, which collapses arm reachability into the goodness
+raster used for traversability assessment, is in the image but its 6-band
+reachability input is produced by a mission program that is not, so it stays
+an available program rather than a demonstrated workflow.
 
 ### Orbital Mapping and Monitoring
 
@@ -131,11 +132,12 @@ So the scope is unambiguous:
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
   it per mission).
-- No worked example for panoramas/mosaics, co-registration, or the
-  slope/roughness/reachability products — the programs are present, the demos
-  are not. Automated checks cover the CLI, format conversion, and the presence
-  of the MARS commands; the end-to-end product paths that are demonstrated are
-  the mesh demo and the Airflow example.
+- No worked example for co-registration, and none for `marsgreach`
+  reachability, whose input-producing program is not in the image — those
+  programs are present, the demos are not. Automated checks cover the CLI,
+  format conversion, and the presence of the MARS commands; the end-to-end
+  product paths that are demonstrated are the mesh demo, the panorama mosaic
+  demo, the surface characteristics demo and the Airflow example.
 
 ## Quick Start
 
@@ -200,12 +202,15 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 
 📁 `demo-mesh-generation-with-xyz.sh` · 📖 [Mesh Generation](docs/demos/mesh-generation.md) · [Command Reference](docs/demos/commands.md)
 
+📁 `demo-surface-characteristics.sh` · 📖 [Surface Characteristics](docs/demos/surface-characteristics.md)
+
 ## Documentation
 
 - **[Getting Started](docs/getting-started.md)** - Installation and setup
 - **[Quick Start](QUICKSTART.md)** - Common workflows end to end
 - **[Mesh Generation Demo](docs/demos/mesh-generation.md)** - Step-by-step mesh creation
 - **[Panorama Mosaic Demo](docs/demos/panorama-mosaic.md)** - 360-degree in-situ NavCam panorama
+- **[Surface Characteristics Demo](docs/demos/surface-characteristics.md)** - Slope, roughness, normals and goodness from an XYZ cloud
 - **[Command Reference](docs/demos/commands.md)** - Tour of the VICAR toolset
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
@@ -274,6 +279,7 @@ raw code.
 ```
 tig/
 ├── demo-mesh-generation-with-xyz.sh    # Mesh demo (stereo pair or pre-computed XYZ)
+├── demo-surface-characteristics.sh     # Slope, roughness, normals and goodness from XYZ
 ├── find-calibration.sh                 # Calibration helper
 ├── tig-cli/                            # The tig command-line client (PyPI: tig-cli)
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
