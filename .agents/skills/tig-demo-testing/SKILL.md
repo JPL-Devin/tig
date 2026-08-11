@@ -17,11 +17,51 @@ description: How to run and verify the tig VICAR demo shell scripts (mesh, panor
 - Sample data: Mars 2020 NavCam FDR `.IMG` frames from a single site/drive (e.g. sequence
   `NCAM00501`, five left-NavCam frames per sol).
 
+## Getting calibration and frames when the box has none
+PDS bulk download may be unavailable: every `pds-imaging.jpl.nasa.gov` /
+`pdsimage2.wr.usgs.gov` / `planetarydata.jpl.nasa.gov` data path can answer `200` with the HTML
+bundle landing page instead of the file, and the w10n JSON listings can come back with empty
+`nodes`/`leaves`. Do not conclude the frame names in `docs/demos/*.md` are wrong — check the first
+bytes of what you downloaded (`head -c 200 f.IMG` showing `<!DOCTYPE HTML` means you got the
+landing page).
+
+The VICAR 5.0 GitHub release assets do work and are the reliable fallback (see
+`docs/demos/downloading-visor-data.md`):
+```bash
+mkdir -p ~/visor_data
+curl -sL "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_data_20230623.tar.gz" | tar -zxf - -C ~/visor_data
+curl -sL "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_calibration_20230608_msl.tar.gz" | tar -zxf - -C ~/visor_data
+# M20 calibration is split in two parts and must be concatenated (5.3 GB extracted)
+curl -sL ".../visor_calibration_20230608_m20.tar.gzaa" ".../visor_calibration_20230608_m20.tar.gzab" | tar -zxf - -C ~/visor_data
+```
+Budget ~15 GB of disk and several minutes; run the `curl | tar` in the background and poll `du -sh`.
+
+The sample data has **no M20 frames**, but `sample_data/CylindricalMosaic/` holds 19 MSL left-NavCam
+`ILT` frames from a single site/drive (`F0961766`, sequences `NCAM00293`/`00353`/`00354`) that drive
+the panorama and co-registration demos fine with
+`MARS_CONFIG_PATH=~/visor_data/calibration/msl`. Five `NLB_*NCAM00293*.IMG` frames yield a
+7696x1217 cylindrical mosaic and a 26-tiepoint marsnav solution (mean pixel error 6.19 -> 2.65).
+MSL NavCam is 1024x1024, not M20's 1280x960, and covers ~110 deg of azimuth rather than 360, so
+expect a mostly-black 360 deg canvas — judge the imagery, not the frame coverage.
+
 ## Running the demos
 - The demo scripts write into `./workspace` relative to the *current* directory, so run every case
   in its own fresh empty scratch dir; otherwise outputs from a previous case are mistaken for the
   new run's.
 - Five 1280x960 NavCam frames build a 360-degree cylindrical mosaic in ~8 s on an 8-core VM.
+- Point the demos at a specific image with `export CONTAINER_IMAGE=<tag>`; `tig --shutdown` between
+  images, since `tig` reuses a running container and would otherwise keep serving the old one.
+
+## The demos must call every MARS program through `tig`
+There is no `marsmap`/`marsbrt`/`marsrad` binary on the host — they only exist inside the container.
+A demo line that invokes one as a bare command (`marsmap inp=...` instead of `tig marsmap inp=...`)
+fails with `line N: marsmap: command not found` (exit 127). The demos pipe these calls into
+`grep ... || true`, which **swallows the `command not found` message**, so the only symptom is the
+script's own downstream check, e.g. `❌ ERROR: marsmap wrote no overlap file`. When a demo step
+reports "wrote no output", re-run the script under `bash -x` and then run the traced command
+standalone without the `| grep` to see the real error. Beware of shell functions defined near the
+top of a demo (`marsmap() { tig ... marsmap "$@"; }`) — they can be the only thing making a bare
+call resolve, so deleting them breaks the script even though the diff looks like a pure cleanup.
 
 ## Path translation stops at the command line
 `tig` rewrites host paths in *arguments* only. The contents of a list file (`inp=frames.lis`) are read
@@ -40,11 +80,18 @@ itself, so no per-invocation workaround is needed; on an image predating that, p
 `tig env HWLOC_COMPONENTS=-x86`. If a MARS step mysteriously produces no output and exits 136, check
 that `tig printenv HWLOC_COMPONENTS` shows `-x86`.
 
+A clean way to prove the image-level fix at runtime: run the same `tig marsmap inp=... out=...` twice
+with only `CONTAINER_IMAGE` differing. The fixed image exits 0 and writes the mosaic; an image
+predating the fix exits 136 with
+`/usr/local/libexec/vicar-run: line 97: Floating point exception(core dumped)` and writes nothing.
+
 ## Verifying image output without a browser
 Do not judge success by exit code / file size alone; VICAR tools often exit non-zero on success and
 can emit an all-black image.
-- Dimensions and brightness stats: `python3 -c "from PIL import Image, ImageStat; ..."` (Pillow is
-  present; numpy may not be — use `ImageStat`/`histogram()` instead). Set
+- Dimensions and brightness stats: `python3 -c "from PIL import Image, ImageStat; ..."`. Pillow may
+  not be in the system Python — activate the venv that provides `tig`
+  (`source ~/repos/fprime/fprime-venv/bin/activate`) and `pip install pillow` there. numpy may not
+  be present — use `ImageStat`/`histogram()` instead. Set
   `Image.MAX_IMAGE_PIXELS=None` for large mosaics.
 - Actually look at the pixels: downscale with `convert IN -resize 1400x OUT.png` and display it with
   ImageMagick on the X display, then screenshot:
@@ -53,6 +100,10 @@ can emit an all-black image.
   the same call as other commands sometimes returns before the window maps.
 - Useful sanity numbers for the sol 300 NavCam panorama: stretched PNG mean grey ≈ 59, stddev ≈ 43;
   an unstretched (`--no-stretch`) PNG is markedly darker (mean ≈ 29).
+- For the 5-frame MSL `NCAM00293` cylindrical panorama: 7696x1217, mean ≈ 44, stddev ≈ 67 (the low
+  mean is the unfilled part of the 360 deg canvas); the rover deck is visible at bottom centre.
+- `Image.resize()` then `save()` is a fine substitute for `convert` if ImageMagick's `convert` is
+  missing; `display` is usually still installed.
 
 ## Inspecting products
 - `tig label -list inp=panorama.img` shows `MAP_PROJECTION_TYPE`, `MAP_RESOLUTION` (pixels/degree),
