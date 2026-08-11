@@ -122,7 +122,10 @@ class Runtime:
             completed = subprocess.run(
                 self.args(*arguments),
                 capture_output=True,
-                text=True,
+                # Runtimes report in UTF-8 whatever the host's locale is,
+                # and a stray byte is no reason to fail the command.
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except (OSError, subprocess.SubprocessError) as e:

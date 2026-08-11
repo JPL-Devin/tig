@@ -209,6 +209,14 @@ def test_returns_what_the_runtime_printed(monkeypatch):
     assert runtime.run("ps") == "tig-vicar-1\n"
 
 
+def test_reads_output_a_strict_locale_could_not_decode(monkeypatch):
+    """Under LC_ALL=C a byte the runtime printed must not end the command."""
+    monkeypatch.setenv("LC_ALL", "C")
+    runtime = Runtime("docker", "/bin/sh")
+
+    assert "caf" in runtime.run("-c", r"printf 'caf\303\251 \377\n'")
+
+
 def test_reports_what_the_runtime_complained(monkeypatch):
     runtime = Runtime("podman", "/usr/bin/podman")
     monkeypatch.setattr(
