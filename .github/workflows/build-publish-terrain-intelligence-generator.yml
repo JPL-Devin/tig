@@ -305,8 +305,12 @@ jobs:
           echo "Test 6: List image contents (list command)"
           echo "============================================"
           docker run --rm -v ${TEST_WORKSPACE}:/workspace:Z ${IMAGE_TAG} bash -c '
-            list /workspace/test.vic | head -15
-            if [ $? -eq 0 ]; then
+            # Redirect first: piping into head closes the pipe early and
+            # leaves the wrapper blocked on write.
+            list /workspace/test.vic > /tmp/list.txt
+            status=$?
+            head -15 /tmp/list.txt
+            if [ $status -eq 0 ]; then
               echo "✓ List command successful"
             else
               echo "✗ ERROR: List command failed"
@@ -545,6 +549,16 @@ jobs:
           echo "============================================"
           echo "✅ ALL TESTS PASSED"
           echo "============================================"
+
+      # The tests above prove the image is wired up; these prove it produces
+      # terrain products (stereo -> disparity -> XYZ -> mesh, and mosaics),
+      # asserting on product content.  Fixture is synthetic and built in-image,
+      # so no VISOR calibration or downloaded data is needed.  ~1 minute.
+      - name: Run terrain product tests
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          ./terrain-intelligence-generator/test-product-pipeline.sh "${IMAGE_TAG}"
 
   # Optional: Create GitHub Release for tagged versions
   create-release:

@@ -5,6 +5,10 @@
 # This script runs the same tests as the GitHub Actions workflow, allowing
 # developers to test locally before pushing.
 #
+# It checks that the image is correctly assembled (layout, wrappers, exit
+# codes, file I/O).  For tests that assert TIG actually produces terrain
+# products, run ./test-product-pipeline.sh with the same image tag.
+#
 # Usage:
 #   ./test-docker-image.sh <image-tag>
 #
@@ -148,8 +152,9 @@ test_result $? "gen command successful"
 # Test 6: List image contents
 print_test_header "Test 6: List image contents (list command)"
 # Older images report VICAR's raw exit code, so check the output, not $?.
+# Consume all of it: closing the pipe early leaves the wrapper blocked on write.
 docker run --rm -v ${TEST_WORKSPACE}:/workspace ${IMAGE_TAG} bash -c '
-    list /workspace/test.vic 2>/dev/null | grep -q .
+    list /workspace/test.vic 2>/dev/null | grep -c . > /dev/null
 '
 test_result $? "list command successful"
 
@@ -270,5 +275,7 @@ else
     echo -e "${GREEN}Failed: 0${NC}"
     echo ""
     echo -e "${GREEN}✅ ALL TESTS PASSED${NC}"
+    echo ""
+    echo "Next: ./test-product-pipeline.sh ${IMAGE_TAG} (stereo/XYZ/mesh/mosaic products)"
     exit 0
 fi
