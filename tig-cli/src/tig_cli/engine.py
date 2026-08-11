@@ -50,6 +50,10 @@ class EngineUnavailable(EngineError):
     """This runtime cannot be driven over its API; use its command line."""
 
 
+class EngineNotFound(EngineError):
+    """The runtime has no such container, image or exec."""
+
+
 def _safe(reference: str) -> str:
     """Check a name is usable in a request line, rather than escaping it.
 
@@ -141,7 +145,7 @@ class Engine:
             connection.close()
 
         if status == 404:
-            raise EngineError(f"Not found: {path}")
+            raise EngineNotFound(f"Not found: {path}")
         if status >= 400:
             raise EngineError(_message(payload, status))
         if not payload:

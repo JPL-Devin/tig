@@ -168,12 +168,14 @@ def test_prefers_the_dispatcher_when_it_answers(host, engine, monkeypatch):
     assert fast.run(["vicar", "in.img"]) == 4
 
     engine.exec_command.assert_not_called()
-    container, home, command, workdir, env = calls[0]
+    container, home, command, workdir, env, runtime = calls[0]
     assert container == expected_name(host)
     assert home == str(host)
     assert command == ["vicar", "in.img"]
     assert workdir == os.path.realpath(host)
     assert env == {"DISPLAY": container_display(RUNTIME.name)}
+    # The dispatcher signals through it, so it must be the one addressed here.
+    assert runtime is RUNTIME
 
 
 def test_prefers_the_broker_where_it_is_the_one_that_can_serve(

@@ -278,15 +278,16 @@ class ContainerManager:
         return Claim.claimed_containers()
 
     def _container_names(self) -> List[str]:
-        """The names of the containers tig has created."""
-        try:
-            listed = self.runtime.run(
-                "ps", "--all",
-                "--filter", f"name={CONTAINER_PREFIX}",
-                "--format", "{{.Names}}",
-            )
-        except TigError:
-            return []
+        """The names of the containers tig has created.
+
+        Raises:
+            TigError: if there is no runtime, or it cannot be asked.
+        """
+        listed = self.runtime.run(
+            "ps", "--all",
+            "--filter", f"name={CONTAINER_PREFIX}",
+            "--format", "{{.Names}}",
+        )
         names = []
         for line in listed.splitlines():
             # Podman reports a container's names as a comma-separated list.
@@ -307,7 +308,12 @@ class ContainerManager:
         """
         claimed = self._claimed_containers()
         candidates = []
-        for name in self._container_names():
+        try:
+            names = self._container_names()
+        except TigError:
+            # Best-effort housekeeping, run after the container is ready.
+            return 0
+        for name in names:
             if name == keep:
                 continue
             details = self._inspect(name)
@@ -342,7 +348,7 @@ class ContainerManager:
         if not isinstance(exec_ids, list) or not exec_ids:
             return False
 
-        from .engine import Engine, EngineError
+        from .engine import Engine, EngineError, EngineNotFound
 
         try:
             engine = Engine.detect(self.runtime)
@@ -352,6 +358,9 @@ class ContainerManager:
         for exec_id in exec_ids:
             try:
                 inspected = engine.inspect_exec(str(exec_id))
+            except EngineNotFound:
+                # Already gone, so nothing of it is running.
+                continue
             except EngineError:
                 # Assume busy when the runtime cannot say, so a container in
                 # use by another invocation is never reaped on a failed check.

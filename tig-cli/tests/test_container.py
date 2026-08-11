@@ -20,7 +20,7 @@ from tig_cli.container import (
     selinux_enforcing,
     DEFAULT_IMAGE,
 )
-from tig_cli.engine import Engine, EngineError
+from tig_cli.engine import Engine, EngineError, EngineNotFound
 from tig_cli.runtime import CommandFailed, Runtime
 
 IMAGE = "test-image:latest"
@@ -724,6 +724,48 @@ def test_reaping_skips_a_busy_container_on_a_runtime_without_an_api(
     make_manager(home_dir, runtime=runtime).ensure_container([])
 
     assert f"{CONTAINER_PREFIX}-busy" not in runtime.removed
+
+
+def test_reaping_removes_a_container_whose_exec_the_runtime_forgot(
+    home_dir, monkeypatch
+):
+    """A vanished exec is no command; only an unanswerable check means busy."""
+    runtime = FakeRuntime({
+        f"{CONTAINER_PREFIX}-newer": described("2022-01-01T00:00:00Z"),
+        f"{CONTAINER_PREFIX}-stale": described(
+            "2020-01-01T00:00:00Z", exec_ids=["gone"]
+        ),
+    })
+    fake_engine(monkeypatch, EngineNotFound("Not found: /exec/gone/json"))
+
+    make_manager(home_dir, runtime=runtime).ensure_container([])
+
+    assert runtime.removed == [f"{CONTAINER_PREFIX}-stale"]
+
+
+def test_creating_a_container_survives_an_unlistable_runtime(home_dir):
+    """Reaping is housekeeping; it must not fail a command that has a
+    container."""
+    runtime = FakeRuntime()
+    runtime.fail("ps", message="cannot connect")
+
+    manager = make_manager(home_dir, runtime=runtime)
+    manager.ensure_container([])
+
+    assert manager.running is True
+
+
+def test_status_reports_a_runtime_that_cannot_be_asked(home_dir):
+    """Silently reporting nothing would look like nothing is running."""
+    runtime = FakeRuntime({f"{CONTAINER_PREFIX}-one": described()})
+    runtime.fail("ps", message="cannot connect to the runtime")
+
+    manager = make_manager(home_dir, runtime=runtime)
+
+    with pytest.raises(TigError, match="cannot connect"):
+        manager.status()
+    with pytest.raises(TigError, match="cannot connect"):
+        manager.shutdown()
 
 
 def fake_engine(monkeypatch, inspected):

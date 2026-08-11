@@ -21,8 +21,12 @@ import errno
 import os
 import selectors
 import sys
+from typing import TYPE_CHECKING
 
 from .spec import RUNNER_MARKER, TigError, forwarded_signals
+
+if TYPE_CHECKING:
+    from .runtime import Runtime
 
 DISABLE_ENV = "TIG_NO_DISPATCHER"
 
@@ -123,6 +127,7 @@ def run(
     command: list[str],
     workdir: str,
     env: dict[str, str],
+    runtime: Runtime | None = None,
 ) -> int | None:
     """Run ``command`` through the container's dispatcher.
 
@@ -135,7 +140,7 @@ def run(
     if not _expressible(command, workdir, env):
         return None
 
-    job = _Job(_Paths(home, container), command, workdir, env)
+    job = _Job(_Paths(home, container), command, workdir, env, runtime)
     try:
         submitted = job.start()
     except OSError:
@@ -327,10 +332,14 @@ class _Job:
         command: list[str],
         workdir: str,
         env: dict[str, str],
+        runtime: Runtime | None = None,
     ):
         self.paths = paths
         self.command = command
         self.workdir = workdir
+        # Signalling has to reach the runtime holding the container, not
+        # whichever one is found first on PATH.
+        self.runtime = runtime
         self.display = env.get("DISPLAY", "")
         self.directory = os.path.join(
             paths.rundir, f"job-{os.getpid()}-{os.urandom(4).hex()}"
@@ -554,7 +563,7 @@ class _Job:
         from .engine import Engine, EngineError
 
         try:
-            Engine.detect().exec_detached(
+            Engine.detect(self.runtime).exec_detached(
                 self.paths.container,
                 [
                     SHELL,

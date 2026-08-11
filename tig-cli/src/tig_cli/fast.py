@@ -202,7 +202,8 @@ def _warm(plan: _Plan) -> int | None:
             plan.name, plan.home, plan.command, plan.workdir, plan.env
         )
     return dispatch.run(
-        plan.name, plan.home, plan.command, plan.workdir, plan.env
+        plan.name, plan.home, plan.command, plan.workdir, plan.env,
+        plan.runtime,
     )
 
 

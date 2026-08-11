@@ -201,7 +201,10 @@ def main(
         raise click.ClickException(str(e)) from e
 
     if shutdown:
-        removed = manager.shutdown()
+        try:
+            removed = manager.shutdown()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
         click.echo(f"Removed {removed} container(s).")
         return
 
@@ -235,7 +238,10 @@ def main(
         return
 
     if show_status:
-        containers = manager.status()
+        try:
+            containers = manager.status()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
         if not containers:
             click.echo("No tig containers running.")
         for container in containers:
