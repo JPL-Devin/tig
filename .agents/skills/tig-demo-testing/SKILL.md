@@ -1,6 +1,6 @@
 ---
 name: tig-demo-testing
-description: How to run and verify the tig VICAR demo shell scripts (mesh, panorama mosaic) end to end on a Linux box, including calibration setup, the hwloc/MPI workaround, and how to visually check the generated imagery.
+description: How to run and verify the tig VICAR demo shell scripts (mesh, panorama mosaic, co-registration) end to end on a Linux box, including calibration setup, path translation inside list files, the hwloc/MPI workaround, and how to visually check the generated imagery.
 ---
 
 # Testing tig demo scripts (CLI, image-producing)
@@ -22,6 +22,15 @@ description: How to run and verify the tig VICAR demo shell scripts (mesh, panor
   in its own fresh empty scratch dir; otherwise outputs from a previous case are mistaken for the
   new run's.
 - Five 1280x960 NavCam frames build a 360-degree cylindrical mosaic in ~8 s on an 8-core VM.
+
+## Path translation stops at the command line
+`tig` rewrites host paths in *arguments* only. The contents of a list file (`inp=frames.lis`) are read
+by the MARS program inside the container and are never rewritten, so the list must already hold
+container-visible paths: `$HOME` is mounted at its host path, everything else is read-only under
+`/host`, so `/data/x.IMG` must appear as `/host/data/x.IMG`. Symlinks must be resolved first
+(`readlink -f`) — `tig` resolves paths before mapping them, and an unresolved link target is not
+reachable in the container. Getting this wrong shows up as `Unable to create file model for input 0`
+followed by `** ABEND called **`, so test any list-driven demo with inputs outside `$HOME`.
 
 ## Known host issue: MPI/hwloc SIGFPE
 `marsmap` and `marsremos` call `MPI_Init`, and the bundled hwloc divides by zero in its x86 backend
