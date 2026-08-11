@@ -28,6 +28,11 @@ IMAGE_PLATFORM = "linux/amd64"
 
 CONTAINER_PREFIX = "tig-vicar"
 
+# Written when a locally built program is recorded, and the per-container-name
+# markers saying which containers carry the current recording.
+BUILDS_RECORDED_FILE = "recorded"
+BUILDS_NAMES_DIR = "names"
+
 # Marks the processes of one invocation, so a signal can reach them inside the
 # shared container. Every descendant inherits it.
 EXEC_ID_ENV = "TIG_EXEC_ID"
@@ -362,6 +367,28 @@ def container_name_for(run_kwargs: dict[str, object]) -> str:
     fingerprint = json.dumps(run_kwargs, sort_keys=True, default=str)
     digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
     return f"{CONTAINER_PREFIX}-{digest}"
+
+
+def build_state_root() -> Path:
+    """Where programs built with ``--build`` are recorded, following XDG."""
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = (
+        Path(xdg) if xdg else Path(os.environ.get("HOME") or Path.home()) / ".local/share"
+    )
+    return base / "tig" / "builds"
+
+
+def container_carries_builds(container_name: str) -> bool:
+    """Whether a container is known to hold the recorded built programs.
+
+    Two stats, so the warm path can hand a container that still needs
+    patching to the full path: the markers are dropped whenever a build is
+    recorded or forgotten.
+    """
+    root = build_state_root()
+    if not (root / BUILDS_RECORDED_FILE).is_file():
+        return True
+    return (root / BUILDS_NAMES_DIR / container_name).is_file()
 
 
 class Claim:

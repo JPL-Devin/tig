@@ -143,6 +143,37 @@ def test_the_build_is_installed_by_the_cli_and_runs_by_name(
 
 
 @pytest.mark.integration
+def test_a_container_running_before_the_build_still_gets_it(
+    builder_image, patched_source, state_root, tmp_path
+):
+    environment = dict(os.environ, TIG_BUILDER_IMAGE=builder_image)
+    # Leaves a container running for this directory, holding the image's gen.
+    warmed = subprocess.run(
+        [*TIG, "gen", "out=warm.vic", "nl=4", "ns=4"],
+        cwd=tmp_path, capture_output=True, text=True, env=environment,
+    )
+    assert warmed.returncode == 0, warmed.stderr
+    assert PATCH not in warmed.stdout
+
+    try:
+        build = subprocess.run(
+            [*TIG, "--build", "gen"],
+            cwd=patched_source, capture_output=True, text=True, env=environment,
+        )
+        assert build.returncode == 0, build.stderr
+
+        run = subprocess.run(
+            [*TIG, "gen", "out=t.vic", "nl=4", "ns=4"],
+            cwd=tmp_path, capture_output=True, text=True, env=environment,
+        )
+        assert run.returncode == 0, run.stderr
+        assert PATCH in run.stdout
+    finally:
+        subprocess.run([*TIG, "--build-clean"], capture_output=True, env=environment)
+        subprocess.run([*TIG, "--shutdown"], capture_output=True, env=environment)
+
+
+@pytest.mark.integration
 def test_image_mode_produces_an_image_that_runs_the_program(
     builder_image, patched_source, state_root
 ):

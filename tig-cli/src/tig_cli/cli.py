@@ -70,6 +70,7 @@ def run_build(
         build_image,
         find_unit,
         install,
+        mark_name_applied,
         resolve_builder_image,
         verify_in_container,
     )
@@ -102,6 +103,7 @@ def run_build(
     # This container now carries what was just recorded, so the next
     # invocation has nothing to re-apply.
     overrides.mark_applied(manager.container.id)
+    mark_name_applied(manager.container_name)
 
     installed = unit.container_path + (" (+ .pdf)" if pdf else "")
     click.echo(f"Installed {installed} in {manager.container_name}")

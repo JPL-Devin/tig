@@ -317,6 +317,26 @@ def test_cleaning_everything_also_drops_units_of_other_images(tmp_path):
     assert stale_units("sha256:newimage0000") == []
 
 
+def test_the_warm_path_is_skipped_for_a_container_without_the_build(tmp_path):
+    from tig_cli.spec import container_carries_builds
+
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+    artifact = tmp_path / "gen"
+    artifact.write_text("binary")
+    # Nothing built yet: every container is up to date.
+    assert container_carries_builds("tig-vicar-1")
+
+    Overrides("image-id").record(unit, artifact, None)
+    assert not container_carries_builds("tig-vicar-1")
+
+    with patch.object(build_module, "copy_into_container"), \
+            patch.object(build_module, "ensure_wrapper"):
+        apply_overrides("tig-vicar-1", "container-1", "image-id")
+    assert container_carries_builds("tig-vicar-1")
+    assert not container_carries_builds("tig-vicar-2")
+
+
 def test_a_unit_name_that_is_not_a_program_name_is_refused(tmp_path):
     write_unit(tmp_path, "gen", GEN_IMAKE)
 

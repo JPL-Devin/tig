@@ -188,8 +188,9 @@ a `/usr/local/bin` wrapper for a program the image does not already have; and
 checks it loads in the runtime container.
 
 Installed programs live in the container, not the image, and tig replaces
-containers routinely, so each build is recorded and re-applied to a fresh
-container automatically:
+containers routinely, so each build is recorded and re-applied automatically —
+to a fresh container, and to any container that predates the build or still
+carries an earlier one, whose next command takes the slow path once:
 
 ```bash
 tig --build-list    # gen  /usr/local/vicar/dev/p2/lib/x86-64-linx/gen  built 2026-08-11T19:17:27Z  from ~/src/gen

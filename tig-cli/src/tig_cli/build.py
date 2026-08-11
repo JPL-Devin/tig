@@ -30,7 +30,13 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .spec import IMAGE_PLATFORM, TigError
+from .spec import (
+    BUILDS_NAMES_DIR,
+    BUILDS_RECORDED_FILE,
+    IMAGE_PLATFORM,
+    TigError,
+    build_state_root,
+)
 
 # Not published as an image: the VICAR release tarballs it unpacks are the
 # user's to fetch, so this is built locally by build-builder-image.sh.
@@ -269,9 +275,36 @@ def image_label(image: str, label: str) -> Optional[str]:
 
 def state_root() -> Path:
     """Where injected-build state is kept, following XDG."""
-    xdg = os.environ.get("XDG_DATA_HOME")
-    base = Path(xdg) if xdg else Path(os.environ.get("HOME") or Path.home()) / ".local/share"
-    return base / "tig" / "builds"
+    return build_state_root()
+
+
+def names_dir() -> Path:
+    """Markers naming the containers that carry the current recording."""
+    return state_root() / BUILDS_NAMES_DIR
+
+
+def invalidate_names() -> None:
+    """Forget which containers carry the recording, after it changed.
+
+    The warm path reads these, so dropping them is what makes an already
+    running container take the full path and be patched again.
+    """
+    root = state_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / BUILDS_RECORDED_FILE).touch()
+    except OSError:
+        pass
+    shutil.rmtree(names_dir(), ignore_errors=True)
+
+
+def mark_name_applied(container_name: str) -> None:
+    """Record that a container carries the current recording."""
+    try:
+        names_dir().mkdir(parents=True, exist_ok=True)
+        (names_dir() / container_name).touch()
+    except OSError:
+        pass
 
 
 def object_dir(unit: Unit, builder_image: str) -> Path:
@@ -343,6 +376,7 @@ class Overrides:
         # A newer build must reach every container, including those already
         # patched with the previous one.
         shutil.rmtree(self.applied_dir, ignore_errors=True)
+        invalidate_names()
 
     def forget(self, name: Optional[str] = None) -> List[str]:
         """Drop one override, or all of them; returns the names dropped."""
@@ -358,6 +392,8 @@ class Overrides:
         self.save(units)
         if not units:
             shutil.rmtree(self.applied_dir, ignore_errors=True)
+        if dropped:
+            invalidate_names()
         return dropped
 
     @property
@@ -398,6 +434,8 @@ def forget_stale(current_image_id: str) -> List[str]:
             continue
         dropped.extend(sorted((data.get("units") or {})))
         shutil.rmtree(directory, ignore_errors=True)
+    if dropped:
+        invalidate_names()
     return dropped
 
 
@@ -502,6 +540,7 @@ def apply_overrides(container_name: str, container_id: str, image_id: str) -> Li
     overrides = Overrides(image_id)
     units = overrides.load()
     if not units or overrides.applied(container_id):
+        mark_name_applied(container_name)
         return []
 
     installed = []
@@ -522,6 +561,7 @@ def apply_overrides(container_name: str, container_id: str, image_id: str) -> Li
         installed.append(name)
 
     overrides.mark_applied(container_id)
+    mark_name_applied(container_name)
     return installed
 
 
