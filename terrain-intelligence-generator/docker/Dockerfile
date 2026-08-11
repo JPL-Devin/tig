@@ -85,10 +85,15 @@ RUN echo "Downloading VICAR external libraries..." && \
 # ============================================================================
 FROM oraclelinux:8
 
+ARG VICAR_VERSION=5.0
+
 LABEL org.opencontainers.image.title="Terrain Intelligence Generator"
 LABEL org.opencontainers.image.description="Open source distribution of VICAR-based terrain intelligence generation tools (optimized)"
 LABEL org.opencontainers.image.version="5.0-opensource-optimized"
 LABEL org.opencontainers.image.source="https://github.com/NASA-AMMOS/VICAR"
+# 'tig --build' compares this with the builder image's label: a unit built there
+# links against this image's libraries, so the two must be one VICAR release.
+LABEL org.nasa.tig.vicar-version="${VICAR_VERSION}"
 
 # Set VICAR environment
 ENV V2TOP=/usr/local/vicar/dev

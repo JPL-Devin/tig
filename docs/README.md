@@ -12,6 +12,7 @@ New here? Start with **[Getting Started](getting-started.md)**.
 ### Demos
 - **[Mesh Generation](demos/mesh-generation.md)** — Mars 2020 NavCam stereo terrain reconstruction walkthrough (flagship capability).
 - **[Panorama Mosaic](demos/panorama-mosaic.md)** — 360-degree in-situ NavCam panorama in a cylindrical, polar or vertical projection.
+- **[Building From Source](demos/building-from-source.md)** — Patch a VICAR program locally, build it with `tig --build`, and run it in the container.
 - **[Demo Commands](demos/commands.md)** — Complete VICAR pipeline, command by command.
 - **[Downloading VISOR Data](demos/downloading-visor-data.md)** — Obtaining calibration and sample data from VICAR releases.
 

@@ -50,6 +50,108 @@ class DynamicHelpCommand(click.Command):
         super().format_help(ctx, formatter)
 
 
+def run_build(
+    manager,
+    config,
+    image,
+    writable_paths,
+    unit_name=None,
+    source=None,
+    image_tag=None,
+    builder_image=None,
+    jobs=None,
+    force=False,
+):
+    """Compile a VICAR unit and install it, into the container or a new image."""
+    # Imported here so ordinary invocations never load the build machinery.
+    from .build import (
+        Builder,
+        Overrides,
+        build_image,
+        find_unit,
+        install,
+        resolve_builder_image,
+        verify_in_container,
+    )
+
+    unit = find_unit(Path(source) if source else Path.cwd(), unit_name)
+    builder = Builder(
+        resolve_builder_image(config.builder_image, builder_image), image, force=force
+    )
+    builder.check_images()
+
+    click.echo(
+        f"Building {unit.name} from {unit.directory} in {builder.builder_image}"
+    )
+    artifact = builder.build(unit, jobs=jobs)
+    pdf = unit.pdf
+
+    if image_tag:
+        build_image(image_tag, image, unit, artifact, pdf)
+        click.echo(f"Built {image_tag}: {image} with {unit.container_path} replaced.")
+        click.echo(f"Run it with: CONTAINER_IMAGE={image_tag} tig {unit.name} ...")
+        return
+
+    manager.ensure_container(writable_paths=writable_paths)
+    install(manager.container_name, unit, artifact, pdf)
+    overrides = Overrides(manager.container.image.id)
+    overrides.record(unit, artifact, pdf)
+    # This container now carries what was just recorded, so the next
+    # invocation has nothing to re-apply.
+    overrides.mark_applied(manager.container.id)
+
+    installed = unit.container_path + (" (+ .pdf)" if pdf else "")
+    click.echo(f"Installed {installed} in {manager.container_name}")
+    failure = verify_in_container(manager.container_name, unit.name)
+    if failure:
+        click.echo(
+            f"Warning: {unit.name} did not run in the container: {failure}",
+            err=True,
+        )
+    click.echo(f"Run it with: tig {unit.name} ...")
+
+
+def run_build_state(manager, image, unit_name=None, clean=False):
+    """List or discard the locally built programs installed over the image."""
+    from .build import Overrides, image_id, stale_units
+
+    identifier = image_id(image)
+    overrides = Overrides(identifier)
+
+    if clean:
+        dropped = overrides.forget(unit_name)
+        if not dropped:
+            click.echo(
+                f"No locally built {unit_name} to clean."
+                if unit_name
+                else "No locally built programs to clean."
+            )
+            return
+        # The image's own program is only back in a container created afresh:
+        # the injected copy overwrote it in the container's filesystem.
+        removed = manager.shutdown()
+        click.echo(
+            f"Forgot {', '.join(dropped)} and removed {removed} container(s); "
+            f"the image's own programs are back."
+        )
+        return
+
+    units = overrides.load()
+    if not units:
+        click.echo(f"No locally built programs installed over {image}.")
+    for name, entry in sorted(units.items()):
+        click.echo(
+            f"{name}  {entry.get('path', '?')}  built {entry.get('built_at', '?')}"
+            f"  from {entry.get('source', '?')}"
+        )
+    stale = stale_units(identifier)
+    if stale:
+        click.echo(
+            f"Stale, built against an image no longer in use "
+            f"({', '.join(stale)}); rebuild them or run --build-clean."
+        )
+
+
 @click.command(
     cls=DynamicHelpCommand,
     context_settings=dict(
@@ -116,6 +218,77 @@ class DynamicHelpCommand(click.Command):
          "PATH (such as 'sort').",
 )
 @click.option(
+    "--build",
+    "build",
+    is_flag=True,
+    default=False,
+    help="Compile the VICAR program unit in the current directory in the "
+         "builder image, install it in the container, then exit.",
+)
+@click.option(
+    "--build-unit",
+    "build_unit",
+    default=None,
+    metavar="NAME",
+    help="Unit to build: its directory, or a source root above it, may be the "
+         "current directory. Implies --build. Also the first positional "
+         "argument, as in 'tig --build marsmesh'.",
+)
+@click.option(
+    "--build-source",
+    "build_source",
+    default=None,
+    metavar="PATH",
+    help="Directory to build from instead of the current one; implies --build.",
+)
+@click.option(
+    "--build-image",
+    "build_image_tag",
+    default=None,
+    metavar="TAG",
+    help="Instead of installing into the running container, build this image: "
+         "the runtime image plus one layer holding the program. Implies --build.",
+)
+@click.option(
+    "--builder-image",
+    "builder_image",
+    default=None,
+    metavar="IMAGE",
+    help="Image to compile in (default terrain-intelligence-generator:"
+         "opensource-builder, built by build-builder-image.sh).",
+)
+@click.option(
+    "--build-jobs",
+    "build_jobs",
+    type=int,
+    default=None,
+    metavar="N",
+    help="Parallel compile jobs for --build.",
+)
+@click.option(
+    "--build-list",
+    "build_list",
+    is_flag=True,
+    default=False,
+    help="List the locally built programs installed over the image, then exit.",
+)
+@click.option(
+    "--build-clean",
+    "build_clean",
+    is_flag=True,
+    default=False,
+    help="Forget locally built programs and remove the containers carrying "
+         "them, restoring the image's own. Scoped by --build-unit.",
+)
+@click.option(
+    "--build-force",
+    "build_force",
+    is_flag=True,
+    default=False,
+    help="With --build, proceed even when the builder and runtime images are "
+         "different VICAR releases.",
+)
+@click.option(
     "--status",
     "show_status",
     is_flag=True,
@@ -140,6 +313,15 @@ def main(
     shim,
     shim_dir,
     shim_force,
+    build,
+    build_unit,
+    build_source,
+    build_image_tag,
+    builder_image,
+    build_jobs,
+    build_list,
+    build_clean,
+    build_force,
     show_status,
     shutdown,
 ):
@@ -171,7 +353,30 @@ def main(
                     f"--shim writes commands and exits; run {other} separately."
                 )
 
-    lifecycle_only = shutdown or show_status
+    building = bool(
+        build or build_unit or build_source or build_image_tag or build_jobs
+    )
+    if building or build_list or build_clean:
+        # The first positional argument is normally a VICAR tool, so with
+        # --build it is read as the unit to build: 'tig --build marsmesh'.
+        if vicar_tool and not build_unit:
+            build_unit, vicar_tool = vicar_tool, None
+        if vicar_tool or args:
+            raise click.UsageError(
+                f"--build compiles and exits; it cannot also run "
+                f"'{vicar_tool or args[0]}'."
+            )
+        for option, other in (
+            (shim or shim_dir, "--shim"),
+            (show_status, "--status"),
+            (shutdown, "--shutdown"),
+        ):
+            if option:
+                raise click.UsageError(
+                    f"--build compiles and exits; run {other} separately."
+                )
+
+    lifecycle_only = shutdown or show_status or build_list or build_clean
     try:
         manager = ContainerManager(
             image,
@@ -219,6 +424,33 @@ def main(
                 f"on PATH, not files already in {directory}."
             )
         click.echo(f'Add to your shell profile: export PATH="{directory}:$PATH"')
+        return
+
+    if build_list or build_clean:
+        try:
+            run_build_state(manager, image, build_unit, clean=build_clean)
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
+        return
+
+    if building:
+        try:
+            run_build(
+                manager,
+                config,
+                image,
+                writable_paths,
+                unit_name=build_unit,
+                source=build_source,
+                image_tag=build_image_tag,
+                builder_image=builder_image,
+                jobs=build_jobs,
+                force=build_force,
+            )
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
+        finally:
+            manager.release_claim()
         return
 
     if show_status:

@@ -1,0 +1,55 @@
+#!/bin/tcsh -f
+#
+# Build one VICAR program unit with vimake and make.
+#
+# usage: vicar-build <unit> [source-dir] [build-dir]
+#
+# vimake is a csh alias defined by vicset2.csh, and csh expands aliases when it
+# parses a line, so it cannot be defined and used in one 'csh -c' string: this
+# has to be a script.
+#
+# With a source directory, files are refreshed into the build directory keeping
+# their timestamps, so make stays incremental across invocations and the source
+# directory keeps no object files.
+
+source $V2TOP/vicset1.csh
+source $V2TOP/vicset2.csh
+
+if ($# < 1) then
+    echo "usage: vicar-build <unit> [source-dir] [build-dir]"
+    exit 64
+endif
+
+set unit = "$1"
+set src = ""
+if ($# > 1) set src = "$2"
+set bld = "."
+if ($# > 2) set bld = "$3"
+
+if (! -d "$bld") then
+    echo "vicar-build: not a directory: $bld"
+    exit 66
+endif
+cd "$bld" || exit 66
+
+if ("$src" != "") then
+    if (! -d "$src") then
+        echo "vicar-build: not a directory: $src"
+        exit 66
+    endif
+    find "$src" -maxdepth 1 -type f -exec cp -p -u {} . \; || exit 66
+endif
+
+if (! -f "$unit.imake") then
+    echo "vicar-build: no $unit.imake to build"
+    exit 66
+endif
+
+vimake "$unit" || exit 1
+make -f "$unit.make" std
+if ($status != 0) exit $status
+
+if (! -x "$unit") then
+    echo "vicar-build: $unit was not produced; is this a PROGRAM unit?"
+    exit 1
+endif

@@ -191,6 +191,7 @@ class ContainerManager:
                 if self._reusable(existing):
                     try:
                         self._adopt(existing)
+                        self._apply_built_programs()
                         return
                     except docker.errors.APIError as e:
                         if not attempt:
@@ -209,6 +210,7 @@ class ContainerManager:
                 self.container = self.client.containers.run(
                     name=self.container_name, **run_kwargs
                 )
+                self._apply_built_programs()
                 self._reap_containers(keep=self.container_name)
                 return
             except docker.errors.ImageNotFound as e:
@@ -221,6 +223,34 @@ class ContainerManager:
                     f"Failed to start container from image {self.image}: "
                     f"{e.explanation or e}"
                 ) from e
+
+    def _apply_built_programs(self) -> None:
+        """Re-install programs built with --build into this container.
+
+        Injected programs live in the container's filesystem, and containers
+        are replaced routinely, so the recorded builds are re-applied whenever
+        one is created or adopted. A failure is reported and does not stop the
+        command: the container still holds the image's own programs.
+        """
+        if self.container is None:
+            return
+        # Imported here so invocations that never built anything do not pay
+        # for it, and so the build module can use this one.
+        from .build import apply_overrides
+
+        try:
+            installed = apply_overrides(
+                self.container_name, self.container.id, self.container.image.id
+            )
+        except TigError as e:
+            print(f"tig: {e}", file=sys.stderr)
+            return
+        if installed:
+            print(
+                f"tig: re-applied locally built program(s): "
+                f"{', '.join(installed)}",
+                file=sys.stderr,
+            )
 
     def _adopt(self, container: Any) -> None:
         """Use an existing container, starting it if it is stopped."""

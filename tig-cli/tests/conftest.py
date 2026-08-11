@@ -9,6 +9,7 @@ def isolated_config(tmp_path_factory, monkeypatch):
     empty.write_text("")
     monkeypatch.setenv("TIG_CONFIG", str(empty))
     for name in (
+        "TIG_BUILDER_IMAGE",
         "TIG_WRITABLE_PATHS",
         "TIG_DISABLE_PATH_TRANSLATION",
         "TIG_SELINUX_LABEL_DISABLE",

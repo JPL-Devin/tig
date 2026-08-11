@@ -57,6 +57,15 @@ tig label /data/scenes/image.vic
 | `--shim` | Write one command per VICAR tool into `~/.local/share/tig/shims`, then exit. See [Running tools unqualified](#running-tools-unqualified). |
 | `--shim-dir PATH` | Write those commands somewhere else; implies `--shim`. |
 | `--shim-force` | With `--shim`, also create commands whose names already exist on your `PATH`. |
+| `--build [UNIT]` | Compile a VICAR program unit from local source and install it in the container, then exit. See [Building from source](#building-from-source). |
+| `--build-unit NAME` | The unit to build; the same as the positional argument. Implies `--build`. |
+| `--build-source PATH` | Build from this directory instead of the current one; implies `--build`. |
+| `--build-image TAG` | Build an image (the runtime image plus one layer holding the program) instead of installing into the running container; implies `--build`. |
+| `--builder-image IMAGE` | Image to compile in. Defaults to `terrain-intelligence-generator:opensource-builder`. |
+| `--build-jobs N` | Parallel compile jobs. |
+| `--build-list` | List the locally built programs installed over the image, then exit. |
+| `--build-clean` | Forget them and remove the containers carrying them, restoring the image's own programs. Scoped by `--build-unit`. |
+| `--build-force` | Build even when the builder and runtime images are different VICAR releases. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |
 | `--help` | Show help, including the active container image and the config files in use. |
@@ -89,6 +98,7 @@ and loads only that file.
 ```toml
 # ~/.config/tig/config.toml or ./tig.toml
 image = "ghcr.io/my-org/custom-vicar:latest"
+builder_image = "terrain-intelligence-generator:opensource-builder"
 writable_paths = ["/data/scenes", "/scratch"]
 calibration_path = "~/mars_calibration_m20"
 disable_path_translation = false
@@ -98,6 +108,7 @@ selinux_label_disable = true
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `image` | string | `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource` | VICAR Docker image to run. |
+| `builder_image` | string | `terrain-intelligence-generator:opensource-builder` | Image `--build` compiles in. |
 | `writable_paths` | list of strings | `[]` | Host directories mounted read-write in the container. |
 | `calibration_path` | string | unset | Host directory with MARS/VISOR calibration files. Mounted read-only at `/usr/local/vicar/mars_calib`, and exported as `MARS_CONFIG_PATH` inside the container. `~` is expanded. |
 | `disable_path_translation` | boolean | `false` | Disable host→container path translation. |
@@ -108,6 +119,7 @@ selinux_label_disable = true
 | Variable | Overrides | Description |
 | --- | --- | --- |
 | `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
+| `TIG_BUILDER_IMAGE` | `builder_image` | Image `--build` compiles in. |
 | `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
 | `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. |
 | `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
@@ -139,6 +151,63 @@ Names that already exist on your `PATH` — VICAR ships a `sort`, a `patch` and 
 `size`, among others — are skipped and reported, so putting the directory first
 on `PATH` cannot shadow your system commands. Reach those as `tig sort ...`, or
 pass `--shim-force` if you want the VICAR ones to win.
+
+## Building from source
+
+`tig --build` compiles a VICAR program from your own source and makes it the
+program tig runs, so a patch can be tested without a native VICAR install:
+
+```bash
+cd mars/src/prog/marsmesh     # your copy, with marsmesh.imake in it
+tig --build                   # compile, then install it in the container
+tig marsmesh INP=in.vic OUT=out.obj
+```
+
+From a source root, name the unit and tig finds it below:
+
+```bash
+cd ~/vicar-work               # holds mars/src/prog/marsxyz/marsxyz.imake
+tig --build marsxyz
+```
+
+Compilation happens in a separate builder image, because the runtime image has
+no compilers and none of the headers, imakefiles or external archives a build
+needs. Build it once per machine (it is not published: the VICAR release
+tarballs are yours to fetch):
+
+```bash
+terrain-intelligence-generator/build-builder-image.sh
+```
+
+What `--build` does: runs `vimake` and `make` on `<unit>.imake` in the builder,
+with your source mounted read-only and objects kept in
+`~/.local/share/tig/builds` rather than your source tree; copies the program —
+and `<unit>.pdf`, its TAE parameter definition, when there is one — over the
+image's own at `/usr/local/vicar/dev/{p2,p3,mars}/lib/x86-64-linx/<unit>`; adds
+a `/usr/local/bin` wrapper for a program the image does not already have; and
+checks it loads in the runtime container.
+
+Installed programs live in the container, not the image, and tig replaces
+containers routinely, so each build is recorded and re-applied to a fresh
+container automatically:
+
+```bash
+tig --build-list    # gen  /usr/local/vicar/dev/p2/lib/x86-64-linx/gen  built 2026-08-11T19:17:27Z  from ~/src/gen
+tig --build-clean   # forget them; the image's own programs are back
+```
+
+For something shareable or reproducible — CI, Airflow, a colleague — build an
+image instead. It is the runtime image plus one layer:
+
+```bash
+tig --build-image my-vicar:marsmesh-fix
+CONTAINER_IMAGE=my-vicar:marsmesh-fix tig marsmesh INP=in.vic OUT=out.obj
+```
+
+Only `PROGRAM` units are supported: `SUBROUTINE` units build into VICAR's link
+libraries, and changing one means rebuilding everything that links it. See
+[Building from source](../docs/demos/building-from-source.md) for a worked
+example.
 
 ## Container reuse
 

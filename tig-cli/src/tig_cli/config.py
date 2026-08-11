@@ -20,6 +20,7 @@ PROJECT_CONFIG_NAME = "tig.toml"
 
 KNOWN_KEYS = frozenset({
     "image",
+    "builder_image",
     "writable_paths",
     "disable_path_translation",
     "calibration_path",
@@ -44,6 +45,7 @@ class Config:
     def __init__(
         self,
         image: str | None = None,
+        builder_image: str | None = None,
         writable_paths: list[str] | None = None,
         disable_path_translation: bool | None = None,
         calibration_path: str | None = None,
@@ -51,6 +53,7 @@ class Config:
         sources: list[Path] | None = None,
     ):
         self.image = image
+        self.builder_image = builder_image
         self.writable_paths: list[str] = writable_paths or []
         self.disable_path_translation = disable_path_translation
         self.calibration_path = calibration_path
@@ -131,6 +134,12 @@ def _apply(config: Config, data: dict, path: Path) -> None:
         if not isinstance(value, str):
             raise ConfigError(f"{path}: 'image' must be a string.")
         config.image = value
+
+    if "builder_image" in data:
+        value = data["builder_image"]
+        if not isinstance(value, str):
+            raise ConfigError(f"{path}: 'builder_image' must be a string.")
+        config.builder_image = value
 
     if "writable_paths" in data:
         value = data["writable_paths"]
