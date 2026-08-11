@@ -211,7 +211,7 @@ def _prepare_warm_path(engine, plan: _Plan) -> None:
     """Get the in-container runner up, now that the command is done."""
     if broker.preferred():
         broker.ensure_running(
-            engine, plan.name, plan.home, plan.runtime.name
+            engine, plan.name, plan.home, plan.runtime.executable
         )
         return
     dispatch.ensure_running(engine, plan.name, plan.home)

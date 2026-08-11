@@ -47,7 +47,8 @@ def host_address() -> str:
     """
     if sys.platform != "darwin":
         return "127.0.0.1"
-    return host_gateway(env_runtime() or "docker")
+    # The runtime may be named by path; the gateway goes by the command.
+    return host_gateway(os.path.basename(env_runtime() or "docker"))
 
 
 # Sent to a client whose command was never started, telling it to run the

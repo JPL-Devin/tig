@@ -169,16 +169,21 @@ class Runtime:
         no such API, and for a runtime whose service is not running; their
         callers fall back to the command line.
 
+        ``DOCKER_HOST`` is honoured for Docker only: another runtime's
+        containers are not in that daemon, and answers about them from it
+        would be about containers that are not the ones tig created.
+
         Raises:
             TigError: if the host names an endpoint that cannot be resolved.
         """
-        host = os.environ.get("DOCKER_HOST")
-        if host:
-            return host
         if self.name == "podman":
             return _podman_host()
         if self.name == "docker":
-            return _docker_context_host() or _existing_socket(DOCKER_SOCKET)
+            return (
+                os.environ.get("DOCKER_HOST")
+                or _docker_context_host()
+                or _existing_socket(DOCKER_SOCKET)
+            )
         return None
 
 
@@ -190,10 +195,16 @@ def _podman_host() -> str | None:
     """Podman's Docker-compatible socket, if its service is running.
 
     Rootless Podman puts it under the runtime directory, the system service
-    under /run; ``CONTAINER_HOST`` overrides both, as for Podman's own client.
+    under /run; ``CONTAINER_HOST`` overrides both, as for Podman's own client,
+    and so does ``DOCKER_HOST`` when it names a Podman socket.
     """
     host = os.environ.get("CONTAINER_HOST")
     if host:
+        return host
+    # Set by the Podman socket's own users, and what tools expecting Docker
+    # are pointed at on a Podman host.
+    host = os.environ.get("DOCKER_HOST")
+    if host and PODMAN_SOCKET_SUBPATH in host:
         return host
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     candidates = []

@@ -120,7 +120,25 @@ def test_docker_without_a_socket(monkeypatch):
 def test_the_environment_names_the_endpoint(monkeypatch):
     monkeypatch.setenv("DOCKER_HOST", "tcp://10.0.0.1:2375")
 
-    assert Runtime("podman", "/usr/bin/podman").api_host() == "tcp://10.0.0.1:2375"
+    assert Runtime("docker", "/usr/bin/docker").api_host() == "tcp://10.0.0.1:2375"
+
+
+def test_another_runtime_ignores_a_docker_daemon_address(monkeypatch):
+    """That daemon holds none of the containers this runtime created, so
+    what it says about them is about something else entirely."""
+    monkeypatch.setenv("DOCKER_HOST", "tcp://10.0.0.1:2375")
+
+    assert Runtime("podman", "/usr/bin/podman").api_host() is None
+    assert Runtime("nerdctl", "/usr/bin/nerdctl").api_host() is None
+
+
+def test_podman_takes_a_docker_host_naming_its_own_socket(monkeypatch):
+    """Tools expecting Docker are pointed at Podman's socket this way."""
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/user/1000/podman/podman.sock")
+
+    assert Runtime("podman", "/usr/bin/podman").api_host() == (
+        "unix:///run/user/1000/podman/podman.sock"
+    )
 
 
 def test_docker_follows_its_context(monkeypatch, tmp_path):

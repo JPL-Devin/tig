@@ -181,6 +181,10 @@ def ensure_running(
 
     Called after a command has been run the slow way, so getting the broker
     and its agent up is never on the critical path of a command.
+
+    Args:
+        runtime: The runtime's command, as the path it was found at, so the
+            broker settles on the same runtime whether or not it is on PATH.
     """
     if not usable():
         return
@@ -249,8 +253,9 @@ def _spawn(container: str, home: str, runtime: str) -> None:
     """Start a broker for this container in the background.
 
     Nothing waits for it: it is ready within a moment, and until then
-    commands simply go the way they went before it existed. The runtime is
-    named in its environment so it settles on the same one as this process.
+    commands simply go the way they went before it existed. The runtime's
+    command is named in its environment so it settles on the same one as
+    this process.
     """
     import subprocess
 

@@ -382,9 +382,17 @@ def test_a_spawned_broker_is_told_which_runtime_to_use(home, monkeypatch):
         subprocess, "Popen", lambda *args, **kwargs: calls.append(kwargs)
     )
 
-    broker._spawn("tig-vicar-abc", str(home), "podman")
+    broker._spawn("tig-vicar-abc", str(home), "/opt/podman/bin/podman")
 
-    assert calls[0]["env"]["TIG_CONTAINER_RUNTIME"] == "podman"
+    assert calls[0]["env"]["TIG_CONTAINER_RUNTIME"] == "/opt/podman/bin/podman"
+
+
+def test_the_agent_dials_a_runtime_named_by_path_by_its_gateway(monkeypatch):
+    """A runtime off PATH is passed on as a path, which names no gateway."""
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "/opt/homebrew/bin/podman")
+
+    assert server.host_address() == "host.containers.internal"
 
 
 def test_the_agent_dials_the_gateway_of_the_runtime_in_use(monkeypatch):
