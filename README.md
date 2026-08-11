@@ -132,12 +132,12 @@ So the scope is unambiguous:
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
   it per mission).
-- No worked example for panoramas/mosaics or co-registration, and none for
-  `marsgreach` reachability, whose input-producing program is not in the image —
-  those programs are present, the demos are not. Automated checks cover the CLI,
+- No worked example for co-registration, and none for `marsgreach`
+  reachability, whose input-producing program is not in the image — those
+  programs are present, the demos are not. Automated checks cover the CLI,
   format conversion, and the presence of the MARS commands; the end-to-end
-  product paths that are demonstrated are the mesh demo, the surface
-  characteristics demo and the Airflow example.
+  product paths that are demonstrated are the mesh demo, the panorama mosaic
+  demo, the surface characteristics demo and the Airflow example.
 
 ## Quick Start
 
