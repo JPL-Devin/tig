@@ -64,6 +64,10 @@ UNIT_KINDS = ("PROGRAM", "SUBROUTINE", "PROCEDURE", "MODULE")
 # reach mars/src/prog/<unit> or p2/prog/<unit> from a source root.
 SEARCH_DEPTH = 6
 
+# Unit names end up in shell and Dockerfile commands, so nothing but what a
+# VICAR program name can be is accepted.
+UNIT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+
 DOCKER_TIMEOUT = 60
 VERIFY_TIMEOUT = 120
 
@@ -140,6 +144,8 @@ def parse_imakefile(path: Path) -> Tuple[str, str, Optional[str]]:
         )
     if not name:
         raise TigError(f"{path}: '#define {kind}' names no unit.")
+    if not UNIT_NAME.match(name):
+        raise TigError(f"{path}: {name!r} is not a valid VICAR unit name.")
     return name, kind, subsystem
 
 
@@ -176,6 +182,8 @@ def find_unit(source: Path, name: Optional[str] = None) -> Unit:
     source = Path(source).resolve()
     if not source.is_dir():
         raise TigError(f"Not a directory: {source}")
+    if name and not UNIT_NAME.match(name):
+        raise TigError(f"{name!r} is not a valid VICAR unit name.")
 
     if name:
         candidates = [source / f"{name}.imake"]
@@ -332,6 +340,9 @@ class Overrides:
             "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         self.save(units)
+        # A newer build must reach every container, including those already
+        # patched with the previous one.
+        shutil.rmtree(self.applied_dir, ignore_errors=True)
 
     def forget(self, name: Optional[str] = None) -> List[str]:
         """Drop one override, or all of them; returns the names dropped."""
@@ -368,6 +379,26 @@ class Overrides:
         except OSError:
             # Unwritable state: the overrides are simply re-applied next time.
             pass
+
+
+def forget_stale(current_image_id: str) -> List[str]:
+    """Delete the recorded state of every image other than the one in use."""
+    current = Overrides(current_image_id).directory
+    dropped = []
+    try:
+        directories = [d for d in state_root().iterdir() if d.is_dir()]
+    except OSError:
+        return dropped
+    for directory in directories:
+        if directory == current or directory.name == "objects":
+            continue
+        try:
+            data = json.loads((directory / "manifest.json").read_text())
+        except (OSError, ValueError):
+            continue
+        dropped.extend(sorted((data.get("units") or {})))
+        shutil.rmtree(directory, ignore_errors=True)
+    return dropped
 
 
 def stale_units(current_image_id: str) -> List[str]:
@@ -414,14 +445,17 @@ def copy_into_container(container: str, source: Path, destination: str) -> None:
 
 
 # Gives a newly added program the same wrapper the image generates for its own
-# programs, by copying one from the same library directory: the environment a
-# VICAR program needs is then whatever that subsystem's programs already use.
+# programs, preferring a template from the same library directory and falling
+# back to any VICAR wrapper (the image only wraps p2, mars, tae53 and gui).
 _WRAPPER_SCRIPT = r"""set -e
 unit="$1"; lib_dir="$2"; program="$3"
 [ -e "$WRAPPER_DIR/$unit" ] && exit 0
 template=$(grep -l "vicar-run $lib_dir/" "$WRAPPER_DIR"/* 2>/dev/null | head -1)
-[ -n "$template" ] || { echo "no wrapper to copy in $lib_dir" >&2; exit 1; }
-sed "s|vicar-run $lib_dir/[^ ]*|vicar-run $program|" "$template" > "$WRAPPER_DIR/$unit"
+if [ -z "$template" ]; then
+    template=$(grep -l "vicar-run /" "$WRAPPER_DIR"/* 2>/dev/null | head -1)
+fi
+[ -n "$template" ] || { echo "no VICAR wrapper to copy in $WRAPPER_DIR" >&2; exit 1; }
+sed "s|vicar-run [^ ]*|vicar-run $program|" "$template" > "$WRAPPER_DIR/$unit"
 chmod 755 "$WRAPPER_DIR/$unit"
 """.replace("$WRAPPER_DIR", WRAPPER_DIR)
 
@@ -559,10 +593,17 @@ def install(
 class Builder:
     """Compiles one VICAR unit in the builder image."""
 
-    def __init__(self, builder_image: str, runtime_image: str, force: bool = False):
+    def __init__(
+        self,
+        builder_image: str,
+        runtime_image: str,
+        force: bool = False,
+        selinux_label_disable: bool = False,
+    ):
         self.builder_image = builder_image
         self.runtime_image = runtime_image
         self.force = force
+        self.selinux_label_disable = selinux_label_disable
 
     def check_images(self) -> None:
         """Fail early on a missing builder image or a VICAR version mismatch."""
@@ -605,6 +646,9 @@ class Builder:
         ]
         if jobs:
             command += ["-e", f"MAKEFLAGS=-j{jobs}"]
+        if self.selinux_label_disable:
+            # Without it, SELinux denies the source and object bind mounts.
+            command += ["--security-opt", "label=disable"]
         if os.name == "posix" and sys.platform != "darwin":
             # Docker Desktop maps ownership; elsewhere the build would leave
             # root-owned objects and an unreadable executable behind.
@@ -647,8 +691,8 @@ def build_image(
         (directory / wrapper_script).write_text(_WRAPPER_SCRIPT)
         lines += [
             f"COPY {wrapper_script} /tmp/{wrapper_script}",
-            f"RUN sh /tmp/{wrapper_script} {unit.name} {unit.container_lib_dir} "
-            f"{unit.container_path} && rm -f /tmp/{wrapper_script}",
+            f"RUN sh /tmp/{wrapper_script} '{unit.name}' '{unit.container_lib_dir}' "
+            f"'{unit.container_path}' && rm -f /tmp/{wrapper_script}",
         ]
         (directory / "Dockerfile").write_text("\n".join(lines) + "\n")
 

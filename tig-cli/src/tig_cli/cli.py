@@ -76,7 +76,10 @@ def run_build(
 
     unit = find_unit(Path(source) if source else Path.cwd(), unit_name)
     builder = Builder(
-        resolve_builder_image(config.builder_image, builder_image), image, force=force
+        resolve_builder_image(config.builder_image, builder_image),
+        image,
+        force=force,
+        selinux_label_disable=bool(manager.selinux_label_disable),
     )
     builder.check_images()
 
@@ -113,13 +116,15 @@ def run_build(
 
 def run_build_state(manager, image, unit_name=None, clean=False):
     """List or discard the locally built programs installed over the image."""
-    from .build import Overrides, image_id, stale_units
+    from .build import Overrides, forget_stale, image_id, stale_units
 
     identifier = image_id(image)
     overrides = Overrides(identifier)
 
     if clean:
         dropped = overrides.forget(unit_name)
+        if not unit_name:
+            dropped += forget_stale(identifier)
         if not dropped:
             click.echo(
                 f"No locally built {unit_name} to clean."
