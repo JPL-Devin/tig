@@ -252,10 +252,24 @@ class ContainerManager:
         try:
             self.runtime.run("rm", "--force", name)
         except CommandFailed as e:
-            if self._inspect(name) is None:
+            if self._gone(name):
                 # Removed by a concurrent invocation, which is all this wanted.
                 return
             raise TigError(f"Failed to replace container {name}: {e}") from e
+
+    def _gone(self, name: str) -> bool:
+        """Whether the runtime says there is no such container.
+
+        Only its own answer counts: a runtime that cannot be asked at all
+        says nothing about whether the container is still there.
+        """
+        try:
+            self.runtime.inspect("container", name)
+        except CommandFailed:
+            return True
+        except TigError:
+            return False
+        return False
 
     def _claim_dir(self) -> Path:
         return Claim.directory()

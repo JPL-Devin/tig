@@ -21,7 +21,7 @@ from tig_cli.container import (
     DEFAULT_IMAGE,
 )
 from tig_cli.engine import Engine, EngineError, EngineNotFound
-from tig_cli.runtime import CommandFailed, Runtime
+from tig_cli.runtime import CommandFailed, Runtime, RuntimeCommandError
 
 IMAGE = "test-image:latest"
 IMAGE_ID = "sha256:image"
@@ -528,6 +528,20 @@ def test_ensure_container_tolerates_concurrent_removal(home_dir):
         manager.ensure_container([])
 
     assert runtime.created == [name]
+
+
+def test_replacing_a_container_reports_a_runtime_that_cannot_be_asked(home_dir):
+    """A removal that failed is only forgiven where the runtime says the
+    container has gone, not where it could not answer at all."""
+    runtime = FakeRuntime({f"{CONTAINER_PREFIX}-old": described()})
+    runtime.fail("rm", message="permission denied")
+    runtime.failures[("container", "inspect")] = RuntimeCommandError(
+        "Failed to run docker: [Errno 111] Connection refused"
+    )
+    manager = make_manager(home_dir, runtime=runtime)
+
+    with pytest.raises(TigError, match="Failed to replace container"):
+        manager._remove(f"{CONTAINER_PREFIX}-old")
 
 
 def test_ensure_container_failure_is_user_facing(home_dir):
