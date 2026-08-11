@@ -147,12 +147,13 @@ The navigation table is an input, not a rewritten image:
 
 ```bash
 tig marsmos inp=frames.lis out=mosaic.img navtable=pointing.nav
-tig marsmap inp=frames.lis out=mosaic.img navtable=pointing.nav projection=CYLINDRICAL
+tig env HWLOC_COMPONENTS=-x86 marsmap inp=frames.lis out=mosaic.img \
+  navtable=pointing.nav projection=CYLINDRICAL
 ```
 
 `marsmos` mosaics under a synthetic wider-field camera model derived from the
-inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection (see the
-`HWLOC_COMPONENTS` note below if it dies with a floating-point exception);
+inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection (the
+`HWLOC_COMPONENTS=-x86` prefix is the MPI/hwloc workaround explained below);
 `marsortho` produces orthographic mosaics and DEMs from XYZ data. `marsrelabel`
 copies a product with an updated label (`-cm` camera model, `-pm` pointing model,
 `navtable=`) — its `.pdf` states the image data is unchanged and only the label is
@@ -240,7 +241,7 @@ Reading those numbers honestly:
   adjusted ground points, not a measure of registration quality.
 - **These numbers are not exactly reproducible.** Every figure in the table above
   is one run. Across repeat runs on identical inputs the table's row values moved
-  by a few percent — about 312 tiepoints of which about 180 are kept, about
+  by a few percent — about 312 tiepoints of which 180–185 are kept, about
   37.4 px initial and 4.6–4.9 px final error, about 300 `marsnav2` tracks with a
   mean near 0.37 px and a median near 0.27 px. Treat them as magnitudes, not
   digits. What was identical in every run: the eight overlap pairs, the
