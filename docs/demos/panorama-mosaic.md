@@ -173,12 +173,12 @@ measures them and corrects for them:
 ```bash
 # Overlap statistics: a full mosaic pass, zoomed out, that writes statistics
 # instead of caring about the picture
-tig env HWLOC_COMPONENTS=-x86 marsmap inp=frames.txt out=overlap_mosaic.img \
+tig marsmap inp=frames.txt out=overlap_mosaic.img \
   ovr_out=overlaps.xml -norad -nogrid zoom=0.25 projection=cylindrical \
   leftaz=0 rightaz=360
 
 # Solve one gain per frame
-tig env HWLOC_COMPONENTS=-x86 marsbrt inp=frames.txt in_ovr=overlaps.xml \
+tig marsbrt inp=frames.txt in_ovr=overlaps.xml \
   out=brtcorr.xml out_solution_id=TIGDEMO do_what=DO_MULT
 ```
 
@@ -208,11 +208,11 @@ tig marsrad inp=NLF_0300_0693569889_022FDR_N0090000NCAM00501_0A0295J01.IMG \
 # ... one per frame, then list them
 ls *.rad.img > frames.txt
 
-tig env HWLOC_COMPONENTS=-x86 marsmap inp=frames.txt out=overlap_mosaic.img \
+tig marsmap inp=frames.txt out=overlap_mosaic.img \
   ovr_out=overlaps.xml -norad -nogrid zoom=0.25 leftaz=0 rightaz=360
-tig env HWLOC_COMPONENTS=-x86 marsbrt inp=frames.txt in_ovr=overlaps.xml \
+tig marsbrt inp=frames.txt in_ovr=overlaps.xml \
   out=brtcorr.xml out_solution_id=TIGDEMO do_what=DO_MULT
-tig env HWLOC_COMPONENTS=-x86 marsmap inp=frames.txt out=panorama.img \
+tig marsmap inp=frames.txt out=panorama.img \
   brtcorr=brtcorr.xml -norad -nogrid projection=cylindrical leftaz=0 rightaz=360
 
 tig stretch inp=panorama.img out=panorama_stretched.img -astretch percent=2 \
@@ -222,9 +222,6 @@ tig vicario panorama_stretched.img panorama.png
 
 `marsmap`, `marsbrt` and `marsmos` accept either a list of files or, as here, a
 text file with one filename per line.
-
-On the `tig env HWLOC_COMPONENTS=-x86` prefix, see
-[marsmap dies immediately](#marsmap-dies-immediately-with-no-output) below.
 
 ## What the mosaic label carries
 
@@ -299,11 +296,13 @@ five frames.
 
 ### marsmap dies immediately with no output
 
-`marsmap` and `marsremos` are linked against MPI, and `MPI_Init` asks hwloc to
-discover the machine topology before the program prints anything. The hwloc
-bundled in the image divides by zero in its x86 backend on some host CPUs, so
-the program dies with SIGFPE at startup — no message, no VICAR banner, exit code
-136:
+Fixed in the image; only images built before that fix landed behave this way.
+
+`marsmap`, `marsremos`, `marscor2` and `marsint` are linked against MPI, and
+`MPI_Init` asks hwloc to discover the machine topology before the program prints
+anything. The hwloc bundled in the image divides by zero in its x86 backend on
+some host CPUs, so the program dies with SIGFPE at startup — no message, no
+VICAR banner, exit code 136:
 
 ```
 Floating point exception (core dumped)
@@ -311,15 +310,15 @@ Floating point exception (core dumped)
 
 A backtrace on an affected host puts the fault in
 `look_proc -> hwloc_look_x86 -> hwloc_x86_discover -> hwloc_topology_load ->
-MPIR_Init_thread -> PMPI_Init`. Disabling that one backend makes hwloc read the
-topology from Linux sysfs instead, which is all a single-node run needs:
+MPIR_Init_thread -> PMPI_Init`. The image now sets `HWLOC_COMPONENTS=-x86`,
+which makes hwloc read the topology from Linux sysfs instead — all a single-node
+run needs. On an older image, set it per invocation:
 
 ```bash
 tig env HWLOC_COMPONENTS=-x86 marsmap ...
 ```
 
-`demo-panorama-mosaic.sh` always sets it; it is harmless where `marsmap` already
-works. Other MARS programs are unaffected — they do not call `MPI_Init`.
+Other MARS programs are unaffected — they do not call `MPI_Init`.
 
 ### The PNG is nearly black
 

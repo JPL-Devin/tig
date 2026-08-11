@@ -257,6 +257,46 @@ docker run --rm ${PLATFORM_FLAG} ${IMAGE_TAG} bash -c '
 '
 test_result $? "MARS commands available"
 
+# Test 15: MPI-linked programs start
+# These four are the programs that link MPICH, whose bundled hwloc used to kill
+# them with SIGFPE inside MPI_Init on some host CPUs; the image now excludes
+# hwloc's x86 backend. Reaching TAE means MPI_Init returned: the wrappers report
+# 1 when TAE rejects an invocation, and >128 when a signal killed the program.
+print_test_header "Test 15: MPI-linked programs reach TAE argument checking"
+MPI_PROGRAMS="marsmap marscor2 marsint marsremos"
+MPI_OK=true
+for cmd in ${MPI_PROGRAMS}; do
+    docker run --rm ${PLATFORM_FLAG} ${IMAGE_TAG} bash -c "${cmd} > /dev/null 2>&1"
+    CODE=$?
+    if [ ${CODE} -eq 1 ]; then
+        echo -e "${GREEN}✓${NC} ${cmd} exits 1 (TAE rejected the invocation)"
+    else
+        echo -e "${RED}✗${NC} ${cmd} exits ${CODE}, expected 1 (>128 means a signal killed it)"
+        MPI_OK=false
+    fi
+done
+
+# The fix is an image environment variable, so it also has to survive docker exec,
+# which is how tig runs programs in a long-lived container.
+docker run -d --name vicar-mpi-test ${PLATFORM_FLAG} ${IMAGE_TAG} tail -f /dev/null > /dev/null 2>&1
+sleep 2
+docker exec vicar-mpi-test bash -c 'marsmap > /dev/null 2>&1'
+CODE=$?
+docker stop vicar-mpi-test > /dev/null 2>&1
+docker rm vicar-mpi-test > /dev/null 2>&1
+if [ ${CODE} -eq 1 ]; then
+    echo -e "${GREEN}✓${NC} marsmap exits 1 under docker exec too"
+else
+    echo -e "${RED}✗${NC} marsmap exits ${CODE} under docker exec, expected 1"
+    MPI_OK=false
+fi
+
+if [ "${MPI_OK}" = true ]; then
+    test_result 0 "MPI-linked programs start instead of dying on a signal"
+else
+    test_result 1 "An MPI-linked program did not reach TAE argument checking"
+fi
+
 # Cleanup
 rm -rf ${TEST_WORKSPACE}
 echo ""

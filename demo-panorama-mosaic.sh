@@ -17,12 +17,6 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# The hwloc bundled in the image divides by zero in its x86 backend on some
-# host CPUs, so MPI_Init kills marsmap with SIGFPE before it prints anything.
-# Disabling that backend falls back to sysfs. See docs/demos/panorama-mosaic.md.
-marsmap() { tig env HWLOC_COMPONENTS=-x86 marsmap "$@"; }
-marsbrt() { tig env HWLOC_COMPONENTS=-x86 marsbrt "$@"; }
-
 # Find calibration files using helper script
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"

@@ -1,6 +1,6 @@
 ---
 name: tig-demo-testing
-description: How to run and verify the tig VICAR demo shell scripts (mesh, panorama mosaic, co-registration) end to end on a Linux box, including calibration setup, path translation inside list files, the hwloc/MPI workaround, and how to visually check the generated imagery.
+description: How to run and verify the tig VICAR demo shell scripts (mesh, panorama mosaic, co-registration) end to end on a Linux box, including calibration setup, path translation inside list files, the MPI/hwloc startup crash on older images, and how to visually check the generated imagery.
 ---
 
 # Testing tig demo scripts (CLI, image-producing)
@@ -32,13 +32,13 @@ container-visible paths: `$HOME` is mounted at its host path, everything else is
 reachable in the container. Getting this wrong shows up as `Unable to create file model for input 0`
 followed by `** ABEND called **`, so test any list-driven demo with inputs outside `$HOME`.
 
-## Known host issue: MPI/hwloc SIGFPE
-`marsmap` and `marsremos` call `MPI_Init`, and the bundled hwloc divides by zero in its x86 backend
-on some host CPUs, so they die with `Floating point exception (core dumped)` (exit 136) before any
-output. Workaround, already used by `demo-panorama-mosaic.sh`:
-`tig env HWLOC_COMPONENTS=-x86 marsmap ...`. If a MARS step mysteriously produces no output, run it
-bare to see whether this is the cause. Other MARS programs (`marsrad`, `marsmos`, `stretch`,
-`vicario`) do not need it.
+## MPI/hwloc SIGFPE (fixed in the image)
+`marsmap`, `marsremos`, `marscor2` and `marsint` call `MPI_Init`, and the bundled hwloc divides by
+zero in its x86 backend on some host CPUs, so on an older image they die with `Floating point
+exception (core dumped)` (exit 136) before any output. The image now sets `HWLOC_COMPONENTS=-x86`
+itself, so no per-invocation workaround is needed; on an image predating that, prefix the run with
+`tig env HWLOC_COMPONENTS=-x86`. If a MARS step mysteriously produces no output and exits 136, check
+that `tig printenv HWLOC_COMPONENTS` shows `-x86`.
 
 ## Verifying image output without a browser
 Do not judge success by exit code / file size alone; VICAR tools often exit non-zero on success and
