@@ -1,4 +1,4 @@
-"""Tests for the warm path that runs commands without click or the Docker SDK."""
+"""Tests for the warm path that runs commands without click or a runtime CLI."""
 import os
 import signal
 from unittest.mock import MagicMock, patch
@@ -7,17 +7,18 @@ import pytest
 
 from tig_cli import fast
 from tig_cli.engine import Engine, EngineUnavailable
+from tig_cli.runtime import Runtime
 from tig_cli.spec import (
     EXEC_ID_ENV,
-    build_run_kwargs,
-    build_volume_mounts,
+    build_mounts,
+    build_run_spec,
     container_display,
-    container_name_for,
     forwarded_signals,
 )
 
 IMAGE = "test-image:latest"
 IMAGE_ID = "sha256:image"
+RUNTIME = Runtime("docker", "/usr/bin/docker")
 
 
 @pytest.fixture
@@ -36,14 +37,18 @@ def host(monkeypatch, tmp_path):
     # Which in-container runner is preferred is the host's business, not
     # these tests'; they say what the warm path does with the one it picks.
     monkeypatch.setattr(fast.broker, "preferred", lambda: False)
+    # The runtime is stubbed: which one the host has is not what these test.
+    monkeypatch.setattr(
+        Runtime, "detect", classmethod(lambda cls, config=None: RUNTIME)
+    )
     monkeypatch.chdir(home)
     return home
 
 
 def expected_name(home):
     """The container name both paths derive for this configuration."""
-    volumes = build_volume_mounts(str(home), [])
-    return container_name_for(build_run_kwargs(IMAGE, volumes, str(home)))
+    mounts = build_mounts(str(home), [])
+    return build_run_spec(IMAGE, mounts, str(home)).container_name()
 
 
 @pytest.fixture
@@ -56,7 +61,9 @@ def engine(monkeypatch):
     }
     fake.inspect_image.return_value = {"Id": IMAGE_ID}
     fake.exec_command.return_value = 0
-    monkeypatch.setattr(Engine, "detect", classmethod(lambda cls: fake))
+    monkeypatch.setattr(
+        Engine, "detect", classmethod(lambda cls, runtime=None: fake)
+    )
     return fake
 
 
@@ -70,7 +77,7 @@ def test_runs_in_the_container_the_cli_would_use(host, engine):
     assert name == expected_name(host)
     assert command == ["vicar", "in.img"]
     assert workdir == os.path.realpath(host)
-    assert env["DISPLAY"] == container_display()
+    assert env["DISPLAY"] == container_display(RUNTIME.name)
     # Every process of this invocation carries it, so a signal can find them.
     assert env[EXEC_ID_ENV]
 
@@ -136,8 +143,8 @@ def test_declines_when_the_image_was_repulled(host, engine):
     engine.exec_command.assert_not_called()
 
 
-def test_declines_when_the_daemon_cannot_be_driven(host, monkeypatch):
-    def unavailable(cls):
+def test_declines_when_the_runtime_cannot_be_driven(host, monkeypatch):
+    def unavailable(cls, runtime=None):
         raise EngineUnavailable("remote daemon")
 
     monkeypatch.setattr(Engine, "detect", classmethod(unavailable))
@@ -166,7 +173,7 @@ def test_prefers_the_dispatcher_when_it_answers(host, engine, monkeypatch):
     assert home == str(host)
     assert command == ["vicar", "in.img"]
     assert workdir == os.path.realpath(host)
-    assert env == {"DISPLAY": container_display()}
+    assert env == {"DISPLAY": container_display(RUNTIME.name)}
 
 
 def test_prefers_the_broker_where_it_is_the_one_that_can_serve(

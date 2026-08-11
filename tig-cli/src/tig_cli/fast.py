@@ -2,12 +2,12 @@
 
 This is the case that dominates a terrain pipeline - the container exists, so
 all that is needed is to start one command in it. Getting there without
-importing click or the Docker SDK, without spawning the ``docker`` CLI and,
-where the dispatcher can be used, without talking to the Docker daemon at all,
-is what keeps a tig command in the tens of milliseconds.
+importing click, without spawning the runtime's CLI and, where the dispatcher
+can be used, without talking to the runtime at all, is what keeps a tig command
+in the tens of milliseconds.
 
 Whenever anything is not exactly as expected - no container yet, a different
-image, an unusual Docker setup, options that need real parsing - :func:`run`
+image, a runtime with no API socket, options that need real parsing - :func:`run`
 returns ``None`` and the full :mod:`tig_cli.cli` path takes over. It never
 returns ``None`` after a command has started.
 """
@@ -22,14 +22,14 @@ import uuid
 from . import broker, dispatch
 from .config import ConfigError, load_config
 from .path_translator import PathTranslator
+from .runtime import Runtime
 from .spec import (
     EXEC_ID_ENV,
     Claim,
     TigError,
-    build_run_kwargs,
-    build_volume_mounts,
+    build_mounts,
+    build_run_spec,
     container_display,
-    container_name_for,
     forwarded_signals,
     get_calibration_path,
     get_container_image,
@@ -92,13 +92,15 @@ class _Plan:
         home: str,
         command: list[str],
         workdir: str,
+        runtime: Runtime,
     ):
         self.name = name
         self.image = image
         self.home = home
         self.command = command
         self.workdir = workdir
-        self.env = {"DISPLAY": container_display()}
+        self.runtime = runtime
+        self.env = {"DISPLAY": container_display(runtime.name)}
 
 
 def _plan(tool: str, args: list[str]) -> _Plan:
@@ -106,9 +108,10 @@ def _plan(tool: str, args: list[str]) -> _Plan:
 
     Purely local: the same inputs :mod:`tig_cli.container` creates a
     container from also name it, so which container to address is known
-    without asking the daemon anything.
+    without asking the runtime anything.
     """
     config = load_config()
+    runtime = Runtime.detect(config)
     image = get_container_image(config)
     calibration_path = resolve_calibration_path(get_calibration_path(config))
     label_disable = resolve_selinux_label_disable(config)
@@ -116,16 +119,16 @@ def _plan(tool: str, args: list[str]) -> _Plan:
         label_disable = selinux_enforcing()
 
     home = home_directory()
-    volumes = build_volume_mounts(
+    mounts = build_mounts(
         home, resolve_writable_paths(config), calibration_path
     )
-    run_kwargs = build_run_kwargs(
-        image, volumes, home, calibration_path, label_disable
+    spec = build_run_spec(
+        image, mounts, home, calibration_path, label_disable, runtime.name
     )
-    name = container_name_for(run_kwargs)
+    name = spec.container_name()
 
     if resolve_disable_path_translation(config):
-        return _Plan(name, image, home, [tool, *args], os.getcwd())
+        return _Plan(name, image, home, [tool, *args], os.getcwd(), runtime)
 
     translator = PathTranslator(home)
     return _Plan(
@@ -134,6 +137,7 @@ def _plan(tool: str, args: list[str]) -> _Plan:
         home,
         [tool, *translator.translate_args(args)],
         translator.get_container_cwd(os.getcwd()),
+        runtime,
     )
 
 
@@ -155,19 +159,19 @@ def _exec(plan: _Plan) -> int | None:
     from .engine import Engine, EngineError
 
     try:
-        engine = Engine.detect()
+        engine = Engine.detect(plan.runtime)
         if not _is_current(engine, plan.name, plan.image):
             return None
     except (EngineError, OSError):
         return None
 
-    # Docker does not pass signals on to an exec, and the container is
+    # Runtimes do not pass signals on to an exec, and the container is
     # shared, so an interrupted tig would leave the tool running; the id
     # every descendant inherits is how they are found again.
     exec_id = uuid.uuid4().hex
     env = {**plan.env, EXEC_ID_ENV: exec_id}
 
-    # Allocate a TTY only for interactive use; with a TTY, Docker merges
+    # Allocate a TTY only for interactive use; with a TTY, runtimes merge
     # stderr into stdout and mangles redirected output.
     with _raw_terminal(interactive), forwarded_signals(
         lambda signum: _signal_in_container(engine, plan.name, exec_id, signum)
@@ -205,7 +209,9 @@ def _warm(plan: _Plan) -> int | None:
 def _prepare_warm_path(engine, plan: _Plan) -> None:
     """Get the in-container runner up, now that the command is done."""
     if broker.preferred():
-        broker.ensure_running(engine, plan.name, plan.home)
+        broker.ensure_running(
+            engine, plan.name, plan.home, plan.runtime.name
+        )
         return
     dispatch.ensure_running(engine, plan.name, plan.home)
 
@@ -226,7 +232,7 @@ def _revalidate(plan: _Plan) -> None:
     """Check now and then that the dispatcher's container is still right.
 
     Run after the command, so this costs nothing in the common case and a
-    daemon round trip once every :data:`REVALIDATE_INTERVAL`. A container
+    runtime round trip once every :data:`REVALIDATE_INTERVAL`. A container
     left behind by a re-pulled tag is retired by taking its dispatcher out
     of service, which sends the next command down the full path.
     """
@@ -236,7 +242,7 @@ def _revalidate(plan: _Plan) -> None:
     from .engine import Engine, EngineError
 
     try:
-        if _is_current(Engine.detect(), plan.name, plan.image):
+        if _is_current(Engine.detect(plan.runtime), plan.name, plan.image):
             dispatch.mark_verified(plan.home, plan.name)
             return
     except (EngineError, OSError):
@@ -249,7 +255,7 @@ class _raw_terminal:
     """Put the terminal in raw mode, as an interactive exec expects.
 
     Keystrokes then reach the container instead of being line-buffered and
-    interpreted by the host terminal - the same thing ``docker exec -t`` does.
+    interpreted by the host terminal - the same thing ``exec -t`` does.
     """
 
     def __init__(self, enabled: bool):

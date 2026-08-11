@@ -258,13 +258,14 @@ translate them, which means `set -e` and `&&` chains work as written:
 | >128 | Killed by a signal |
 
 The translation happens in the wrappers under `/usr/local/bin`, so it applies
-to commands run through `tig-cli` or `docker exec`. Calling a program by its
+to commands run through `tig-cli` or a runtime's `exec`. Calling a program by its
 full path (`$V2TOP/p2/lib/x86-64-linx/gen`) bypasses it and returns VICAR's
 raw code.
 
 ## Requirements
 
-- Docker or Podman
+- A container runtime: Docker, Podman, nerdctl or Finch (whichever is on
+  `PATH`; set `TIG_CONTAINER_RUNTIME` or the `runtime` config key to choose)
 - Python 3.9+
 - 8GB RAM minimum (16GB recommended for high-res meshes)
 - Linux, macOS (including Apple Silicon, via emulation), or Windows with WSL2
@@ -290,7 +291,7 @@ tig/
 
 Contributions welcome! This project builds on:
 - **VICAR**: JPL MIPL's general-purpose image processing system
-- **Docker**: Containerized VICAR execution environment
+- **OCI containers**: Portable VICAR execution environment
 - **VISOR**: Open source calibration repository for multiple missions
 
 ## License

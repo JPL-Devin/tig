@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from tig_cli import broker
+from tig_cli import broker, server
 from tig_cli.server import Broker, Job
 from tig_cli.spec import TigError
 
@@ -44,7 +44,7 @@ class Session:
         script = textwrap.dedent(
             """
             import sys
-            from tig_cli import broker
+            from tig_cli import broker, server
             code = broker.run(
                 sys.argv[1], sys.argv[2], sys.argv[4:], sys.argv[3],
                 {"DISPLAY": ":9"},
@@ -74,7 +74,7 @@ class Session:
         script = textwrap.dedent(
             """
             import sys
-            from tig_cli import broker
+            from tig_cli import broker, server
             code = broker.run(
                 sys.argv[1], sys.argv[2], sys.argv[4:], sys.argv[3], {},
             )
@@ -373,6 +373,32 @@ def test_a_job_whose_grace_has_passed_asks_for_no_wakeup():
 def test_a_broker_that_goes_quiet_is_an_error_not_a_second_run():
     with pytest.raises(TigError):
         broker._status(b"")
+
+
+def test_a_spawned_broker_is_told_which_runtime_to_use(home, monkeypatch):
+    """It runs on its own later, so the choice cannot be made again then."""
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *args, **kwargs: calls.append(kwargs)
+    )
+
+    broker._spawn("tig-vicar-abc", str(home), "podman")
+
+    assert calls[0]["env"]["TIG_CONTAINER_RUNTIME"] == "podman"
+
+
+def test_the_agent_dials_the_gateway_of_the_runtime_in_use(monkeypatch):
+    """Each runtime names the host differently in its virtual machine."""
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "finch")
+
+    assert server.host_address() == "host.lima.internal"
+
+
+def test_the_agent_dials_the_host_directly_on_linux(monkeypatch):
+    monkeypatch.setattr(server.sys, "platform", "linux")
+
+    assert server.host_address() == "127.0.0.1"
 
 
 def _waits_for(home, signal_name, code):

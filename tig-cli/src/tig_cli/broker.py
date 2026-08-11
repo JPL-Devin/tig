@@ -23,6 +23,7 @@ import os
 import socket
 import sys
 
+from .config import RUNTIME_ENV
 from .spec import TigError, forwarded_signals
 
 DISABLE_ENV = "TIG_NO_BROKER"
@@ -173,7 +174,9 @@ def preferred() -> bool:
     )
 
 
-def ensure_running(engine, container: str, home: str) -> None:
+def ensure_running(
+    engine, container: str, home: str, runtime: str = "docker"
+) -> None:
     """Start the container's broker unless one is already answering.
 
     Called after a command has been run the slow way, so getting the broker
@@ -188,7 +191,7 @@ def ensure_running(engine, container: str, home: str) -> None:
     if answering is not None:
         answering.close()
         return
-    _spawn(container, home)
+    _spawn(container, home, runtime)
 
 
 def retire(home: str, container: str) -> None:
@@ -242,17 +245,19 @@ def _connect(address: str) -> socket.socket | None:
     return connection
 
 
-def _spawn(container: str, home: str) -> None:
+def _spawn(container: str, home: str, runtime: str) -> None:
     """Start a broker for this container in the background.
 
     Nothing waits for it: it is ready within a moment, and until then
-    commands simply go the way they went before it existed.
+    commands simply go the way they went before it existed. The runtime is
+    named in its environment so it settles on the same one as this process.
     """
     import subprocess
 
     try:
         subprocess.Popen(
             [sys.executable, "-m", "tig_cli.broker", container, home],
+            env={**os.environ, RUNTIME_ENV: runtime},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

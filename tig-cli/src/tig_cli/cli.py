@@ -19,6 +19,7 @@ from .container import (
     get_calibration_path,
     get_container_image,
 )
+from .runtime import Runtime
 from .shim import default_shim_dir, tig_executable, write_shims
 from .spec import (
     resolve_disable_path_translation,
@@ -37,10 +38,12 @@ class DynamicHelpCommand(click.Command):
         calibration = get_calibration_path(config)
         sources = ", ".join(str(p) for p in config.sources) or "none found"
         self.help = (
-            f"Execute a VICAR tool via Docker.\n\n"
+            f"Execute a VICAR tool in a container.\n\n"
             f"Active image: {image}\n\n"
             f"Calibration path: {calibration or '(none)'}\n\n"
-            f"Set CONTAINER_IMAGE or MARS_CONFIG_PATH to override.\n\n"
+            f"Container runtime: {_runtime_description(config)}\n\n"
+            f"Set CONTAINER_IMAGE, MARS_CONFIG_PATH or "
+            f"TIG_CONTAINER_RUNTIME to override.\n\n"
             f"Config files (later overrides earlier): {SYSTEM_CONFIG_PATH}, "
             f"{user_config_path()}, nearest {PROJECT_CONFIG_NAME}.\n\n"
             f"Loaded config: {sources}\n\n"
@@ -48,6 +51,15 @@ class DynamicHelpCommand(click.Command):
             f"'tig --shutdown' removes it."
         )
         super().format_help(ctx, formatter)
+
+
+def _runtime_description(config: Config) -> str:
+    """The runtime tig would use, for the help text."""
+    try:
+        runtime = Runtime.detect(config)
+    except TigError as e:
+        return str(e)
+    return f"{runtime.name} ({runtime.executable})"
 
 
 @click.command(
@@ -175,6 +187,7 @@ def main(
     try:
         manager = ContainerManager(
             image,
+            config=config,
             disable_path_translation=disable_path_translation,
             # Not needed to list or remove containers, and validating it would
             # make --shutdown fail on a stale MARS_CONFIG_PATH.

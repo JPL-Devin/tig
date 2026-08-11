@@ -8,7 +8,8 @@ TIG provides ~550 VICAR image processing commands. This guide focuses on the fla
 pip install tig-cli
 ```
 
-You need Docker running and Python 3.9+. The VICAR image is pulled on first use.
+You need Python 3.9+ and a container runtime — Docker, Podman, nerdctl or
+Finch. The VICAR image is pulled on first use.
 
 ```bash
 tig gen test.vic 64 64      # writes test.vic in the current directory
@@ -110,16 +111,20 @@ the left (NLM) and right (NRM) filenames must match exactly.
 
 ### "Out of memory"
 
-**Increase Docker memory:**
+**Increase the runtime's memory:**
 - Docker Desktop: Settings → Resources → Memory (recommend 16GB)
+- Podman: `podman machine set --memory 16384`
 
 **Or use smaller images:**
 - Use subframe/windowed images instead of full resolution
 - Reduce marsmesh `res_max` parameter
 
-### "Failed to connect to Docker"
+### "No container runtime was found on PATH"
 
-The daemon is not running, or your user is not in the `docker` group.
+Nothing tig knows about is installed, or the one you want is not on `PATH`;
+set `TIG_CONTAINER_RUNTIME` (or the `runtime` config key) to the command to
+use. If it is installed, the daemon may not be running, or your user may not
+be in the `docker` group.
 `tig --status` shows what tig currently has running; `tig --shutdown` clears it.
 
 ---
