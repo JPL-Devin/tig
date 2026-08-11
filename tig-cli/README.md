@@ -64,7 +64,7 @@ tig label /data/scenes/image.vic
 | `--builder-image IMAGE` | Image to compile in. Defaults to `terrain-intelligence-generator:opensource-builder`. |
 | `--build-jobs N` | Parallel compile jobs. |
 | `--build-list` | List the locally built programs installed over the image, then exit. |
-| `--build-clean` | Forget them and remove the containers carrying them, restoring the image's own programs. Scoped by `--build-unit`. |
+| `--build-clean` | Forget them and remove this image's containers, which carry them, restoring the image's own programs. Containers another invocation is using are left alone. Scoped by `--build-unit`. |
 | `--build-force` | Build even when the builder and runtime images are different VICAR releases. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |

@@ -136,11 +136,17 @@ def run_build_state(manager, image, unit_name=None, clean=False):
             return
         # The image's own program is only back in a container created afresh:
         # the injected copy overwrote it in the container's filesystem.
-        removed = manager.shutdown()
+        removed, in_use = manager.remove_containers_of(identifier)
         click.echo(
             f"Forgot {', '.join(dropped)} and removed {removed} container(s); "
             f"the image's own programs are back."
         )
+        if in_use:
+            click.echo(
+                f"{in_use} container(s) are in use and still hold the built "
+                f"program(s); they go on the next --shutdown or reap.",
+                err=True,
+            )
         return
 
     units = overrides.load()

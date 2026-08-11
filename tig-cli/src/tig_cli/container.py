@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import docker
 
 from .spec import (  # noqa: F401  (re-exported for callers and tests)
@@ -385,6 +385,46 @@ class ContainerManager:
         self.container = None
         self.release_claim()
         return removed
+
+    def remove_containers_of(self, image_id: str) -> Tuple[int, int]:
+        """Remove this image's containers, leaving the ones still in use.
+
+        For forgetting a locally built program: the injected copy overwrote
+        the image's own in the container's filesystem, so only a container
+        created afresh has it back. Containers of another image never carried
+        it, and a container another invocation is using is not taken away.
+
+        Returns:
+            Numbers of containers removed and left alone as in use
+        """
+        claimed = self._claimed_containers()
+        removed = 0
+        in_use = 0
+        for container in self.client.containers.list(
+            all=True, filters={"name": CONTAINER_PREFIX}
+        ):
+            try:
+                # The list response omits ExecIDs.
+                container.reload()
+            except docker.errors.APIError:
+                continue
+            if container.image.id != image_id:
+                continue
+            if container.name in claimed or self._busy(
+                container.attrs.get("ExecIDs") or []
+            ):
+                in_use += 1
+                continue
+            try:
+                container.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+            except docker.errors.APIError:
+                continue
+            if self.container is not None and self.container.id == container.id:
+                self.container = None
+            removed += 1
+        return removed, in_use
 
     def status(self) -> List[Dict[str, str]]:
         """Describe the containers this tool has created.

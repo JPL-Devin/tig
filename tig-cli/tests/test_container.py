@@ -505,6 +505,24 @@ def test_creating_a_container_reaps_surplus_idle_ones(home_dir):
     newer.remove.assert_not_called()
 
 
+def test_cleaning_a_build_only_removes_this_image_s_idle_containers(home_dir):
+    mine = make_container(f"{CONTAINER_PREFIX}-mine")
+    busy = make_container(f"{CONTAINER_PREFIX}-busy", exec_ids=["exec1"])
+    other_image = make_container(f"{CONTAINER_PREFIX}-other", image_id="sha256:other")
+    client = make_client(containers=[mine, busy, other_image])
+    client.api.exec_inspect.return_value = {
+        "Running": True,
+        "ProcessConfig": {"entrypoint": "vicar", "arguments": ["in.img"]},
+    }
+    manager = make_manager(home_dir, client=client)
+
+    assert manager.remove_containers_of("sha256:image") == (1, 1)
+
+    mine.remove.assert_called_once_with(force=True)
+    busy.remove.assert_not_called()
+    other_image.remove.assert_not_called()
+
+
 def test_reaping_never_touches_the_container_in_use(home_dir):
     client = make_client()
     manager = make_manager(home_dir, client=client)
