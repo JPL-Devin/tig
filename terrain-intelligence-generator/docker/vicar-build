@@ -22,9 +22,13 @@ endif
 
 set unit = "$1"
 set src = ""
-if ($# > 1) set src = "$2"
+if ($# > 1) then
+    set src = "$argv[2]"
+endif
 set bld = "."
-if ($# > 2) set bld = "$3"
+if ($# > 2) then
+    set bld = "$argv[3]"
+endif
 
 if (! -d "$bld") then
     echo "vicar-build: not a directory: $bld"
