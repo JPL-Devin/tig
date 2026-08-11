@@ -56,7 +56,9 @@ export MARS_CONFIG_PATH=/path/to/calibration/msl
 ```
 
 Outputs land in `workspace-coreg/`: `overlap_*.lis`, `tiepoints.tpt`,
-`tiepoints_kept.tpt`, `pointing.nav`, and the full solver logs.
+`tiepoints_kept.tpt`, `pointing.nav`, and a full log per program
+(`marschkovl.log`, `marsautotie.log`, `marsnav.log`) — the script prints the
+headline numbers and reports the log tail if a program abends.
 
 ## The sequence, stage by stage
 
@@ -238,8 +240,8 @@ Reading those numbers honestly:
   adjusted ground points, not a measure of registration quality.
 - **These numbers are not exactly reproducible.** Every figure in the table above
   is one run. Across repeat runs on identical inputs the table's row values moved
-  by roughly a percent — about 312 tiepoints of which about 180 are kept, about
-  37.4 px initial and 4.6–4.8 px final error, about 300 `marsnav2` tracks with a
+  by a few percent — about 312 tiepoints of which about 180 are kept, about
+  37.4 px initial and 4.6–4.9 px final error, about 300 `marsnav2` tracks with a
   mean near 0.37 px and a median near 0.27 px. Treat them as magnitudes, not
   digits. What was identical in every run: the eight overlap pairs, the
   `not represented` line, the six disconnected groups and their membership, and

@@ -187,7 +187,7 @@ cd "$WORKSPACE"
 # marstie and marsautotie refuse to overwrite an existing tiepoint file, and a
 # leftover nav table would make a failed solve look like a success.
 rm -f frames.lis overlap_left.lis overlap_right.lis marschkovl.log \
-      tiepoints.tpt tiepoints_kept.tpt pointing.nav marsnav.log \
+      tiepoints.tpt tiepoints_kept.tpt pointing.nav marsnav.log marsautotie.log \
       tiepoints_nav2.tpt pointing_nav2.nav marsnav2.log
 
 for input in "${INPUTS[@]}"; do
@@ -214,10 +214,17 @@ echo ""
 
 # Step 2: tiepoints
 echo "Step 2: Generating tiepoints (marsautotie)..."
+# Log first, then report: these programs write their output file before abending,
+# so the exit status is the only reliable signal, as for marschkovl above.
 tig marsautotie inp=frames.lis out=tiepoints.tpt \
-  density="$DENSITY" grid_spacing="$GRID_SPACING" 2>&1 | \
-  grep -E "Found [0-9]+ tiepoints|not represented" || true
+  density="$DENSITY" grid_spacing="$GRID_SPACING" > marsautotie.log 2>&1 || AUTOTIE_STATUS=$?
+grep -E "Found [0-9]+ tiepoints|not represented" marsautotie.log || true
 
+if [ -n "${AUTOTIE_STATUS:-}" ]; then
+  echo "  ❌ ERROR: marsautotie failed. Last lines of $WORKSPACE/marsautotie.log:"
+  tail -5 marsautotie.log || true
+  exit 1
+fi
 if [ ! -f tiepoints.tpt ]; then
   echo "  ❌ ERROR: marsautotie produced no tiepoint file"
   echo "  Frames may not overlap, or initial pointing may be too far off."
@@ -230,11 +237,16 @@ echo ""
 echo "Step 3: Solving for corrected pointing (marsnav)..."
 tig marsnav inp=frames.lis out=pointing.nav in_tpt=tiepoints.tpt \
   out_tpt=tiepoints_kept.tpt out_solution_id="$SOLUTION_ID" \
-  -remove max_residual="$MAX_RESIDUAL" max_remove=50 2>&1 | tee marsnav.log | \
-  grep -E "^Input image .* not represented|not connected" || true
+  -remove max_residual="$MAX_RESIDUAL" max_remove=50 > marsnav.log 2>&1 || NAV_STATUS=$?
+grep -E "^Input image .* not represented|not connected" marsnav.log || true
 
-if [ ! -f pointing.nav ]; then
-  echo "  ❌ ERROR: marsnav produced no nav table"
+if [ -n "${NAV_STATUS:-}" ]; then
+  echo "  ❌ ERROR: marsnav failed. Last lines of $WORKSPACE/marsnav.log:"
+  tail -5 marsnav.log || true
+  exit 1
+fi
+if [ ! -f pointing.nav ] || [ ! -f tiepoints_kept.tpt ]; then
+  echo "  ❌ ERROR: marsnav produced no nav table or no surviving-tiepoint file"
   exit 1
 fi
 
@@ -254,7 +266,11 @@ if $RUN_NAV2; then
   echo "Step 4: Bundle adjustment (marsnav2)..."
   tig marsnav2 inp=frames.lis out=pointing_nav2.nav in_tpt=tiepoints.tpt \
     out_tpt=tiepoints_nav2.tpt out_solution_id="$SOLUTION_ID" \
-    > marsnav2.log 2>&1 || true
+    > marsnav2.log 2>&1 || NAV2_STATUS=$?
+  if [ -n "${NAV2_STATUS:-}" ]; then
+    echo "  ⚠ marsnav2 failed; see $WORKSPACE/marsnav2.log:"
+    tail -5 marsnav2.log || true
+  fi
   grep -E "initial tracks found|observations tracks|Solution mean error|Solution median error" \
     marsnav2.log | sed 's/^/  /' || true
   sed -n '/There are disconnected groups/,/^ *$/p' marsnav2.log | sed 's/^/  /' || true
@@ -268,6 +284,7 @@ echo "  - frames.lis         : Input list, absolute paths"
 echo "  - overlap_*.lis      : Overlapping pairs found by marschkovl"
 echo "  - marschkovl.log     : Measured overlap percentage for every pair"
 echo "  - tiepoints.tpt      : Tiepoints from marsautotie (XML format)"
+echo "  - marsautotie.log    : Full marsautotie printout"
 echo "  - tiepoints_kept.tpt : Tiepoints surviving marsnav outlier removal"
 echo "  - pointing.nav       : Corrected pointing, solution id $SOLUTION_ID"
 echo "  - marsnav.log        : Full solver printout, including residuals"
