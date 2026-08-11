@@ -228,19 +228,22 @@ Reading those numbers honestly:
   images. The set is under-tied, not mis-solved.
 - Image 10 had no tiepoints, and `marsnav` still emitted a "correction" for it
   anyway — tens to hundreds of degrees, and by far the largest delta of the set,
-  in every run (−824.547°/+3165.039°, +15.147°/−19.078° and −193.604°/−79.518° in
-  three runs on identical inputs). An unconstrained frame produces garbage rather
+  in every run (−824.5°/+3165.0°, +15.1°/−19.1°, −193.6°/−79.5° and +100.1°/−122.3°
+  in four runs on identical inputs). An unconstrained frame produces garbage rather
   than being skipped. Always read the `not represented` lines.
 - `marsnav2` converged without moving any pointing (cost change 0.000000e+00,
   seven unsuccessful steps): with `Nominal Pointing Errors 0.0630°` for this
   instrument, the sparse two-observation tracks bought no improvement over the
   nominal pointing. Its 0.36 px mean is a residual against simultaneously
   adjusted ground points, not a measure of registration quality.
-- **These numbers are not exactly reproducible.** Repeat runs on identical inputs
-  gave 311–313 tiepoints, 37.35–37.45 px initial and 4.68–4.74 px final error,
-  and 300–303 `marsnav2` tracks with means of 0.362–0.367 px. The disconnected
-  groups and their membership were identical every time. Expect agreement in
-  magnitude, not in digits.
+- **These numbers are not exactly reproducible.** Every figure in the table above
+  is one run. Across repeat runs on identical inputs the table's row values moved
+  by roughly a percent — about 312 tiepoints of which about 180 are kept, about
+  37.4 px initial and 4.6–4.8 px final error, about 300 `marsnav2` tracks with a
+  mean near 0.37 px and a median near 0.27 px. Treat them as magnitudes, not
+  digits. What was identical in every run: the eight overlap pairs, the
+  `not represented` line, the six disconnected groups and their membership, and
+  the all-zero `marsnav2` pointing changes.
 
 The corrected pointing does reach the mosaic. Rendering the same 19 frames twice,
 with and without the table, gives two 30000×30000 mosaics differing in 57,126,946
@@ -265,7 +268,7 @@ tig env HWLOC_COMPONENTS=-x86 marsmap inp=all.lis out=mosaic.img \
   navtable=pointing.nav
 ```
 
-which completes and writes a 32 MB cylindrical mosaic.
+which completes and writes a cylindrical mosaic (31 MB for this MSL set).
 
 ## Worked example — M20 NavCam repeat coverage, verified
 
