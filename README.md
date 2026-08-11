@@ -73,8 +73,8 @@ pointing, and `marsfidfinder` locates fiducials. Once images are registered,
 change comparison over time is composed from the general image-processing tools
 — there is no change-detection program in the image.
 
-Both the mosaic and the co-registration workflows are undemonstrated here: this
-repository ships no panorama or co-registration demo, doc or test. Note also
+Both workflows are demonstrated: see the [panorama mosaic](docs/demos/panorama-mosaic.md)
+and [co-registration](docs/demos/co-registration.md) demos. Note also
 that the `mars*` mosaicking programs are built around in-situ camera geometry
 (spherical coordinates about a landing site); orbital imagery is handled by the
 general cartographic programs above.
@@ -132,12 +132,11 @@ So the scope is unambiguous:
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
   it per mission).
-- No worked example for co-registration, and none for `marsgreach`
-  reachability, whose input-producing program is not in the image — those
-  programs are present, the demos are not. Automated checks cover the CLI,
-  format conversion, and the presence of the MARS commands; the end-to-end
-  product paths that are demonstrated are the mesh demo, the panorama mosaic
-  demo, the surface characteristics demo and the Airflow example.
+- No worked example for `marsgreach` reachability, whose input-producing program
+  is not in the image — the program is present, the demo is not. Automated checks
+  cover the CLI, format conversion, and the presence of the MARS commands; the
+  end-to-end product paths that are demonstrated are the mesh, panorama mosaic,
+  surface characteristics and co-registration demos, and the Airflow example.
 
 ## Quick Start
 
@@ -211,6 +210,7 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 - **[Mesh Generation Demo](docs/demos/mesh-generation.md)** - Step-by-step mesh creation
 - **[Panorama Mosaic Demo](docs/demos/panorama-mosaic.md)** - 360-degree in-situ NavCam panorama
 - **[Surface Characteristics Demo](docs/demos/surface-characteristics.md)** - Slope, roughness, normals and goodness from an XYZ cloud
+- **[Co-registration Demo](docs/demos/co-registration.md)** - Tiepoints, pointing correction, and composing change monitoring
 - **[Command Reference](docs/demos/commands.md)** - Tour of the VICAR toolset
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files

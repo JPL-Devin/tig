@@ -102,8 +102,9 @@ Specialized Mars terrain processing suite:
 | marscor3 | Multi-pass refinement | Disparity + images | Refined disparity |
 | marsxyz | 3D triangulation | Disparity + images | XYZ point cloud |
 | marsmesh | Surface meshing | XYZ + texture | OBJ mesh |
-| marsmap | Orthoprojection | XYZ | Map projection |
-| marsmos | Mosaicking | Multiple images | Panorama |
+| marsmap | Cylindrical/polar/vertical mosaicking | Multiple images (+ nav table) | Projected mosaic |
+| marsmos | Mosaicking under a synthetic wide-field camera model | Multiple images (+ nav table) | Mosaic |
+| marsortho | Orthographic mosaicking and DEM generation | XYZ (+ skin images) | Ortho mosaic, DEM |
 | marsautotie | Tie point detection | Image pair | Tie points |
 | marsrfilt | Rover filtering | XYZ | Filtered XYZ |
 
