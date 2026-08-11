@@ -106,7 +106,9 @@ SELINUX_ENFORCE_PATH = "/sys/fs/selinux/enforce"
 # it in a virtual machine of its own (Docker Desktop, podman machine).
 HOST_GATEWAY = {
     "podman": "host.containers.internal",
+    # Both run their containers in a Lima virtual machine on macOS.
     "finch": "host.lima.internal",
+    "nerdctl": "host.lima.internal",
 }
 DEFAULT_HOST_GATEWAY = "host.docker.internal"
 
@@ -359,7 +361,9 @@ class RunSpec:
         """The specification as plain data, for the fingerprint and tests."""
         return {
             "image": self.image,
-            "mounts": [mount.argument for mount in self.mounts],
+            # Sorted: the same mounts named in another order are the same
+            # container, and the name must not depend on the order.
+            "mounts": sorted(mount.argument for mount in self.mounts),
             "environment": dict(self.environment),
             "command": list(self.command),
             "platform": self.platform,

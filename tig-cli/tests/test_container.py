@@ -477,6 +477,24 @@ def test_container_name_identifies_the_configuration(home_dir, tmp_path):
     assert plain != name_for([str(extra)])
 
 
+def test_container_name_ignores_the_order_of_the_writable_paths(
+    home_dir, tmp_path
+):
+    """The same mounts named in another order must not build a container."""
+    first, second = tmp_path / "one", tmp_path / "two"
+    first.mkdir()
+    second.mkdir()
+
+    def name_for(writable_paths):
+        manager = make_manager(home_dir)
+        manager.ensure_container(writable_paths)
+        return manager.container_name
+
+    assert name_for([str(first), str(second)]) == name_for(
+        [str(second), str(first)]
+    )
+
+
 def test_ensure_container_adopts_container_created_concurrently(home_dir):
     """Two tig commands starting at once must not collide on the name."""
     runtime = FakeRuntime()

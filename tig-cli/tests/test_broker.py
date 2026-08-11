@@ -394,6 +394,11 @@ def test_the_agent_dials_the_gateway_of_the_runtime_in_use(monkeypatch):
 
     assert server.host_address() == "host.lima.internal"
 
+    # nerdctl runs in a Lima machine on macOS too, whoever started it.
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "nerdctl")
+
+    assert server.host_address() == "host.lima.internal"
+
 
 def test_the_agent_dials_the_host_directly_on_linux(monkeypatch):
     monkeypatch.setattr(server.sys, "platform", "linux")
