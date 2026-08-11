@@ -121,11 +121,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Resolve symlinks as well as relative components: tig resolves a path before
+# mapping it to its container location, and an unresolved symlink target is not
+# reachable from inside the container.
 abspath() {
   [ -z "$1" ] && return 0
   local dir
+  readlink -f "$1" 2>/dev/null && return 0
   # Fall back to the path as given, so the file checks below report it.
-  dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd) || { echo "$1"; return 0; }
+  dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || { echo "$1"; return 0; }
   echo "${dir%/}/$(basename "$1")"
 }
 
@@ -196,7 +200,12 @@ echo "Step 1: Checking overlap (marschkovl)..."
 # marschkovl prints an "Overlap for" line for every pair it evaluates, with the
 # measured percentage; only the pairs above the threshold reach the two lists.
 tig marschkovl inp=frames.lis out=\( overlap_left.lis overlap_right.lis \) \
-  overlap="$OVERLAP" > marschkovl.log 2>&1
+  overlap="$OVERLAP" > marschkovl.log 2>&1 || CHKOVL_STATUS=$?
+if [ -n "${CHKOVL_STATUS:-}" ] || [ ! -f overlap_left.lis ]; then
+  echo "  ❌ ERROR: marschkovl failed. Last lines of $WORKSPACE/marschkovl.log:"
+  tail -5 marschkovl.log || true
+  exit 1
+fi
 echo "  ✓ $(wc -l < overlap_left.lis) pair(s) with >= ${OVERLAP}% overlap"
 echo "  (pairs listed in overlap_left.lis / overlap_right.lis;"
 echo "   measured percentages for every pair in marschkovl.log)"
