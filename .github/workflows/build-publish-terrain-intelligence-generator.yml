@@ -549,9 +549,7 @@ jobs:
           echo "Test 16: MPI-linked programs reach TAE argument checking"
           echo "============================================"
           # These four link MPICH, whose bundled hwloc used to raise SIGFPE in
-          # MPI_Init on some host CPUs; the image excludes hwloc's x86 backend.
-          # Exit 1 means TAE rejected the invocation, so MPI_Init returned;
-          # anything above 128 means a signal killed the program.
+          # MPI_Init; exit 1 means TAE rejected the invocation, >128 a signal.
           docker run --rm ${IMAGE_TAG} bash -c '
             for cmd in marsmap marscor2 marsint marsremos; do
               $cmd > /dev/null 2>&1
