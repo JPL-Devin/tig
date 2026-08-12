@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .runtime import Runtime
 from .spec import (
     BUILDS_NAMES_DIR,
     BUILDS_RECORDED_FILE,
@@ -245,11 +246,13 @@ def find_unit(source: Path, name: Optional[str] = None) -> Unit:
     return Unit(unit_name, imakefile.parent, kind, subsystem)
 
 
-def docker_output(args: List[str], timeout: float = DOCKER_TIMEOUT) -> Optional[str]:
-    """Run a read-only docker command, returning its output, or None if it fails."""
+def runtime_output(
+    runtime: Runtime, args: List[str], timeout: float = DOCKER_TIMEOUT
+) -> Optional[str]:
+    """Run a read-only runtime command, returning its output, or None if it fails."""
     try:
         completed = subprocess.run(
-            ["docker", *args],
+            runtime.args(*args),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -262,14 +265,15 @@ def docker_output(args: List[str], timeout: float = DOCKER_TIMEOUT) -> Optional[
     return completed.stdout.strip()
 
 
-def image_exists(image: str) -> bool:
-    return docker_output(["image", "inspect", "-f", "{{.Id}}", image]) is not None
+def image_exists(runtime: Runtime, image: str) -> bool:
+    return runtime_output(runtime, ["image", "inspect", "-f", "{{.Id}}", image]) is not None
 
 
-def image_label(image: str, label: str) -> Optional[str]:
+def image_label(runtime: Runtime, image: str, label: str) -> Optional[str]:
     """The value of one label on a local image, or None if it has none."""
-    value = docker_output(
-        ["image", "inspect", "-f", "{{index .Config.Labels " + f'"{label}"' + "}}", image]
+    value = runtime_output(
+        runtime,
+        ["image", "inspect", "-f", "{{index .Config.Labels " + f'"{label}"' + "}}", image],
     )
     if not value or value == "<no value>":
         return None
@@ -489,11 +493,13 @@ def stale_units(current_image_id: str) -> List[str]:
     return names
 
 
-def copy_into_container(container: str, source: Path, destination: str) -> None:
+def copy_into_container(
+    runtime: Runtime, container: str, source: Path, destination: str
+) -> None:
     """Copy a host file into a container, replacing what is there."""
     try:
         completed = subprocess.run(
-            ["docker", "cp", str(source), f"{container}:{destination}"],
+            runtime.args("cp", str(source), f"{container}:{destination}"),
             capture_output=True,
             text=True,
             timeout=DOCKER_TIMEOUT,
@@ -524,7 +530,9 @@ chmod 755 "$WRAPPER_DIR/$unit"
 """.replace("$WRAPPER_DIR", WRAPPER_DIR)
 
 
-def ensure_wrapper(container: str, unit_name: str, lib_dir: str, program: str) -> None:
+def ensure_wrapper(
+    runtime: Runtime, container: str, unit_name: str, lib_dir: str, program: str
+) -> None:
     """Make ``unit_name`` callable by name in the container.
 
     A program not in the image has no ``/usr/local/bin`` wrapper, so nothing -
@@ -533,11 +541,11 @@ def ensure_wrapper(container: str, unit_name: str, lib_dir: str, program: str) -
     """
     try:
         completed = subprocess.run(
-            [
-                "docker", "exec", "--user", "0", container,
+            runtime.args(
+                "exec", "--user", "0", container,
                 "sh", "-c", _WRAPPER_SCRIPT, "wrapper",
                 unit_name, lib_dir, program,
-            ],
+            ),
             capture_output=True,
             text=True,
             timeout=DOCKER_TIMEOUT,
@@ -552,7 +560,9 @@ def ensure_wrapper(container: str, unit_name: str, lib_dir: str, program: str) -
         )
 
 
-def apply_overrides(container_name: str, container_id: str, image_id: str) -> List[str]:
+def apply_overrides(
+    runtime: Runtime, container_name: str, container_id: str, image_id: str
+) -> List[str]:
     """Re-install the recorded programs into a container.
 
     Called when a container is created or adopted: containers are reaped and
@@ -578,12 +588,12 @@ def apply_overrides(container_name: str, container_id: str, image_id: str) -> Li
         lib_dir = entry.get("lib_dir")
         if not path or not lib_dir:
             continue
-        copy_into_container(container_name, artifact, path)
+        copy_into_container(runtime, container_name, artifact, path)
         if entry.get("pdf"):
             pdf = overrides.artifact_dir / f"{name}.pdf"
             if pdf.is_file():
-                copy_into_container(container_name, pdf, f"{path}.pdf")
-        ensure_wrapper(container_name, name, lib_dir, path)
+                copy_into_container(runtime, container_name, pdf, f"{path}.pdf")
+        ensure_wrapper(runtime, container_name, name, lib_dir, path)
         installed.append(name)
 
     overrides.mark_applied(container_id)
@@ -591,7 +601,7 @@ def apply_overrides(container_name: str, container_id: str, image_id: str) -> Li
     return installed
 
 
-def verify_in_container(container: str, unit_name: str) -> Optional[str]:
+def verify_in_container(runtime: Runtime, container: str, unit_name: str) -> Optional[str]:
     """Check a program installed in the runtime container actually loads.
 
     Only the runtime image can answer this: the builder has different shared
@@ -604,7 +614,7 @@ def verify_in_container(container: str, unit_name: str) -> Optional[str]:
     """
     try:
         completed = subprocess.run(
-            ["docker", "exec", container, unit_name, "-help"],
+            runtime.args("exec", container, unit_name, "-help"),
             capture_output=True,
             text=True,
             timeout=VERIFY_TIMEOUT,
@@ -635,9 +645,9 @@ def resolve_builder_image(configured: Optional[str], option: Optional[str] = Non
     return configured or DEFAULT_BUILDER_IMAGE
 
 
-def image_id(image: str) -> str:
+def image_id(runtime: Runtime, image: str) -> str:
     """The local ID of an image; raises if it has not been pulled."""
-    identifier = docker_output(["image", "inspect", "-f", "{{.Id}}", image])
+    identifier = runtime_output(runtime, ["image", "inspect", "-f", "{{.Id}}", image])
     if not identifier:
         raise TigError(
             f"Image {image} is not available locally, so there is nothing to "
@@ -647,13 +657,15 @@ def image_id(image: str) -> str:
 
 
 def install(
-    container: str, unit: Unit, artifact: Path, pdf: Optional[Path]
+    runtime: Runtime, container: str, unit: Unit, artifact: Path, pdf: Optional[Path]
 ) -> None:
     """Install a built program into a running container, replacing the image's."""
-    copy_into_container(container, artifact, unit.container_path)
+    copy_into_container(runtime, container, artifact, unit.container_path)
     if pdf is not None:
-        copy_into_container(container, pdf, f"{unit.container_path}.pdf")
-    ensure_wrapper(container, unit.name, unit.container_lib_dir, unit.container_path)
+        copy_into_container(runtime, container, pdf, f"{unit.container_path}.pdf")
+    ensure_wrapper(
+        runtime, container, unit.name, unit.container_lib_dir, unit.container_path
+    )
 
 
 class Builder:
@@ -661,11 +673,13 @@ class Builder:
 
     def __init__(
         self,
+        runtime: Runtime,
         builder_image: str,
         runtime_image: str,
         force: bool = False,
         selinux_label_disable: bool = False,
     ):
+        self.runtime = runtime
         self.builder_image = builder_image
         self.runtime_image = runtime_image
         self.force = force
@@ -676,7 +690,7 @@ class Builder:
 
     def check_images(self) -> None:
         """Fail early on a missing builder image or a VICAR version mismatch."""
-        if not image_exists(self.builder_image):
+        if not image_exists(self.runtime, self.builder_image):
             raise TigError(
                 f"Builder image {self.builder_image} is not available locally. "
                 "It is not published - the VICAR release tarballs are yours to "
@@ -684,10 +698,13 @@ class Builder:
                 "  terrain-intelligence-generator/build-builder-image.sh"
             )
         self.builder_id = (
-            docker_output(["image", "inspect", "-f", "{{.Id}}", self.builder_image]) or ""
+            runtime_output(
+                self.runtime, ["image", "inspect", "-f", "{{.Id}}", self.builder_image]
+            )
+            or ""
         )
-        builder_version = image_label(self.builder_image, VICAR_VERSION_LABEL)
-        runtime_version = image_label(self.runtime_image, VICAR_VERSION_LABEL)
+        builder_version = image_label(self.runtime, self.builder_image, VICAR_VERSION_LABEL)
+        runtime_version = image_label(self.runtime, self.runtime_image, VICAR_VERSION_LABEL)
         if not builder_version or not runtime_version:
             # An image predating the label; nothing to compare against.
             return
@@ -709,14 +726,14 @@ class Builder:
             unit, self.builder_image, self.builder_id or self.builder_image
         )
 
-        command = [
-            "docker", "run", "--rm",
+        command = self.runtime.args(
+            "run", "--rm",
             "--platform", IMAGE_PLATFORM,
             "-v", f"{unit.directory}:/src:ro",
             "-v", f"{work}:/build",
             "-w", "/build",
             "-e", "HOME=/tmp",
-        ]
+        )
         if jobs:
             command += ["-e", f"MAKEFLAGS=-j{jobs}"]
         if self.selinux_label_disable:
@@ -745,7 +762,12 @@ class Builder:
 
 
 def build_image(
-    tag: str, base_image: str, unit: Unit, artifact: Path, pdf: Optional[Path]
+    runtime: Runtime,
+    tag: str,
+    base_image: str,
+    unit: Unit,
+    artifact: Path,
+    pdf: Optional[Path],
 ) -> None:
     """Build a new image: the runtime image plus one layer holding the program."""
     with tempfile.TemporaryDirectory(prefix="tig-build-") as context:
@@ -771,11 +793,11 @@ def build_image(
 
         try:
             completed = subprocess.run(
-                [
-                    "docker", "build",
+                runtime.args(
+                    "build",
                     "--platform", IMAGE_PLATFORM,
                     "-t", tag, str(directory),
-                ],
+                ),
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as e:

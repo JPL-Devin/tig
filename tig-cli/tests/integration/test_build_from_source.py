@@ -20,6 +20,7 @@ from tig_cli.build import (
     verify_in_container,
 )
 from tig_cli.container import ContainerManager, get_container_image
+from tig_cli.runtime import Runtime
 
 PATCH = "TIG-BUILD-INTEGRATION"
 TIG = [sys.executable, "-m", "tig_cli"]
@@ -75,7 +76,8 @@ def test_a_patched_program_builds_and_runs_in_the_container(
     monkeypatch.chdir(tmp_path)
     runtime_image = get_container_image()
     unit = find_unit(patched_source)
-    builder = Builder(builder_image, runtime_image)
+    runtime = Runtime.detect()
+    builder = Builder(runtime, builder_image, runtime_image)
     builder.check_images()
     artifact = builder.build(unit)
     assert artifact.is_file()
@@ -87,10 +89,10 @@ def test_a_patched_program_builds_and_runs_in_the_container(
     manager = ContainerManager(runtime_image)
     try:
         manager.ensure_container([])
-        install(manager.container_name, unit, artifact, unit.pdf)
-        assert verify_in_container(manager.container_name, unit.name) is None
+        install(runtime, manager.container_name, unit, artifact, unit.pdf)
+        assert verify_in_container(runtime, manager.container_name, unit.name) is None
 
-        Overrides(manager.container.image.id).record(unit, artifact, unit.pdf)
+        Overrides(str(manager.image_id())).record(unit, artifact, unit.pdf)
         exit_code = manager.execute_vicar_command("gen", ["out=t.vic", "nl=4", "ns=4"])
         assert exit_code == 0
 
@@ -191,7 +193,8 @@ def test_image_mode_produces_an_image_that_runs_the_program(
 
     try:
         # The layer replaced the image's own program, leaving the rest of it.
-        assert image_id(tag) != image_id(runtime_image)
+        runtime = Runtime.detect()
+        assert image_id(runtime, tag) != image_id(runtime, runtime_image)
         ran = docker(
             "run", "--rm", "--platform", "linux/amd64", "-w", "/tmp", tag,
             "gen", "out=t.vic", "nl=4", "ns=4",

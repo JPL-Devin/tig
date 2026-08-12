@@ -362,3 +362,31 @@ def test_verification_is_remembered_for_a_while(home):
 
     assert dispatch.recently_verified(str(home), CONTAINER, 30) is True
     assert dispatch.recently_verified(str(home), CONTAINER, 0) is False
+
+def test_signalling_addresses_the_runtime_holding_the_container(
+    home, monkeypatch
+):
+    """The runtime is passed on, not picked again: on a host with several
+    installed, another one has no such container and the tool would run on."""
+    from tig_cli import engine
+    from tig_cli.runtime import Runtime
+
+    runtime = Runtime("podman", "/usr/bin/podman")
+    job = dispatch._Job(
+        dispatch._Paths(str(home), CONTAINER), ["true"], str(home), {}, runtime
+    )
+    os.makedirs(job.directory, exist_ok=True)
+    with open(os.path.join(job.directory, "pid"), "w") as handle:
+        handle.write("4242")
+
+    asked = []
+    detected = SimpleNamespace(exec_detached=lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        engine.Engine,
+        "detect",
+        classmethod(lambda cls, rt=None: asked.append(rt) or detected),
+    )
+
+    job._interrupt(signal.SIGINT)
+
+    assert asked == [runtime]

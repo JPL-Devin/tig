@@ -24,7 +24,12 @@ from tig_cli.build import (
     verify_in_container,
 )
 from tig_cli.cli import main
+from tig_cli.runtime import Runtime
 from tig_cli.spec import TigError
+
+# The runtime commands are what is under test, so a real Runtime is used and
+# only the subprocess call is replaced.
+RUNTIME = Runtime("docker", "/usr/bin/docker")
 
 GEN_IMAKE = """\
 #define PROGRAM gen
@@ -203,22 +208,23 @@ def test_object_directories_are_private_and_per_source(tmp_path):
 def test_a_missing_builder_image_says_how_to_build_it():
     with patch.object(build_module, "image_exists", return_value=False):
         with pytest.raises(TigError, match="build-builder-image.sh"):
-            Builder("builder", "runtime").check_images()
+            Builder(RUNTIME, "builder", "runtime").check_images()
 
 
 def test_a_vicar_version_mismatch_is_refused_unless_forced():
     versions = {"builder": "5.0", "runtime": "4.9"}
     with patch.object(build_module, "image_exists", return_value=True), \
-            patch.object(build_module, "image_label", side_effect=versions.get):
+            patch.object(build_module, "image_label",
+                         side_effect=lambda r, image, label: versions.get(image)):
         with pytest.raises(TigError, match="VICAR version mismatch"):
-            Builder("builder", "runtime").check_images()
-        Builder("builder", "runtime", force=True).check_images()
+            Builder(RUNTIME, "builder", "runtime").check_images()
+        Builder(RUNTIME, "builder", "runtime", force=True).check_images()
 
 
 def test_images_without_the_version_label_are_accepted():
     with patch.object(build_module, "image_exists", return_value=True), \
             patch.object(build_module, "image_label", return_value=None):
-        Builder("builder", "runtime").check_images()
+        Builder(RUNTIME, "builder", "runtime").check_images()
 
 
 def test_the_build_runs_in_the_builder_with_the_source_read_only(tmp_path):
@@ -236,7 +242,7 @@ def test_the_build_runs_in_the_builder_with_the_source_read_only(tmp_path):
         return subprocess.CompletedProcess(command, 0)
 
     with patch.object(build_module.subprocess, "run", side_effect=fake_run):
-        artifact = Builder("builder:tag", "runtime").build(unit, jobs=4)
+        artifact = Builder(RUNTIME, "builder:tag", "runtime").build(unit, jobs=4)
 
     command = recorded["command"]
     assert artifact.read_text() == "binary"
@@ -256,7 +262,7 @@ def test_a_failed_build_points_at_the_build_directory(tmp_path):
         return_value=subprocess.CompletedProcess([], 2),
     ):
         with pytest.raises(TigError, match="build directory"):
-            Builder("builder", "runtime").build(unit)
+            Builder(RUNTIME, "builder", "runtime").build(unit)
 
 
 def test_recorded_builds_survive_for_a_new_container(tmp_path):
@@ -348,7 +354,7 @@ def test_the_warm_path_is_skipped_for_a_container_without_the_build(tmp_path):
 
     with patch.object(build_module, "copy_into_container"), \
             patch.object(build_module, "ensure_wrapper"):
-        apply_overrides("tig-vicar-1", "container-1", "image-id")
+        apply_overrides(RUNTIME, "tig-vicar-1", "container-1", "image-id")
     assert container_carries_builds("tig-vicar-1")
     assert not container_carries_builds("tig-vicar-2")
 
@@ -378,13 +384,13 @@ def test_installing_copies_the_program_the_pdf_and_a_wrapper(tmp_path):
     artifact.write_text("binary")
     copies = []
 
-    with patch.object(build_module, "copy_into_container", lambda c, s, d: copies.append(d)), \
+    with patch.object(build_module, "copy_into_container", lambda r, c, s, d: copies.append(d)), \
             patch.object(build_module, "ensure_wrapper") as wrapper:
-        install("tig-vicar-1", unit, artifact, unit.pdf)
+        install(RUNTIME, "tig-vicar-1", unit, artifact, unit.pdf)
 
     assert copies == [unit.container_path, f"{unit.container_path}.pdf"]
     wrapper.assert_called_once_with(
-        "tig-vicar-1", "gen", unit.container_lib_dir, unit.container_path
+        RUNTIME, "tig-vicar-1", "gen", unit.container_lib_dir, unit.container_path
     )
 
 
@@ -396,12 +402,12 @@ def test_recorded_builds_are_applied_once_per_container(tmp_path):
     Overrides("image-id").record(unit, artifact, None)
     copies = []
 
-    with patch.object(build_module, "copy_into_container", lambda c, s, d: copies.append(d)), \
+    with patch.object(build_module, "copy_into_container", lambda r, c, s, d: copies.append(d)), \
             patch.object(build_module, "ensure_wrapper"):
-        first = apply_overrides("tig-vicar-1", "container-1", "image-id")
-        again = apply_overrides("tig-vicar-1", "container-1", "image-id")
+        first = apply_overrides(RUNTIME, "tig-vicar-1", "container-1", "image-id")
+        again = apply_overrides(RUNTIME, "tig-vicar-1", "container-1", "image-id")
         # A replacement container is a different container, and needs patching.
-        replaced = apply_overrides("tig-vicar-1", "container-2", "image-id")
+        replaced = apply_overrides(RUNTIME, "tig-vicar-1", "container-2", "image-id")
 
     assert first == ["gen"]
     assert again == []
@@ -417,7 +423,7 @@ def test_nothing_is_applied_for_another_image(tmp_path):
     Overrides("image-id").record(unit, artifact, None)
 
     with patch.object(build_module, "copy_into_container") as copy:
-        assert apply_overrides("tig-vicar-1", "container-1", "other-image") == []
+        assert apply_overrides(RUNTIME, "tig-vicar-1", "container-1", "other-image") == []
     copy.assert_not_called()
 
 
@@ -426,7 +432,7 @@ def test_verification_reports_a_program_that_cannot_load():
         [], 127, stdout="", stderr="gen: error while loading shared libraries: libx"
     )
     with patch.object(build_module.subprocess, "run", return_value=broken):
-        assert "loading shared libraries" in verify_in_container("tig-vicar-1", "gen")
+        assert "loading shared libraries" in verify_in_container(RUNTIME, "tig-vicar-1", "gen")
 
 
 def test_verification_accepts_a_tae_rejection():
@@ -435,7 +441,7 @@ def test_verification_accepts_a_tae_rejection():
         [], 0, stdout="[TAE-KEYWORD] Ambiguous or unknown keyword 'HELP'.", stderr=""
     )
     with patch.object(build_module.subprocess, "run", return_value=rejected):
-        assert verify_in_container("tig-vicar-1", "gen") is None
+        assert verify_in_container(RUNTIME, "tig-vicar-1", "gen") is None
 
 
 def test_image_mode_adds_one_layer_over_the_runtime_image(tmp_path):
@@ -453,7 +459,7 @@ def test_image_mode_adds_one_layer_over_the_runtime_image(tmp_path):
         return subprocess.CompletedProcess(command, 0)
 
     with patch.object(build_module.subprocess, "run", side_effect=fake_run):
-        build_image("tig-dev:gen", "runtime:latest", unit, artifact, unit.pdf)
+        build_image(RUNTIME, "tig-dev:gen", "runtime:latest", unit, artifact, unit.pdf)
 
     assert seen["tag"] == "tig-dev:gen"
     assert seen["files"] == ["Dockerfile", "gen", "gen.pdf", "tig-gen-wrapper.sh"]
@@ -522,12 +528,13 @@ def test_the_manager_installs_recorded_builds_when_it_adopts_a_container():
     from tig_cli.container import ContainerManager
 
     manager = MagicMock(spec=ContainerManager)
-    manager.container = MagicMock()
-    manager.container.id = "container-1"
-    manager.container.image.id = "image-1"
+    manager.runtime = RUNTIME
+    manager.image_id.return_value = "image-1"
     manager.container_name = "tig-vicar-1"
 
     with patch.object(build_module, "apply_overrides", return_value=["gen"]) as applied:
-        ContainerManager._apply_built_programs(manager)
+        ContainerManager._apply_built_programs(manager, {"Id": "container-1"})
 
-    applied.assert_called_once_with("tig-vicar-1", "container-1", "image-1")
+    applied.assert_called_once_with(
+        RUNTIME, "tig-vicar-1", "container-1", "image-1"
+    )

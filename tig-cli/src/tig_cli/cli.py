@@ -19,6 +19,7 @@ from .container import (
     get_calibration_path,
     get_container_image,
 )
+from .runtime import Runtime
 from .shim import default_shim_dir, tig_executable, write_shims
 from .spec import (
     resolve_disable_path_translation,
@@ -37,10 +38,12 @@ class DynamicHelpCommand(click.Command):
         calibration = get_calibration_path(config)
         sources = ", ".join(str(p) for p in config.sources) or "none found"
         self.help = (
-            f"Execute a VICAR tool via Docker.\n\n"
+            f"Execute a VICAR tool in a container.\n\n"
             f"Active image: {image}\n\n"
             f"Calibration path: {calibration or '(none)'}\n\n"
-            f"Set CONTAINER_IMAGE or MARS_CONFIG_PATH to override.\n\n"
+            f"Container runtime: {_runtime_description(config)}\n\n"
+            f"Set CONTAINER_IMAGE, MARS_CONFIG_PATH or "
+            f"TIG_CONTAINER_RUNTIME to override.\n\n"
             f"Config files (later overrides earlier): {SYSTEM_CONFIG_PATH}, "
             f"{user_config_path()}, nearest {PROJECT_CONFIG_NAME}.\n\n"
             f"Loaded config: {sources}\n\n"
@@ -77,6 +80,7 @@ def run_build(
 
     unit = find_unit(Path(source) if source else Path.cwd(), unit_name)
     builder = Builder(
+        manager.runtime,
         resolve_builder_image(config.builder_image, builder_image),
         image,
         force=force,
@@ -91,23 +95,23 @@ def run_build(
     pdf = unit.pdf
 
     if image_tag:
-        build_image(image_tag, image, unit, artifact, pdf)
+        build_image(manager.runtime, image_tag, image, unit, artifact, pdf)
         click.echo(f"Built {image_tag}: {image} with {unit.container_path} replaced.")
         click.echo(f"Run it with: CONTAINER_IMAGE={image_tag} tig {unit.name} ...")
         return
 
     manager.ensure_container(writable_paths=writable_paths)
-    install(manager.container_name, unit, artifact, pdf)
-    overrides = Overrides(manager.container.image.id)
+    install(manager.runtime, manager.container_name, unit, artifact, pdf)
+    overrides = Overrides(str(manager.image_id()))
     overrides.record(unit, artifact, pdf)
     # This container now carries what was just recorded, so the next
     # invocation has nothing to re-apply.
-    overrides.mark_applied(manager.container.id)
+    overrides.mark_applied(str(manager.container_id()))
     mark_name_applied(manager.container_name)
 
     installed = unit.container_path + (" (+ .pdf)" if pdf else "")
     click.echo(f"Installed {installed} in {manager.container_name}")
-    failure = verify_in_container(manager.container_name, unit.name)
+    failure = verify_in_container(manager.runtime, manager.container_name, unit.name)
     if failure:
         click.echo(
             f"Warning: {unit.name} did not run in the container: {failure}",
@@ -120,7 +124,7 @@ def run_build_state(manager, image, unit_name=None, clean=False):
     """List or discard the locally built programs installed over the image."""
     from .build import Overrides, forget_stale, image_id, stale_units
 
-    identifier = image_id(image)
+    identifier = image_id(manager.runtime, image)
     overrides = Overrides(identifier)
 
     if clean:
@@ -163,6 +167,15 @@ def run_build_state(manager, image, unit_name=None, clean=False):
             f"Stale, built against an image no longer in use "
             f"({', '.join(stale)}); rebuild them or run --build-clean."
         )
+
+
+def _runtime_description(config: Config) -> str:
+    """The runtime tig would use, for the help text."""
+    try:
+        runtime = Runtime.detect(config)
+    except TigError as e:
+        return str(e)
+    return f"{runtime.name} ({runtime.executable})"
 
 
 @click.command(
@@ -393,6 +406,7 @@ def main(
     try:
         manager = ContainerManager(
             image,
+            config=config,
             disable_path_translation=disable_path_translation,
             # Not needed to list or remove containers, and validating it would
             # make --shutdown fail on a stale MARS_CONFIG_PATH.
@@ -406,7 +420,10 @@ def main(
         raise click.ClickException(str(e)) from e
 
     if shutdown:
-        removed = manager.shutdown()
+        try:
+            removed = manager.shutdown()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
         click.echo(f"Removed {removed} container(s).")
         return
 
@@ -467,7 +484,10 @@ def main(
         return
 
     if show_status:
-        containers = manager.status()
+        try:
+            containers = manager.status()
+        except TigError as e:
+            raise click.ClickException(str(e)) from e
         if not containers:
             click.echo("No tig containers running.")
         for container in containers:

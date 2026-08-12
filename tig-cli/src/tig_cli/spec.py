@@ -1,9 +1,9 @@
 """Container specification: everything that decides how a container is run.
 
-Kept free of the Docker SDK so the warm path (:mod:`tig_cli.fast`) can work
-out which container to use without paying for that import. :mod:`tig_cli
-.container` builds on the same functions, so both paths always derive the
-same container name from the same inputs.
+Runtime-agnostic and dependency-free, so the warm path (:mod:`tig_cli.fast`)
+can work out which container to use without importing anything expensive.
+:mod:`tig_cli.container` builds on the same functions, so both paths always
+derive the same container name from the same inputs.
 """
 from __future__ import annotations
 
@@ -107,13 +107,37 @@ CALIBRATION_MOUNT = "/usr/local/vicar/mars_calib"
 
 SELINUX_ENFORCE_PATH = "/sys/fs/selinux/enforce"
 
+# Names by which a container reaches the host it runs on, when the runtime puts
+# it in a virtual machine of its own (Docker Desktop, podman machine).
+HOST_GATEWAY = {
+    "podman": "host.containers.internal",
+    # Both run their containers in a Lima virtual machine on macOS.
+    "finch": "host.lima.internal",
+    "nerdctl": "host.lima.internal",
+}
+DEFAULT_HOST_GATEWAY = "host.docker.internal"
+
 
 class TigError(Exception):
     """User-facing error; reported without a traceback."""
 
 
+def rootless_podman(runtime: str) -> bool:
+    """Whether this is Podman running as the invoking user rather than root.
+
+    Docker's client talks to a daemon, so what the invoking user is says
+    nothing about how the container runs.
+    """
+    return runtime == "podman" and os.geteuid() != 0
+
+
+def host_gateway(runtime: str = "docker") -> str:
+    """The name a container of this runtime reaches the host by."""
+    return HOST_GATEWAY.get(runtime, DEFAULT_HOST_GATEWAY)
+
+
 def get_container_image(config: Config | None = None) -> str:
-    """Return the Docker image to use for VICAR execution.
+    """Return the container image to use for VICAR execution.
 
     Precedence: CONTAINER_IMAGE environment variable, then the ``image`` key
     from the configuration files, then the opensource image.
@@ -250,7 +274,7 @@ def ensure_x11_ready() -> None:
         return
 
     if sys.platform == "darwin":
-        # The container reaches XQuartz over TCP via host.docker.internal:0.
+        # The container reaches XQuartz over TCP via the host gateway name.
         _ensure_xquartz()
         _run_quietly(["xhost", "+localhost"])
     else:
@@ -259,10 +283,10 @@ def ensure_x11_ready() -> None:
         _run_quietly(["xhost", "+local:"])
 
 
-def container_display() -> str:
+def container_display(runtime: str = "docker") -> str:
     """The DISPLAY value a command should see inside the container."""
     if sys.platform == "darwin":
-        return "host.docker.internal:0"
+        return f"{host_gateway(runtime)}:0"
     return os.environ.get("DISPLAY", ":0")
 
 
@@ -280,12 +304,126 @@ def resolve_calibration_path(path: str | None) -> str | None:
     return str(Path(path).resolve())
 
 
-def build_volume_mounts(
+class Mount:
+    """One host path made visible in the container."""
+
+    def __init__(self, source: str, target: str, read_only: bool = False):
+        self.source = source
+        self.target = target
+        self.read_only = read_only
+
+    @property
+    def mode(self) -> str:
+        return "ro" if self.read_only else "rw"
+
+    @property
+    def argument(self) -> str:
+        """The mount as every runtime's ``--volume`` spells it."""
+        return f"{self.source}:{self.target}:{self.mode}"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mount):
+            return NotImplemented
+        return self.argument == other.argument
+
+    def __repr__(self) -> str:
+        return f"Mount({self.argument!r})"
+
+
+class RunSpec:
+    """How the container is created, in runtime-neutral terms.
+
+    Also what identifies it: the same specification always names the same
+    container, so one is only ever reused when recreating it would produce
+    the same thing.
+    """
+
+    def __init__(
+        self,
+        image: str,
+        mounts: list[Mount],
+        environment: dict[str, str],
+        command: list[str],
+        runtime: str = "docker",
+        platform: str = IMAGE_PLATFORM,
+        network: str | None = None,
+        user: str | None = None,
+        userns: str | None = None,
+        group_add: list[str] | None = None,
+        security_opt: list[str] | None = None,
+    ):
+        self.image = image
+        self.mounts = mounts
+        self.environment = environment
+        self.command = command
+        self.runtime = runtime
+        self.platform = platform
+        self.network = network
+        self.user = user
+        self.userns = userns
+        self.group_add = group_add or []
+        self.security_opt = security_opt or []
+
+    def fields(self) -> dict[str, object]:
+        """The specification as plain data, for the fingerprint and tests."""
+        return {
+            "image": self.image,
+            # Sorted: the same mounts named in another order are the same
+            # container, and the name must not depend on the order.
+            "mounts": sorted(mount.argument for mount in self.mounts),
+            "environment": dict(self.environment),
+            "command": list(self.command),
+            # Each runtime keeps its own containers: two of them must not
+            # share a name, or a command would be run in the wrong one.
+            "runtime": self.runtime,
+            "platform": self.platform,
+            "network": self.network,
+            "user": self.user,
+            "userns": self.userns,
+            "group_add": list(self.group_add),
+            "security_opt": list(self.security_opt),
+        }
+
+    def container_name(self) -> str:
+        """A container name that identifies this configuration."""
+        fingerprint = json.dumps(self.fields(), sort_keys=True)
+        digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
+        return f"{CONTAINER_PREFIX}-{digest}"
+
+    def create_args(self, name: str) -> list[str]:
+        """The runtime arguments that create and start this container."""
+        args = [
+            "run",
+            "--detach",
+            "--name", name,
+            "--platform", self.platform,
+        ]
+        for mount in self.mounts:
+            args += ["--volume", mount.argument]
+        for key, value in sorted(self.environment.items()):
+            args += ["--env", f"{key}={value}"]
+        if self.network:
+            args += ["--network", self.network]
+        if self.user:
+            args += ["--user", self.user]
+        if self.userns:
+            args += ["--userns", self.userns]
+        for group in self.group_add:
+            args += ["--group-add", group]
+        for option in self.security_opt:
+            args += ["--security-opt", option]
+        return [*args, self.image, *self.command]
+
+    def __repr__(self) -> str:
+        return f"RunSpec({self.fields()!r})"
+
+
+def build_mounts(
     home: str,
     writable_paths: list[str],
     calibration_path: str | None = None,
-) -> dict[str, dict[str, str]]:
-    """Build volume mount configuration.
+) -> list[Mount]:
+    """Build the container's mounts.
 
     The host filesystem is mounted read-only at /host so tools can read
     inputs from anywhere. Locations the user is expected to write to - the
@@ -296,13 +434,10 @@ def build_volume_mounts(
         home: The invoking user's home directory
         writable_paths: Additional paths to mount as read-write
         calibration_path: Host path with MARS/VISOR calibration files
-
-    Returns:
-        Dictionary of volume mounts for docker-py
     """
-    volumes = {
-        "/": {"bind": "/host", "mode": "ro"},
-        home: {"bind": home, "mode": "rw"},
+    mounts = {
+        "/": Mount("/", "/host", read_only=True),
+        home: Mount(home, home),
     }
 
     for path in [os.getcwd()] + list(writable_paths):
@@ -311,62 +446,59 @@ def build_volume_mounts(
         resolved = str(Path(path).resolve())
         if Path(resolved).is_relative_to(home):
             continue
-        volumes[resolved] = {"bind": f"/host{resolved}", "mode": "rw"}
+        mounts[resolved] = Mount(resolved, f"/host{resolved}")
 
     if calibration_path:
-        volumes[calibration_path] = {"bind": CALIBRATION_MOUNT, "mode": "ro"}
+        mounts[calibration_path] = Mount(
+            calibration_path, CALIBRATION_MOUNT, read_only=True
+        )
 
-    return volumes
+    return list(mounts.values())
 
 
-def build_run_kwargs(
+def build_run_spec(
     image: str,
-    volumes: dict[str, dict[str, str]],
+    mounts: list[Mount],
     home: str,
     calibration_path: str | None = None,
     selinux_label_disable: bool = False,
-) -> dict[str, object]:
-    """Build the containers.run keyword arguments, minus the name."""
+    runtime: str = "docker",
+) -> RunSpec:
+    """Build the specification of the container to run."""
     environment = {"HOME": home}
     if calibration_path:
         environment["MARS_CONFIG_PATH"] = CALIBRATION_MOUNT
 
-    kwargs: dict[str, object] = {
-        "image": image,
-        "volumes": volumes,
-        "environment": environment,
-        "detach": True,
-        "command": "tail -f /dev/null",
-        "platform": IMAGE_PLATFORM,
-    }
+    spec = RunSpec(
+        image=image,
+        mounts=list(mounts),
+        environment=environment,
+        command=["tail", "-f", "/dev/null"],
+        runtime=runtime,
+    )
 
     if sys.platform != "darwin":
-        volumes["/tmp/.X11-unix"] = {"bind": "/tmp/.X11-unix", "mode": "rw"}
-        kwargs["network_mode"] = "host"
-        # Run as the invoking user so output files are owned by them
-        # rather than by root. Docker Desktop already maps ownership.
-        kwargs["user"] = f"{os.getuid()}:{os.getgid()}"
-        kwargs["group_add"] = [str(os.getgid())]
+        spec.mounts.append(Mount("/tmp/.X11-unix", "/tmp/.X11-unix"))
+        spec.network = "host"
+        if rootless_podman(runtime):
+            # Rootless Podman runs as the invoking user but maps it to a
+            # subordinate uid inside; keep-id maps it to itself, so files it
+            # writes to the mounts are owned by the user.
+            spec.userns = "keep-id"
+        else:
+            # Run as the invoking user so output files are owned by them
+            # rather than by root. Runtimes with a VM of their own map
+            # ownership already.
+            spec.user = f"{os.getuid()}:{os.getgid()}"
+            spec.group_add = [str(os.getgid())]
         if selinux_label_disable:
             # SELinux Enforcing otherwise denies the container the bind
             # mounts and the X11 socket, and blocks the 32-bit legacy
             # libraries some VICAR tools load. Deliberately not ':z'/':Z'
             # relabeling, which must never touch the host-root mount.
-            kwargs["security_opt"] = ["label=disable"]
+            spec.security_opt = ["label=disable"]
 
-    return kwargs
-
-
-def container_name_for(run_kwargs: dict[str, object]) -> str:
-    """Derive a container name that identifies this configuration.
-
-    Anything that would change how the container is created - image,
-    mounts, user, platform - changes the name, so a container is only ever
-    reused when recreating it would produce the same thing.
-    """
-    fingerprint = json.dumps(run_kwargs, sort_keys=True, default=str)
-    digest = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
-    return f"{CONTAINER_PREFIX}-{digest}"
+    return spec
 
 
 def build_state_root() -> Path:
