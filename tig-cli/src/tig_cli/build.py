@@ -74,6 +74,9 @@ SEARCH_DEPTH = 6
 # VICAR program name can be is accepted.
 UNIT_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
+# Records which builder image compiled a unit's objects, inside its directory.
+BUILDER_STAMP = ".tig-builder"
+
 DOCKER_TIMEOUT = 60
 VERIFY_TIMEOUT = 120
 
@@ -317,6 +320,29 @@ def object_dir(unit: Unit, builder_image: str) -> Path:
     fingerprint = f"{unit.directory}\0{builder_image}".encode()
     digest = hashlib.sha256(fingerprint).hexdigest()[:12]
     return state_root() / "objects" / f"{unit.name}-{digest}"
+
+
+def prepare_object_dir(unit: Unit, builder_image: str, builder_id: str) -> Path:
+    """The unit's object directory, emptied when the builder image changed.
+
+    The builder is a fixed tag rebuilt per VICAR release, so its objects are
+    only incremental as long as the image behind that tag is the one that
+    compiled them; make goes by timestamps and would link the old ones.
+    """
+    work = object_dir(unit, builder_image)
+    stamp = work / BUILDER_STAMP
+    try:
+        previous = stamp.read_text().strip()
+    except OSError:
+        previous = ""
+    if previous != builder_id:
+        shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        stamp.write_text(builder_id)
+    except OSError:
+        pass
+    return work
 
 
 class Overrides:
@@ -644,6 +670,9 @@ class Builder:
         self.runtime_image = runtime_image
         self.force = force
         self.selinux_label_disable = selinux_label_disable
+        # Which image the tag resolves to, so objects are not reused across a
+        # rebuild of it. Resolved by check_images.
+        self.builder_id = ""
 
     def check_images(self) -> None:
         """Fail early on a missing builder image or a VICAR version mismatch."""
@@ -654,6 +683,9 @@ class Builder:
                 "fetch - so build it once with:\n"
                 "  terrain-intelligence-generator/build-builder-image.sh"
             )
+        self.builder_id = (
+            docker_output(["image", "inspect", "-f", "{{.Id}}", self.builder_image]) or ""
+        )
         builder_version = image_label(self.builder_image, VICAR_VERSION_LABEL)
         runtime_version = image_label(self.runtime_image, VICAR_VERSION_LABEL)
         if not builder_version or not runtime_version:
@@ -673,8 +705,9 @@ class Builder:
         The source directory is mounted read-only and the build happens in a
         tig-owned directory, so the user's source tree gains no object files.
         """
-        work = object_dir(unit, self.builder_image)
-        work.mkdir(parents=True, exist_ok=True)
+        work = prepare_object_dir(
+            unit, self.builder_image, self.builder_id or self.builder_image
+        )
 
         command = [
             "docker", "run", "--rm",

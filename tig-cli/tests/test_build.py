@@ -317,6 +317,22 @@ def test_cleaning_everything_also_drops_units_of_other_images(tmp_path):
     assert stale_units("sha256:newimage0000") == []
 
 
+def test_objects_of_a_rebuilt_builder_image_are_not_reused(tmp_path):
+    from tig_cli.build import prepare_object_dir
+
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+
+    work = prepare_object_dir(unit, "builder", "sha256:old")
+    (work / "gen.o").write_text("object")
+    assert prepare_object_dir(unit, "builder", "sha256:old") == work
+    assert (work / "gen.o").is_file()
+
+    # Same tag, different image: its objects were compiled elsewhere.
+    assert prepare_object_dir(unit, "builder", "sha256:new") == work
+    assert not (work / "gen.o").exists()
+
+
 def test_the_warm_path_is_skipped_for_a_container_without_the_build(tmp_path):
     from tig_cli.spec import container_carries_builds
 

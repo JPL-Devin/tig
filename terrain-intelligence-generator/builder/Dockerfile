@@ -8,6 +8,9 @@
 #
 # Build it locally with ../build-builder-image.sh; it is deliberately not
 # published, so the VICAR release tarballs are only ever fetched by the user.
+#
+# Outside docker/, like visor/, because the runtime image's workflow rebuilds on
+# any change under that directory.
 FROM oraclelinux:8
 
 ARG VICAR_VERSION=5.0

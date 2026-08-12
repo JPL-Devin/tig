@@ -6,9 +6,9 @@ plus the Java `vicario` converter.
 
 ```
 docker/Dockerfile          Multi-stage build (builder + runtime)
-docker/Dockerfile.builder  Build environment for compiling VICAR units from source
-docker/vicar-build         vimake + make for one unit, run inside the builder image
 docker/vicario.jar         Java VICAR→PNG/JPEG/TIFF converter (see docker/VICARIO.md)
+builder/Dockerfile         Build environment for compiling VICAR units from source
+builder/vicar-build        vimake + make for one unit, run inside the builder image
 build-opensource-image.sh  Local build, mirrors CI
 build-builder-image.sh     Local build of the builder image (not published)
 test-docker-image.sh       Smoke tests, mirrors CI

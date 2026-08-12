@@ -126,4 +126,4 @@ CONTAINER_IMAGE=my-vicar:gen-patch tig gen out=patched.vic nl=4 ns=4
   `.pdf` is in the source directory too.
 - **Missing dependency?** A link failure naming a library the builder lacks is a
   builder-image gap; add the `-devel` package to
-  `terrain-intelligence-generator/docker/Dockerfile.builder` and rebuild.
+  `terrain-intelligence-generator/builder/Dockerfile` and rebuild.

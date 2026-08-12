@@ -27,10 +27,12 @@ echo "  Externals tarball: ${EXTERNAL_FILE}"
 echo ""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOCKER_DIR="${SCRIPT_DIR}/docker"
+# Outside docker/, so the runtime image's workflow does not rebuild on a
+# change to the builder.
+BUILDER_DIR="${SCRIPT_DIR}/builder"
 
-if [ ! -f "${DOCKER_DIR}/Dockerfile.builder" ]; then
-    echo -e "${RED}ERROR: Dockerfile.builder not found in ${DOCKER_DIR}${NC}"
+if [ ! -f "${BUILDER_DIR}/Dockerfile" ]; then
+    echo -e "${RED}ERROR: Dockerfile not found in ${BUILDER_DIR}${NC}"
     exit 1
 fi
 
@@ -41,12 +43,12 @@ echo ""
 
 docker build \
     --platform linux/amd64 \
-    -f "${DOCKER_DIR}/Dockerfile.builder" \
+    -f "${BUILDER_DIR}/Dockerfile" \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
     --build-arg VICAR_VERSION="${VICAR_VERSION}" \
     --build-arg BINARIES_FILE="${BINARIES_FILE}" \
     --build-arg EXTERNAL_FILE="${EXTERNAL_FILE}" \
-    "${DOCKER_DIR}"
+    "${BUILDER_DIR}"
 
 echo ""
 echo -e "${GREEN}✓ Build completed successfully!${NC}"
