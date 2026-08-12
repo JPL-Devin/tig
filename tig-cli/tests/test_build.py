@@ -288,6 +288,7 @@ def test_rootless_podman_keeps_the_user_id_rather_than_asking_for_one(tmp_path):
 
     podman = Runtime("podman", "/usr/bin/podman")
     with patch.object(build_module.subprocess, "run", side_effect=fake_run), \
+            patch.object(build_module.sys, "platform", "linux"), \
             patch.object(build_module, "rootless_podman", return_value=True):
         Builder(podman, "builder", "runtime").build(unit)
 
