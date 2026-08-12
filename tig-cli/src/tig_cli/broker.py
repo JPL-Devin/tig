@@ -119,6 +119,9 @@ while IFS=' ' read -r verb first second <&3; do
         printf 'pid %s\n' "$child" >&4
         wait "$child"
         printf 'status %s\n' "$?" >&4
+        # Closing input the command never read would reset the connection,
+        # and the status just written with it, so read it out first.
+        while IFS= read -r _ <&4; do :; done
     ) &
 done
 """
