@@ -1,4 +1,4 @@
-"""Tests for the direct Docker Engine API client used by the warm path."""
+"""Tests for the runtime API client used by the warm path."""
 import io
 import json
 import os
@@ -10,7 +10,6 @@ import threading
 import pytest
 
 from tig_cli.engine import (
-    DEFAULT_SOCKET,
     Engine,
     EngineError,
     EngineUnavailable,
@@ -18,6 +17,7 @@ from tig_cli.engine import (
     _parse_host,
     _safe,
 )
+from tig_cli.runtime import Runtime, TigError
 
 
 def frame(stream, payload):
@@ -162,8 +162,9 @@ def test_parse_host_reads_a_unix_socket():
     )
 
 
-def test_parse_host_defaults_an_empty_unix_socket():
-    assert _parse_host("unix://") == ("unix", DEFAULT_SOCKET)
+def test_parse_host_rejects_an_empty_unix_socket():
+    with pytest.raises(EngineUnavailable):
+        _parse_host("unix://")
 
 
 def test_parse_host_reads_a_tcp_endpoint():
@@ -181,38 +182,52 @@ def test_parse_host_rejects_an_unknown_scheme():
         _parse_host("ssh://user@host")
 
 
-def test_detect_follows_the_docker_context(monkeypatch, tmp_path):
-    import hashlib
+def test_detect_uses_the_endpoint_the_runtime_reports(monkeypatch):
+    runtime = Runtime("podman", "/usr/bin/podman")
+    monkeypatch.setattr(runtime, "api_host", lambda: "unix:///podman.sock")
 
-    monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    monkeypatch.setenv("DOCKER_CONTEXT", "desktop")
-    digest = hashlib.sha256(b"desktop").hexdigest()
-    meta = tmp_path / "contexts" / "meta" / digest
-    meta.mkdir(parents=True)
-    (meta / "meta.json").write_text(
-        json.dumps({"Endpoints": {"docker": {"Host": "unix:///desktop.sock"}}})
+    engine = Engine.detect(runtime)
+
+    assert (engine.kind, engine.address) == ("unix", "/podman.sock")
+
+
+def test_detect_declines_a_runtime_without_an_api(monkeypatch):
+    """nerdctl and Finch have no API; the caller uses their command line."""
+    runtime = Runtime("nerdctl", "/usr/bin/nerdctl")
+
+    with pytest.raises(EngineUnavailable, match="nerdctl"):
+        Engine.detect(runtime)
+
+
+def test_detect_reports_an_endpoint_that_cannot_be_resolved(monkeypatch):
+    runtime = Runtime("docker", "/usr/bin/docker")
+
+    def unresolvable():
+        raise TigError("Unknown Docker context: missing")
+
+    monkeypatch.setattr(runtime, "api_host", unresolvable)
+
+    with pytest.raises(EngineUnavailable, match="Unknown Docker context"):
+        Engine.detect(runtime)
+
+
+def test_detect_finds_the_runtime_when_it_is_not_given(monkeypatch):
+    runtime = Runtime("docker", "/usr/bin/docker")
+    monkeypatch.setattr(runtime, "api_host", lambda: "unix:///docker.sock")
+    monkeypatch.setattr(
+        Runtime, "detect", classmethod(lambda cls, config=None: runtime)
     )
 
-    engine = Engine.detect()
-
-    assert (engine.kind, engine.address) == ("unix", "/desktop.sock")
+    assert Engine.detect().address == "/docker.sock"
 
 
-def test_detect_rejects_an_unknown_context(monkeypatch, tmp_path):
-    monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    monkeypatch.setenv("DOCKER_CONTEXT", "missing")
-    with pytest.raises(EngineUnavailable):
-        Engine.detect()
+def test_detect_declines_when_no_runtime_is_installed(monkeypatch):
+    def missing(cls, config=None):
+        raise TigError("No container runtime was found on PATH")
 
+    monkeypatch.setattr(Runtime, "detect", classmethod(missing))
 
-def test_detect_without_a_socket(monkeypatch, tmp_path):
-    monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
-    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
-    monkeypatch.setattr("tig_cli.engine.DEFAULT_SOCKET", str(tmp_path / "none"))
-    with pytest.raises(EngineUnavailable):
+    with pytest.raises(EngineUnavailable, match="No container runtime"):
         Engine.detect()
 
 

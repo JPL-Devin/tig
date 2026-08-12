@@ -3,7 +3,7 @@ import os
 import signal
 import sys
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 from click.testing import CliRunner
 from tig_cli.cli import main
 from tig_cli.container import DEFAULT_IMAGE, TigError
@@ -81,6 +81,7 @@ def test_disable_path_translation_option():
 
     mock_cls.assert_called_once_with(
         DEFAULT_IMAGE,
+        config=ANY,
         disable_path_translation=True,
         calibration_path=None,
         selinux_label_disable=None,
@@ -213,6 +214,7 @@ def test_uses_container_image_env_var():
 
     mock_cls.assert_called_once_with(
         custom,
+        config=ANY,
         disable_path_translation=False,
         calibration_path=None,
         selinux_label_disable=None,
@@ -313,6 +315,7 @@ def test_config_file_provides_settings(tmp_path, monkeypatch):
 
     mock_cls.assert_called_once_with(
         "ghcr.io/my-org/vicar:cfg",
+        config=ANY,
         disable_path_translation=True,
         calibration_path=None,
         selinux_label_disable=None,
@@ -360,6 +363,7 @@ def test_env_vars_override_config_file(tmp_path, monkeypatch):
 
     mock_cls.assert_called_once_with(
         "env:2",
+        config=ANY,
         disable_path_translation=False,
         calibration_path="/env/calib",
         selinux_label_disable=None,

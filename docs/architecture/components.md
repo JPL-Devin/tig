@@ -75,9 +75,9 @@ XYZ Point Cloud (.IMG)
 ## Execution Model
 
 [`tig`](../../tig-cli/README.md) keeps one container warm and runs each tool in
-it via `docker exec`, as your host user, with host paths translated so files
-resolve the same inside and out. `tig --shim` additionally writes one command per
-VICAR tool onto your `PATH`.
+it via the container runtime's `exec` (Docker, Podman, nerdctl or Finch), as your
+host user, with host paths translated so files resolve the same inside and out.
+`tig --shim` additionally writes one command per VICAR tool onto your `PATH`.
 
 ## Core Tools
 
@@ -183,7 +183,7 @@ read-only. See [Calibration Data](../reference/calibration-data.md).
 - **Purpose**: Geometric projection, distortion correction
 - **Usage**: Automatic lookup by MARS tools based on image labels
 
-## Docker Architecture
+## Container Architecture
 
 ### Image Layers
 

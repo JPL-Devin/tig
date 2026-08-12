@@ -1,19 +1,19 @@
 """Minimal Docker Engine API client used by the warm path.
 
-The ``docker`` CLI is a Go binary whose startup alone costs more than the work
-it does for a ``docker exec``, and the Docker SDK for Python costs ~90ms to
-import. Both are avoided here: this speaks the Engine API over its socket with
-nothing but the standard library, which is what makes a warm ``tig`` command
-cheaper than the shell wrapper it replaces.
+A runtime CLI is a Go binary whose startup alone costs more than the work it
+does for an ``exec``. That is avoided here: this speaks the Engine API over its
+socket with nothing but the standard library, which is what makes a warm ``tig``
+command cheaper than the shell wrapper it replaces. Docker and Podman both
+serve this API; runtimes that serve none (nerdctl, Finch) go through their
+command line instead.
 
-Only what the warm path needs is implemented (inspect a container, inspect an
-image, run one exec). Anything unusual - a remote or TLS ``DOCKER_HOST``, a
+Only what the warm path needs is implemented (inspect a container, an image or
+an exec, and run one exec). Anything unusual - a remote or TLS endpoint, a
 missing socket, an unexpected reply - raises :class:`EngineUnavailable`, and
-the caller falls back to the Docker SDK path.
+the caller falls back to :mod:`tig_cli.container`.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import selectors
@@ -22,11 +22,11 @@ import socket
 import struct
 import sys
 
+from .runtime import Runtime
 from .spec import TigError
 
 API_VERSION = "v1.41"
 
-DEFAULT_SOCKET = "/var/run/docker.sock"
 
 # Docker's stdout/stderr framing for non-TTY streams: a one-byte stream number,
 # three padding bytes, then a big-endian payload length.
@@ -47,39 +47,11 @@ class EngineError(TigError):
 
 
 class EngineUnavailable(EngineError):
-    """This daemon cannot be driven directly; use the Docker SDK instead."""
+    """This runtime cannot be driven over its API; use its command line."""
 
 
-def _context_host() -> str | None:
-    """The daemon address of the current Docker CLI context, if any.
-
-    Mirrors what the CLI does, so tig follows ``docker context use`` (Docker
-    Desktop, rootless) rather than assuming ``/var/run/docker.sock``.
-    """
-    config_dir = os.environ.get("DOCKER_CONFIG") or os.path.join(
-        os.path.expanduser("~"), ".docker"
-    )
-    name = os.environ.get("DOCKER_CONTEXT")
-    if not name:
-        config = _read_json(os.path.join(config_dir, "config.json"))
-        if config is None:
-            return None
-        name = config.get("currentContext")
-    if not name or name == "default":
-        return None
-
-    digest = hashlib.sha256(name.encode()).hexdigest()
-    meta = _read_json(
-        os.path.join(config_dir, "contexts", "meta", digest, "meta.json")
-    )
-    if meta is None:
-        raise EngineUnavailable(f"Unknown Docker context: {name}")
-    host = (
-        (meta.get("Endpoints") or {}).get("docker") or {}
-    ).get("Host")
-    if not host:
-        raise EngineUnavailable(f"Docker context {name} has no endpoint")
-    return host
+class EngineNotFound(EngineError):
+    """The runtime has no such container, image or exec."""
 
 
 def _safe(reference: str) -> str:
@@ -100,47 +72,49 @@ def _safe(reference: str) -> str:
     return reference
 
 
-def _read_json(path: str):
-    try:
-        with open(path, "rb") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
-        return None
-
-
 def _parse_host(host: str) -> tuple[str, object]:
     """Turn a ``DOCKER_HOST``-style address into connection details."""
     if host.startswith("unix://"):
-        return "unix", host[len("unix://"):] or DEFAULT_SOCKET
+        path = host[len("unix://"):]
+        if not path:
+            raise EngineUnavailable(f"Endpoint names no socket: {host}")
+        return "unix", path
     if host.startswith(("tcp://", "http://")):
         if os.environ.get("DOCKER_TLS_VERIFY"):
-            raise EngineUnavailable("TLS-protected Docker daemons are not supported")
+            raise EngineUnavailable("TLS-protected daemons are not supported")
         rest = host.split("://", 1)[1]
         address, _, port = rest.partition(":")
         return "tcp", (address, int(port or 2375))
-    raise EngineUnavailable(f"Unsupported DOCKER_HOST: {host}")
+    raise EngineUnavailable(f"Unsupported runtime endpoint: {host}")
 
 
 class Engine:
-    """A connection factory for one Docker daemon."""
+    """A connection factory for one runtime's Docker-compatible API."""
 
     def __init__(self, kind: str, address):
         self.kind = kind
         self.address = address
 
     @classmethod
-    def detect(cls) -> "Engine":
-        """Locate the daemon this host talks to.
+    def detect(cls, runtime: Runtime | None = None) -> "Engine":
+        """Locate the API endpoint of the host's container runtime.
+
+        Args:
+            runtime: The runtime to use; detected from the host if absent.
 
         Raises:
-            EngineUnavailable: if the daemon cannot be reached directly.
+            EngineUnavailable: if the runtime serves no reachable API.
         """
-        host = os.environ.get("DOCKER_HOST") or _context_host()
-        if host:
-            return cls(*_parse_host(host))
-        if not os.path.exists(DEFAULT_SOCKET):
-            raise EngineUnavailable(f"No Docker socket at {DEFAULT_SOCKET}")
-        return cls("unix", DEFAULT_SOCKET)
+        try:
+            runtime = runtime or Runtime.detect()
+            host = runtime.api_host()
+        except TigError as e:
+            raise EngineUnavailable(str(e)) from e
+        if not host:
+            raise EngineUnavailable(
+                f"{runtime.name} serves no Docker-compatible API socket"
+            )
+        return cls(*_parse_host(host))
 
     def connect(self) -> "Connection":
         try:
@@ -151,7 +125,7 @@ class Engine:
             else:
                 sock = socket.create_connection(self.address, CONNECT_TIMEOUT)
         except OSError as e:
-            raise EngineUnavailable(f"Cannot reach the Docker daemon: {e}") from e
+            raise EngineUnavailable(f"Cannot reach the container runtime: {e}") from e
         sock.settimeout(None)
         return Connection(sock)
 
@@ -171,7 +145,7 @@ class Engine:
             connection.close()
 
         if status == 404:
-            raise EngineError(f"Not found: {path}")
+            raise EngineNotFound(f"Not found: {path}")
         if status >= 400:
             raise EngineError(_message(payload, status))
         if not payload:
@@ -186,6 +160,9 @@ class Engine:
 
     def inspect_image(self, reference: str) -> dict:
         return self.get(f"/images/{_safe(reference)}/json")
+
+    def inspect_exec(self, exec_id: str) -> dict:
+        return self.get(f"/exec/{_safe(exec_id)}/json") or {}
 
     def exec_command(
         self,

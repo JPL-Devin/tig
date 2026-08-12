@@ -4,7 +4,7 @@ Quick setup guide for TIG - a VICAR image processing environment with ~550 comma
 
 ## Prerequisites
 
-- **Docker** or Podman installed
+- **A container runtime**: Docker, Podman, nerdctl or Finch
 - **Python 3.9+**
 - **8GB RAM** minimum (16GB recommended)
 - **M2020 stereo images** (NavCam or Mastcam-Z)

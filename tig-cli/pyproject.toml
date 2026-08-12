@@ -1,11 +1,10 @@
 [project]
 name = "tig-cli"
 version = "0.2.0"
-description = "TIG CLI for running VICAR commands via Docker"
+description = "TIG CLI for running VICAR commands in a container"
 requires-python = ">=3.9"
 dependencies = [
     "click>=8.0.0",
-    "docker>=6.0.0",
     "tomli>=2.0.1; python_version < '3.11'",
 ]
 authors = [

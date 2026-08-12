@@ -9,6 +9,7 @@ from tig_cli.config import (
     ConfigError,
     config_search_paths,
     env_disable_path_translation,
+    env_runtime,
     env_selinux_label_disable,
     env_writable_paths,
     find_project_config,
@@ -259,3 +260,34 @@ def test_env_selinux_label_disable_invalid(monkeypatch):
     monkeypatch.setenv("TIG_SELINUX_LABEL_DISABLE", "maybe")
     with pytest.raises(ConfigError, match="boolean"):
         env_selinux_label_disable()
+
+
+# --- runtime ---
+
+def test_runtime_key(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text('runtime = "podman"\n')
+    assert load_config(path).runtime == "podman"
+
+
+def test_runtime_defaults_to_unset(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text("")
+    assert load_config(path).runtime is None
+
+
+def test_runtime_must_be_a_string(tmp_path):
+    path = tmp_path / "tig.toml"
+    path.write_text("runtime = 3\n")
+    with pytest.raises(ConfigError, match="must be a string"):
+        load_config(path)
+
+
+def test_env_runtime(monkeypatch):
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "nerdctl")
+    assert env_runtime() == "nerdctl"
+
+
+def test_env_runtime_unset(monkeypatch):
+    monkeypatch.delenv("TIG_CONTAINER_RUNTIME", raising=False)
+    assert env_runtime() is None

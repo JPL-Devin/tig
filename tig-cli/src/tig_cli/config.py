@@ -18,8 +18,13 @@ SYSTEM_CONFIG_PATH = Path("/etc/tig/config.toml")
 USER_CONFIG_SUBPATH = Path("tig/config.toml")
 PROJECT_CONFIG_NAME = "tig.toml"
 
+# Names the container runtime to use, ahead of the config and of what is
+# installed. Also how a spawned helper is told the runtime already chosen.
+RUNTIME_ENV = "TIG_CONTAINER_RUNTIME"
+
 KNOWN_KEYS = frozenset({
     "image",
+    "runtime",
     "writable_paths",
     "disable_path_translation",
     "calibration_path",
@@ -44,6 +49,7 @@ class Config:
     def __init__(
         self,
         image: str | None = None,
+        runtime: str | None = None,
         writable_paths: list[str] | None = None,
         disable_path_translation: bool | None = None,
         calibration_path: str | None = None,
@@ -51,6 +57,7 @@ class Config:
         sources: list[Path] | None = None,
     ):
         self.image = image
+        self.runtime = runtime
         self.writable_paths: list[str] = writable_paths or []
         self.disable_path_translation = disable_path_translation
         self.calibration_path = calibration_path
@@ -132,6 +139,12 @@ def _apply(config: Config, data: dict, path: Path) -> None:
             raise ConfigError(f"{path}: 'image' must be a string.")
         config.image = value
 
+    if "runtime" in data:
+        value = data["runtime"]
+        if not isinstance(value, str):
+            raise ConfigError(f"{path}: 'runtime' must be a string.")
+        config.runtime = value
+
     if "writable_paths" in data:
         value = data["writable_paths"]
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
@@ -199,6 +212,12 @@ def _env_bool(name: str) -> bool | None:
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ConfigError(f"{name} must be a boolean value, got {raw!r}.")
+
+
+def env_runtime() -> str | None:
+    """Return the container runtime named by ``TIG_CONTAINER_RUNTIME``, if set."""
+    value = os.environ.get(RUNTIME_ENV, "").strip()
+    return value or None
 
 
 def env_writable_paths() -> list[str] | None:
