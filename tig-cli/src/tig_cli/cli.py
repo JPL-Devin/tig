@@ -101,12 +101,22 @@ def run_build(
         return
 
     manager.ensure_container(writable_paths=writable_paths)
+    identifier = manager.image_id()
+    if identifier is None:
+        # Builds are recorded per image, so without its id there is nowhere to
+        # record this one that a later invocation would look in.
+        raise TigError(
+            f"The runtime could not report the id of {image}, so the build "
+            f"cannot be recorded against it."
+        )
     install(manager.runtime, manager.container_name, unit, artifact, pdf)
-    overrides = Overrides(str(manager.image_id()))
+    overrides = Overrides(identifier)
     overrides.record(unit, artifact, pdf)
-    # This container now carries what was just recorded, so the next
-    # invocation has nothing to re-apply.
-    overrides.mark_applied(str(manager.container_id()))
+    container_id = manager.container_id()
+    if container_id:
+        # This container now carries what was just recorded, so the next
+        # invocation has nothing to re-apply.
+        overrides.mark_applied(container_id)
     mark_name_applied(manager.container_name)
 
     installed = unit.container_path + (" (+ .pdf)" if pdf else "")

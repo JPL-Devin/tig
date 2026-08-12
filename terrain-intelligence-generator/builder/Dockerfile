@@ -68,7 +68,7 @@ RUN echo "Downloading VICAR external libraries..." && \
     CONTENT_COUNT=$(find "$EXTRACTED_DIR" -maxdepth 1 -mindepth 1 | wc -l) && \
     if [ "$CONTENT_COUNT" -eq 1 ]; then \
         SUBDIR=$(find "$EXTRACTED_DIR" -maxdepth 1 -mindepth 1 -type d | head -1); \
-        cp -r "$SUBDIR"/* ${WORKSPACE}/external/; \
+        if [ -n "$SUBDIR" ]; then cp -r "$SUBDIR"/* ${WORKSPACE}/external/; fi; \
     else \
         cp -r "$EXTRACTED_DIR"/* ${WORKSPACE}/external/; \
     fi && \
