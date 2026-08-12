@@ -37,6 +37,7 @@ from .spec import (
     IMAGE_PLATFORM,
     TigError,
     build_state_root,
+    rootless_podman,
 )
 
 # Not published as an image: the VICAR release tarballs it unpacks are the
@@ -789,7 +790,12 @@ class Builder:
         if os.name == "posix" and sys.platform != "darwin":
             # Docker Desktop maps ownership; elsewhere the build would leave
             # root-owned objects and an unreadable executable behind.
-            command += ["--user", f"{os.getuid()}:{os.getgid()}"]
+            if rootless_podman(self.runtime.name):
+                # Rootless Podman maps a requested uid into the subordinate
+                # range; keep-id maps the user to itself instead.
+                command += ["--userns", "keep-id"]
+            else:
+                command += ["--user", f"{os.getuid()}:{os.getgid()}"]
         command += [self.builder_image, BUILDER_SCRIPT, unit.name, "/src", "/build"]
 
         try:

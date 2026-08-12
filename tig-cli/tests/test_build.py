@@ -274,6 +274,28 @@ def test_the_build_runs_in_the_builder_with_the_source_read_only(tmp_path):
     assert "builder:tag" in command
 
 
+def test_rootless_podman_keeps_the_user_id_rather_than_asking_for_one(tmp_path):
+    """Podman would otherwise map it into the subordinate range."""
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+    recorded = {}
+
+    def fake_run(command, **kwargs):
+        recorded["command"] = command
+        host_build = [a for a in command if a.endswith(":/build")][0]
+        Path(host_build.split(":")[0], unit.name).write_text("binary")
+        return subprocess.CompletedProcess(command, 0)
+
+    podman = Runtime("podman", "/usr/bin/podman")
+    with patch.object(build_module.subprocess, "run", side_effect=fake_run), \
+            patch.object(build_module, "rootless_podman", return_value=True):
+        Builder(podman, "builder", "runtime").build(unit)
+
+    command = recorded["command"]
+    assert "--userns" in command and command[command.index("--userns") + 1] == "keep-id"
+    assert "--user" not in command
+
+
 def test_a_failed_build_points_at_the_build_directory(tmp_path):
     write_unit(tmp_path, "gen", GEN_IMAKE)
     unit = find_unit(tmp_path)
