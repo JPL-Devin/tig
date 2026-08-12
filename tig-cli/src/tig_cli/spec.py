@@ -339,6 +339,7 @@ class RunSpec:
         mounts: list[Mount],
         environment: dict[str, str],
         command: list[str],
+        runtime: str = "docker",
         platform: str = IMAGE_PLATFORM,
         network: str | None = None,
         user: str | None = None,
@@ -350,6 +351,7 @@ class RunSpec:
         self.mounts = mounts
         self.environment = environment
         self.command = command
+        self.runtime = runtime
         self.platform = platform
         self.network = network
         self.user = user
@@ -366,6 +368,9 @@ class RunSpec:
             "mounts": sorted(mount.argument for mount in self.mounts),
             "environment": dict(self.environment),
             "command": list(self.command),
+            # Each runtime keeps its own containers: two of them must not
+            # share a name, or a command would be run in the wrong one.
+            "runtime": self.runtime,
             "platform": self.platform,
             "network": self.network,
             "user": self.user,
@@ -464,6 +469,7 @@ def build_run_spec(
         mounts=list(mounts),
         environment=environment,
         command=["tail", "-f", "/dev/null"],
+        runtime=runtime,
     )
 
     if sys.platform != "darwin":

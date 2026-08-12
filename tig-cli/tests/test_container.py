@@ -477,6 +477,21 @@ def test_container_name_identifies_the_configuration(home_dir, tmp_path):
     assert plain != name_for([str(extra)])
 
 
+def test_container_name_tells_the_runtimes_apart(home_dir, monkeypatch):
+    """Each runtime keeps its own containers, and the warm path is cached
+    under the name, so two of them sharing one would cross the streams."""
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    def name_for(name):
+        runtime = FakeRuntime()
+        runtime.name = name
+        return make_manager(home_dir, runtime=runtime)._run_spec(
+            []
+        ).container_name()
+
+    assert name_for("docker") != name_for("nerdctl")
+
+
 def test_container_name_ignores_the_order_of_the_writable_paths(
     home_dir, tmp_path
 ):
