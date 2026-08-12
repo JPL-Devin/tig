@@ -221,6 +221,28 @@ def test_a_vicar_version_mismatch_is_refused_unless_forced():
         Builder(RUNTIME, "builder", "runtime", force=True).check_images()
 
 
+def test_a_runtime_image_that_is_not_local_yet_is_fetched_to_compare_it():
+    """Nothing to compare against would let a mismatched build through."""
+    versions = {"builder": "5.0", "runtime": "4.9"}
+    pulled = []
+
+    def exists(runtime, image):
+        return image == "builder" or bool(pulled)
+
+    def pull(*arguments, timeout=None):
+        pulled.append(list(arguments))
+        return ""
+
+    with patch.object(build_module, "image_exists", side_effect=exists), \
+            patch.object(build_module, "image_label",
+                         side_effect=lambda r, image, label: versions.get(image)), \
+            patch.object(RUNTIME, "run", side_effect=pull):
+        with pytest.raises(TigError, match="VICAR version mismatch"):
+            Builder(RUNTIME, "builder", "runtime").check_images()
+
+    assert pulled == [["pull", "--platform", build_module.IMAGE_PLATFORM, "runtime"]]
+
+
 def test_images_without_the_version_label_are_accepted():
     with patch.object(build_module, "image_exists", return_value=True), \
             patch.object(build_module, "image_label", return_value=None):
@@ -319,8 +341,14 @@ def test_cleaning_everything_also_drops_units_of_other_images(tmp_path):
     artifact.write_text("binary")
     Overrides("sha256:oldimage0000").record(unit, artifact, None)
 
+    # Their containers still hold the injected program, so they are named for
+    # removal before the record that identifies them is dropped.
+    assert build_module.stale_image_ids("sha256:newimage0000") == [
+        "sha256:oldimage0000"
+    ]
     assert build_module.forget_stale("sha256:newimage0000") == ["gen"]
     assert stale_units("sha256:newimage0000") == []
+    assert build_module.stale_image_ids("sha256:newimage0000") == []
 
 
 def test_objects_of_a_rebuilt_builder_image_are_not_reused(tmp_path):

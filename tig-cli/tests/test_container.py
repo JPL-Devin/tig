@@ -697,9 +697,26 @@ def test_cleaning_a_build_only_removes_this_image_s_idle_containers(
     })
     manager = make_manager(home_dir, runtime=runtime)
 
-    assert manager.remove_containers_of(IMAGE_ID) == (1, 1)
+    assert manager.remove_containers_of([IMAGE_ID]) == (1, 1)
 
     assert runtime.removed == [f"{CONTAINER_PREFIX}-mine"]
+
+
+def test_cleaning_a_build_also_removes_the_containers_of_another_image(home_dir):
+    """A build forgotten for another image is still in that image's containers."""
+    runtime = FakeRuntime({
+        f"{CONTAINER_PREFIX}-mine": described(),
+        f"{CONTAINER_PREFIX}-other": described(image_id="sha256:0123456789abcdef"),
+        f"{CONTAINER_PREFIX}-third": described(image_id="sha256:fedcba9876543210"),
+    })
+    manager = make_manager(home_dir, runtime=runtime)
+
+    # As recorded: the image's id, shortened as the state directories are.
+    assert manager.remove_containers_of([IMAGE_ID, "0123456789ab"]) == (2, 0)
+
+    assert runtime.removed == [
+        f"{CONTAINER_PREFIX}-mine", f"{CONTAINER_PREFIX}-other"
+    ]
 
 
 def test_reaping_never_touches_the_container_in_use(home_dir):

@@ -469,6 +469,30 @@ def forget_stale(current_image_id: str) -> List[str]:
     return dropped
 
 
+def stale_image_ids(current_image_id: str) -> List[str]:
+    """The ids of the images other than the one in use that have a record.
+
+    Their containers hold the injected programs too, so forgetting the record
+    without removing them would leave a patched program nothing reports.
+    """
+    current = Overrides(current_image_id).directory
+    identifiers = []
+    try:
+        directories = [d for d in state_root().iterdir() if d.is_dir()]
+    except OSError:
+        return identifiers
+    for directory in directories:
+        if directory == current or directory.name == "objects":
+            continue
+        try:
+            data = json.loads((directory / "manifest.json").read_text())
+        except (OSError, ValueError):
+            continue
+        identifier = data.get("image_id")
+        identifiers.append(identifier if isinstance(identifier, str) else directory.name)
+    return identifiers
+
+
 def stale_units(current_image_id: str) -> List[str]:
     """Units recorded against an image other than the one in use.
 
@@ -703,6 +727,7 @@ class Builder:
             )
             or ""
         )
+        self._pull_runtime_image()
         builder_version = image_label(self.runtime, self.builder_image, VICAR_VERSION_LABEL)
         runtime_version = image_label(self.runtime, self.runtime_image, VICAR_VERSION_LABEL)
         if not builder_version or not runtime_version:
@@ -715,6 +740,28 @@ class Builder:
                 f"one release and run against another may not load. Rebuild the "
                 f"builder image, or pass --build-force."
             )
+
+    def _pull_runtime_image(self) -> None:
+        """Fetch the runtime image if it is not local, so its label can be read.
+
+        Without it the version check has nothing to compare against and would
+        pass silently, and the image is needed to run the build anyway.
+        """
+        if image_exists(self.runtime, self.runtime_image):
+            return
+        print(
+            f"tig: fetching {self.runtime_image} to check its VICAR version "
+            f"against the builder's.",
+            file=sys.stderr,
+        )
+        try:
+            self.runtime.run(
+                "pull", "--platform", IMAGE_PLATFORM, self.runtime_image, timeout=None
+            )
+        except TigError as e:
+            # Offline, or a runtime without --platform: the check below then
+            # has nothing to compare, as before.
+            print(f"tig: could not fetch {self.runtime_image}: {e}", file=sys.stderr)
 
     def build(self, unit: Unit, jobs: Optional[int] = None) -> Path:
         """Compile a unit, returning the executable on the host.

@@ -122,14 +122,24 @@ def run_build(
 
 def run_build_state(manager, image, unit_name=None, clean=False):
     """List or discard the locally built programs installed over the image."""
-    from .build import Overrides, forget_stale, image_id, stale_units
+    from .build import (
+        Overrides,
+        forget_stale,
+        image_id,
+        stale_image_ids,
+        stale_units,
+    )
 
     identifier = image_id(manager.runtime, image)
     overrides = Overrides(identifier)
 
     if clean:
         dropped = overrides.forget(unit_name)
+        images = [identifier]
         if not unit_name:
+            # Their containers hold the injected programs too, and after the
+            # record is gone nothing else would report them.
+            images += stale_image_ids(identifier)
             dropped += forget_stale(identifier)
         if not dropped:
             click.echo(
@@ -140,7 +150,7 @@ def run_build_state(manager, image, unit_name=None, clean=False):
             return
         # The image's own program is only back in a container created afresh:
         # the injected copy overwrote it in the container's filesystem.
-        removed, in_use = manager.remove_containers_of(identifier)
+        removed, in_use = manager.remove_containers_of(images)
         click.echo(
             f"Forgot {', '.join(dropped)} and removed {removed} container(s); "
             f"the image's own programs are back."
