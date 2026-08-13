@@ -120,7 +120,9 @@ while IFS=' ' read -r verb first second <&3; do
         wait "$child"
         printf 'status %s\n' "$?" >&4
         # Closing input the command never read would reset the connection,
-        # and the status just written with it, so read it out first.
+        # and the status just written with it, so read it out first. Output
+        # goes first: the broker waits for those to end before answering.
+        exec 5>&- 6>&-
         while IFS= read -r _ <&4; do :; done
     ) &
 done
