@@ -277,17 +277,27 @@ done
 
 # The fix is an image environment variable, so it also has to survive docker exec,
 # which is how tig runs programs.
-docker run -d --name vicar-mpi-test ${PLATFORM_FLAG} ${IMAGE_TAG} tail -f /dev/null > /dev/null 2>&1
-sleep 2
-docker exec vicar-mpi-test bash -c 'marsmap > /dev/null 2>&1'
-CODE=$?
-docker stop vicar-mpi-test > /dev/null 2>&1
-docker rm vicar-mpi-test > /dev/null 2>&1
-if [ ${CODE} -eq 1 ]; then
-    echo -e "${GREEN}✓${NC} marsmap exits 1 under docker exec too"
-else
-    echo -e "${RED}✗${NC} marsmap exits ${CODE} under docker exec, expected 1"
+MPI_CONTAINER_NAME="tig-mpi-test-$$"
+if ! docker run -d --name ${MPI_CONTAINER_NAME} ${PLATFORM_FLAG} ${IMAGE_TAG} tail -f /dev/null > /dev/null 2>&1; then
+    echo -e "${RED}✗${NC} could not start ${MPI_CONTAINER_NAME} for the docker exec check"
     MPI_OK=false
+else
+    sleep 2
+    # The sentinel carries the program's own status, so a docker CLI failure
+    # (which also exits 1) cannot masquerade as the expected exit 1.
+    EXEC_OUT=$(docker exec ${MPI_CONTAINER_NAME} bash -c 'marsmap > /dev/null 2>&1; echo "MPI_EXIT:$?"' 2>&1)
+    docker stop ${MPI_CONTAINER_NAME} > /dev/null 2>&1
+    docker rm ${MPI_CONTAINER_NAME} > /dev/null 2>&1
+    CODE=$(echo "${EXEC_OUT}" | sed -n 's/^MPI_EXIT:\([0-9]*\)$/\1/p' | tail -n 1)
+    if [ -z "${CODE}" ]; then
+        echo -e "${RED}✗${NC} docker exec never ran marsmap: ${EXEC_OUT}"
+        MPI_OK=false
+    elif [ "${CODE}" -eq 1 ]; then
+        echo -e "${GREEN}✓${NC} marsmap exits 1 under docker exec too"
+    else
+        echo -e "${RED}✗${NC} marsmap exits ${CODE} under docker exec, expected 1"
+        MPI_OK=false
+    fi
 fi
 
 if [ "${MPI_OK}" = true ]; then
