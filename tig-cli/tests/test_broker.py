@@ -8,6 +8,7 @@ the protocol and cannot be faked in-process.
 """
 import os
 import pathlib
+import pty
 import shutil
 import signal
 import socket
@@ -39,8 +40,8 @@ class Session:
         self.home = str(home)
         self.server = server
 
-    def run(self, command, workdir=None, stdin=None, timeout=30):
-        """Run a command through the broker, as a separate process would."""
+    def _client(self, command, workdir):
+        """The argument list of a client running one command."""
         script = textwrap.dedent(
             """
             import sys
@@ -53,17 +54,31 @@ class Session:
             sys.exit(0 if code is None else code + 1)
             """
         )
+        return [
+            sys.executable,
+            "-c",
+            script,
+            CONTAINER,
+            self.home,
+            workdir if workdir is not None else self.home,
+            *command,
+        ]
+
+    def run(self, command, workdir=None, stdin=None, timeout=30):
+        """Run a command through the broker, as a separate process would."""
         return subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                script,
-                CONTAINER,
-                self.home,
-                workdir if workdir is not None else self.home,
-                *command,
-            ],
+            self._client(command, workdir),
             input=stdin if stdin is not None else b"",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+
+    def run_with_stdin(self, command, stdin, workdir=None, timeout=30):
+        """Run a command with an already open input that reaches no EOF."""
+        return subprocess.run(
+            self._client(command, workdir),
+            stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -232,6 +247,25 @@ def test_a_command_reading_nothing_still_ends(session):
 
     assert code_of(result) == 0
     assert result.stdout == b"done\n"
+
+
+def test_a_command_whose_input_never_ends_is_answered_at_once(session):
+    """A tty stdin reaches no EOF, and waiting for one would cost the grace."""
+    started = time.monotonic()
+    session.run(["true"])
+    with_eof = time.monotonic() - started
+
+    reader, writer = pty.openpty()
+    try:
+        started = time.monotonic()
+        result = session.run_with_stdin(["true"], writer)
+        without_eof = time.monotonic() - started
+    finally:
+        os.close(writer)
+        os.close(reader)
+
+    assert code_of(result) == 0
+    assert without_eof < with_eof + server.OUTPUT_GRACE / 2
 
 
 def test_reports_a_command_that_does_not_exist(session):
