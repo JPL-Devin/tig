@@ -7,7 +7,10 @@ plus the Java `vicario` converter.
 ```
 docker/Dockerfile          Multi-stage build (builder + runtime)
 docker/vicario.jar         Java VICAR→PNG/JPEG/TIFF converter (see docker/VICARIO.md)
+builder/Dockerfile         Build environment for compiling VICAR units from source
+builder/vicar-build        vimake + make for one unit, run inside the builder image
 build-opensource-image.sh  Local build, mirrors CI
+build-builder-image.sh     Local build of the builder image (not published)
 test-docker-image.sh       Smoke tests, mirrors CI
 visor/Dockerfile           VISOR calibration variants, built FROM the base image
 build-visor-image.sh       Local variant build, mirrors CI
@@ -64,6 +67,32 @@ Environment set by the image:
 | `WORKSPACE` | `/usr/local/vicar` |
 | `VICSYS` | `DEVELOPMENT` |
 | `LD_LIBRARY_PATH`, `PATH` | VICAR and externals directories |
+
+## The builder image
+
+The runtime image is optimized for running VICAR, not building it: it has no
+compilers, and the pruning that halves its size removes the headers, the
+imakefiles, the program sources and the external link archives. Compiling a
+VICAR program from source therefore happens in a second image, which
+[`tig --build`](../docs/demos/building-from-source.md) uses:
+
+```bash
+./build-builder-image.sh          # ~7GB, 10-20 minutes, tag :opensource-builder
+```
+
+Same VICAR release, nothing pruned, plus GCC/G++/GFortran, make, imake, tcsh and
+the X11, Motif, ncurses and TBB development packages VICAR's MARS programs link
+against. It is deliberately not published, so the release tarballs are only ever
+fetched by whoever builds it. Both images carry an
+`org.nasa.tig.vicar-version` label, and `tig --build` refuses to install a
+program built against a different release than the one it runs on.
+
+Standalone, without tig:
+
+```bash
+docker run --rm -v "$PWD:/build" terrain-intelligence-generator:opensource-builder \
+    vicar-build marsmesh          # vimake + make for one unit
+```
 
 ## Build arguments
 

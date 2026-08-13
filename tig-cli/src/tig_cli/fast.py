@@ -29,6 +29,7 @@ from .spec import (
     TigError,
     build_mounts,
     build_run_spec,
+    container_carries_builds,
     container_display,
     forwarded_signals,
     get_calibration_path,
@@ -72,6 +73,11 @@ def run(argv: list[str]) -> int | None:
     try:
         plan = _plan(argv[0], argv[1:])
     except (ConfigError, TigError, OSError):
+        return None
+
+    # A container predating a --build, or a rebuild, still runs the image's own
+    # program; the full path installs the recorded build into it first.
+    if not container_carries_builds(plan.name):
         return None
 
     claim = Claim()

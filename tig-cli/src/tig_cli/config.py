@@ -24,6 +24,7 @@ RUNTIME_ENV = "TIG_CONTAINER_RUNTIME"
 
 KNOWN_KEYS = frozenset({
     "image",
+    "builder_image",
     "runtime",
     "writable_paths",
     "disable_path_translation",
@@ -49,6 +50,7 @@ class Config:
     def __init__(
         self,
         image: str | None = None,
+        builder_image: str | None = None,
         runtime: str | None = None,
         writable_paths: list[str] | None = None,
         disable_path_translation: bool | None = None,
@@ -57,6 +59,7 @@ class Config:
         sources: list[Path] | None = None,
     ):
         self.image = image
+        self.builder_image = builder_image
         self.runtime = runtime
         self.writable_paths: list[str] = writable_paths or []
         self.disable_path_translation = disable_path_translation
@@ -138,6 +141,12 @@ def _apply(config: Config, data: dict, path: Path) -> None:
         if not isinstance(value, str):
             raise ConfigError(f"{path}: 'image' must be a string.")
         config.image = value
+
+    if "builder_image" in data:
+        value = data["builder_image"]
+        if not isinstance(value, str):
+            raise ConfigError(f"{path}: 'builder_image' must be a string.")
+        config.builder_image = value
 
     if "runtime" in data:
         value = data["runtime"]

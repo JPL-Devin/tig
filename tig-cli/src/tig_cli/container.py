@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .config import Config
 from .runtime import CommandFailed, Runtime
@@ -117,6 +117,7 @@ class ContainerManager:
         )
         self._config = config
         self._runtime = runtime
+        self._image_identifier: Optional[str] = None
         self.home = home_directory()
         self.calibration_path = resolve_calibration_path(calibration_path)
         self.translator = PathTranslator(self.home)
@@ -155,14 +156,23 @@ class ContainerManager:
         except TigError:
             return None
 
-    def _image_id(self) -> Optional[str]:
-        """The id of the configured image, or ``None`` if it is not pulled."""
+    def image_id(self) -> Optional[str]:
+        """The id of the configured image, or ``None`` if it is not pulled.
+
+        Remembered once known: an image's id does not change under a running
+        invocation, and both reuse and the built programs ask for it.
+        """
+        if self._image_identifier is not None:
+            return self._image_identifier
         try:
             details = self.runtime.inspect("image", self.image)
         except TigError:
             return None
         identifier = details.get("Id")
-        return identifier if isinstance(identifier, str) else None
+        if not isinstance(identifier, str):
+            return None
+        self._image_identifier = identifier
+        return identifier
 
     def _reusable(self, details: Dict[str, Any]) -> bool:
         """Whether an existing container can serve this invocation.
@@ -173,7 +183,7 @@ class ContainerManager:
         they record the image's id or the reference it was run from, so either
         counts.
         """
-        image_id = self._image_id()
+        image_id = self.image_id()
         if image_id is None:
             # Not pulled locally, so it cannot be what is running.
             return False
@@ -209,6 +219,7 @@ class ContainerManager:
                 if self._reusable(existing):
                     try:
                         self._adopt(existing)
+                        self._apply_built_programs(existing)
                         return
                     except CommandFailed as e:
                         if not attempt:
@@ -237,8 +248,50 @@ class ContainerManager:
                     f"Failed to start container from image {self.image}: {e}"
                 ) from e
             self.running = True
+            self._apply_built_programs(self._inspect(self.container_name))
             self._reap_containers(keep=self.container_name)
             return
+
+    def _apply_built_programs(self, details: Optional[Dict[str, Any]]) -> None:
+        """Re-install programs built with --build into this container.
+
+        Injected programs live in the container's filesystem, and containers
+        are replaced routinely, so the recorded builds are re-applied whenever
+        one is created or adopted. A failure is reported and does not stop the
+        command: the container still holds the image's own programs.
+        """
+        if details is None:
+            return
+        identifier = self.image_id()
+        if identifier is None:
+            return
+        container_id = details.get("Id")
+        # Imported here so invocations that never built anything do not pay
+        # for it, and so the build module can use this one.
+        from .build import apply_overrides
+
+        try:
+            installed = apply_overrides(
+                self.runtime,
+                self.container_name,
+                str(container_id or self.container_name),
+                identifier,
+            )
+        except TigError as e:
+            print(f"tig: {e}", file=sys.stderr)
+            return
+        if installed:
+            print(
+                f"tig: re-applied locally built program(s): "
+                f"{', '.join(installed)}",
+                file=sys.stderr,
+            )
+
+    def container_id(self) -> Optional[str]:
+        """The id of this invocation's container, if the runtime has it."""
+        details = self._inspect(self.container_name)
+        identifier = details.get("Id") if details else None
+        return identifier if isinstance(identifier, str) else None
 
     def _adopt(self, details: Dict[str, Any]) -> None:
         """Use an existing container, starting it if it is stopped."""
@@ -406,6 +459,53 @@ class ContainerManager:
         self.running = False
         self.release_claim()
         return removed
+
+    def remove_containers_of(self, image_ids: Iterable[str]) -> Tuple[int, int]:
+        """Remove these images' containers, leaving the ones still in use.
+
+        For forgetting a locally built program: the injected copy overwrote
+        the image's own in the container's filesystem, so only a container
+        created afresh has it back. Containers of an image whose build is not
+        being forgotten are left, as is one another invocation is using.
+
+        Returns:
+            Numbers of containers removed and left alone as in use
+        """
+        wanted = {identifier.replace("sha256:", "") for identifier in image_ids}
+        claimed = self._claimed_containers()
+        removed = 0
+        in_use = 0
+        for name in self._container_names():
+            details = self._inspect(name)
+            if details is None:
+                continue
+            if not self._runs_one_of(details, wanted):
+                continue
+            if name in claimed or self._busy(details):
+                in_use += 1
+                continue
+            try:
+                self.runtime.run("rm", "--force", name)
+            except TigError:
+                continue
+            removed += 1
+        return removed, in_use
+
+    def _runs_one_of(self, details: Dict[str, Any], image_ids: set) -> bool:
+        """Whether a container runs one of these images.
+
+        A record keeps an image's id, sometimes shortened; a runtime reports
+        either the id or the reference the container was run from.
+        """
+        image = details.get("Image")
+        if not isinstance(image, str):
+            return False
+        if image == self.image:
+            image = self.image_id() or ""
+        digest = image.replace("sha256:", "")
+        return bool(digest) and any(
+            digest.startswith(identifier) for identifier in image_ids
+        )
 
     def status(self) -> List[Dict[str, str]]:
         """Describe the containers this tool has created.
