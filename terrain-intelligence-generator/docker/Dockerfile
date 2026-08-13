@@ -104,6 +104,11 @@ ENV SHELL=/bin/bash
 # another VICAR program still sees VICAR's own exit codes.
 ENV PATH="/usr/local/bin:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/tae53/bin/x86_64_linx:${PATH}"
 ENV LD_LIBRARY_PATH="${V2TOP}/olb/x86-64-linx:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/mars/lib/x86-64-linx"
+# hwloc, bundled in the statically linked MPICH, divides by zero in its x86 CPUID
+# backend on CPUs reporting fewer logical processors than cores per package, so
+# MPI_Init kills marsmap, marscor2, marsint and marsremos with SIGFPE. Excluding
+# it falls back to sysfs topology; nothing else in this image uses hwloc.
+ENV HWLOC_COMPONENTS=-x86
 
 # Enable PowerTools (CodeReady Builder) for additional packages
 RUN dnf install -y dnf-plugins-core && \

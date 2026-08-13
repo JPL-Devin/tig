@@ -299,22 +299,12 @@ fi
 # ---------------------------------------------------------------------------
 # Test 7: Map-projected mosaic (marsmap)
 #
-# marsmap is built against MPICH.  In this image MPI_Init's hwloc x86 backend
-# raises SIGFPE during CPU topology discovery, so marsmap dies at startup
-# before it reads its arguments, on any input, on the machines tested here.
-# Setting HWLOC_COMPONENTS=-x86 skips that backend and marsmap runs normally.
-# The first check below records whether the plain invocation works (a warning,
-# not a failure, since it is an upstream/MPI packaging problem); the product
-# assertions then run with the workaround.
+# marsmap is built against MPICH, whose bundled hwloc used to raise SIGFPE in
+# MPI_Init on some host CPUs; the image sets HWLOC_COMPONENTS=-x86 so it starts
+# everywhere, so nothing is needed here.
 # ---------------------------------------------------------------------------
 print_test_header "Test 7: Map projection (marsmap) produces a projected mosaic"
-if docker exec ${CONTAINER_NAME} bash -c 'cd /workspace && marsmap \( left.vic right.vic \) map_plain.vic surface=infinity > marsmap_plain.log 2>&1 && [ -s map_plain.vic ]'; then
-    echo -e "${GREEN}marsmap runs without HWLOC_COMPONENTS=-x86 on this host${NC}"
-else
-    echo -e "${YELLOW}WARNING: plain 'marsmap' failed on this host (MPI/hwloc topology discovery);${NC}"
-    echo -e "${YELLOW}         re-running with HWLOC_COMPONENTS=-x86${NC}"
-fi
-docker exec -e HWLOC_COMPONENTS=-x86 ${CONTAINER_NAME} bash -c '
+docker exec ${CONTAINER_NAME} bash -c '
     cd /workspace || exit 1
     marsmap \( left.vic right.vic \) map.vic surface=infinity > marsmap.log 2>&1
     label -list map.vic > map.label.txt 2>&1
