@@ -297,6 +297,23 @@ def test_rootless_podman_keeps_the_user_id_rather_than_asking_for_one(tmp_path):
     assert "--user" not in command
 
 
+def test_an_unwritable_state_directory_is_reported_not_a_traceback(tmp_path):
+    """The program is installed by then, so the user needs to be told why."""
+    write_unit(tmp_path, "gen", GEN_IMAKE)
+    unit = find_unit(tmp_path)
+    artifact = tmp_path / "gen"
+    artifact.write_text("binary")
+
+    root = tmp_path / "state"
+    root.mkdir()
+    root.chmod(0o500)
+    try:
+        with pytest.raises(TigError, match="Cannot keep a copy of gen"):
+            Overrides("sha256:" + "a" * 64, root=root).record(unit, artifact, None)
+    finally:
+        root.chmod(0o700)
+
+
 def test_a_failed_build_points_at_the_build_directory(tmp_path):
     write_unit(tmp_path, "gen", GEN_IMAKE)
     unit = find_unit(tmp_path)

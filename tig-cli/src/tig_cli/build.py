@@ -380,20 +380,26 @@ class Overrides:
         return units if isinstance(units, dict) else {}
 
     def save(self, units: Dict[str, dict]) -> None:
-        self.directory.mkdir(parents=True, exist_ok=True)
         payload = {"image_id": self.image_id, "units": units}
         # Written whole and moved into place, so a crash cannot leave a
         # half-written manifest that would strand the artifacts.
-        temporary = self.manifest_path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True))
-        temporary.replace(self.manifest_path)
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            temporary = self.manifest_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(payload, indent=2, sort_keys=True))
+            temporary.replace(self.manifest_path)
+        except OSError as e:
+            raise TigError(f"Cannot record the build in {self.directory}: {e}") from e
 
     def record(self, unit: Unit, artifact: Path, pdf: Optional[Path]) -> None:
         """Store a copy of a built program, so a new container can be patched."""
-        self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(artifact, self.artifact_dir / unit.name)
-        if pdf is not None:
-            shutil.copy2(pdf, self.artifact_dir / f"{unit.name}.pdf")
+        try:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(artifact, self.artifact_dir / unit.name)
+            if pdf is not None:
+                shutil.copy2(pdf, self.artifact_dir / f"{unit.name}.pdf")
+        except OSError as e:
+            raise TigError(f"Cannot keep a copy of {unit.name} in {self.artifact_dir}: {e}") from e
 
         units = self.load()
         units[unit.name] = {
