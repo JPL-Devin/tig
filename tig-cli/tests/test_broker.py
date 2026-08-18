@@ -8,6 +8,7 @@ the protocol and cannot be faked in-process.
 """
 import os
 import pathlib
+import pty
 import shutil
 import signal
 import socket
@@ -20,7 +21,7 @@ import time
 
 import pytest
 
-from tig_cli import broker
+from tig_cli import broker, server
 from tig_cli.server import Broker, Job
 from tig_cli.spec import TigError
 
@@ -39,12 +40,12 @@ class Session:
         self.home = str(home)
         self.server = server
 
-    def run(self, command, workdir=None, stdin=None, timeout=30):
-        """Run a command through the broker, as a separate process would."""
+    def _client(self, command, workdir):
+        """The argument list of a client running one command."""
         script = textwrap.dedent(
             """
             import sys
-            from tig_cli import broker
+            from tig_cli import broker, server
             code = broker.run(
                 sys.argv[1], sys.argv[2], sys.argv[4:], sys.argv[3],
                 {"DISPLAY": ":9"},
@@ -53,17 +54,31 @@ class Session:
             sys.exit(0 if code is None else code + 1)
             """
         )
+        return [
+            sys.executable,
+            "-c",
+            script,
+            CONTAINER,
+            self.home,
+            workdir if workdir is not None else self.home,
+            *command,
+        ]
+
+    def run(self, command, workdir=None, stdin=None, timeout=30):
+        """Run a command through the broker, as a separate process would."""
         return subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                script,
-                CONTAINER,
-                self.home,
-                workdir if workdir is not None else self.home,
-                *command,
-            ],
+            self._client(command, workdir),
             input=stdin if stdin is not None else b"",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+
+    def run_with_stdin(self, command, stdin, workdir=None, timeout=30):
+        """Run a command with an already open input that reaches no EOF."""
+        return subprocess.run(
+            self._client(command, workdir),
+            stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -74,7 +89,7 @@ class Session:
         script = textwrap.dedent(
             """
             import sys
-            from tig_cli import broker
+            from tig_cli import broker, server
             code = broker.run(
                 sys.argv[1], sys.argv[2], sys.argv[4:], sys.argv[3], {},
             )
@@ -234,6 +249,25 @@ def test_a_command_reading_nothing_still_ends(session):
     assert result.stdout == b"done\n"
 
 
+def test_a_command_whose_input_never_ends_is_answered_at_once(session):
+    """A tty stdin reaches no EOF, and waiting for one would cost the grace."""
+    started = time.monotonic()
+    session.run(["true"])
+    with_eof = time.monotonic() - started
+
+    reader, writer = pty.openpty()
+    try:
+        started = time.monotonic()
+        result = session.run_with_stdin(["true"], writer)
+        without_eof = time.monotonic() - started
+    finally:
+        os.close(writer)
+        os.close(reader)
+
+    assert code_of(result) == 0
+    assert without_eof < with_eof + server.OUTPUT_GRACE / 2
+
+
 def test_reports_a_command_that_does_not_exist(session):
     result = session.run(["definitely-not-a-tool"])
 
@@ -373,6 +407,45 @@ def test_a_job_whose_grace_has_passed_asks_for_no_wakeup():
 def test_a_broker_that_goes_quiet_is_an_error_not_a_second_run():
     with pytest.raises(TigError):
         broker._status(b"")
+
+
+def test_a_spawned_broker_is_told_which_runtime_to_use(home, monkeypatch):
+    """It runs on its own later, so the choice cannot be made again then."""
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *args, **kwargs: calls.append(kwargs)
+    )
+
+    broker._spawn("tig-vicar-abc", str(home), "/opt/podman/bin/podman")
+
+    assert calls[0]["env"]["TIG_CONTAINER_RUNTIME"] == "/opt/podman/bin/podman"
+
+
+def test_the_agent_dials_a_runtime_named_by_path_by_its_gateway(monkeypatch):
+    """A runtime off PATH is passed on as a path, which names no gateway."""
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "/opt/homebrew/bin/podman")
+
+    assert server.host_address() == "host.containers.internal"
+
+
+def test_the_agent_dials_the_gateway_of_the_runtime_in_use(monkeypatch):
+    """Each runtime names the host differently in its virtual machine."""
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "finch")
+
+    assert server.host_address() == "host.lima.internal"
+
+    # nerdctl runs in a Lima machine on macOS too, whoever started it.
+    monkeypatch.setenv("TIG_CONTAINER_RUNTIME", "nerdctl")
+
+    assert server.host_address() == "host.lima.internal"
+
+
+def test_the_agent_dials_the_host_directly_on_linux(monkeypatch):
+    monkeypatch.setattr(server.sys, "platform", "linux")
+
+    assert server.host_address() == "127.0.0.1"
 
 
 def _waits_for(home, signal_name, code):

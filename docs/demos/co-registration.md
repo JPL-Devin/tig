@@ -147,13 +147,12 @@ The navigation table is an input, not a rewritten image:
 
 ```bash
 tig marsmos inp=frames.lis out=mosaic.img navtable=pointing.nav
-tig env HWLOC_COMPONENTS=-x86 marsmap inp=frames.lis out=mosaic.img \
+tig marsmap inp=frames.lis out=mosaic.img \
   navtable=pointing.nav projection=CYLINDRICAL
 ```
 
 `marsmos` mosaics under a synthetic wider-field camera model derived from the
-inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection (the
-`HWLOC_COMPONENTS=-x86` prefix is the MPI/hwloc workaround explained below);
+inputs; `marsmap` mosaics into a cylindrical, polar or vertical projection;
 `marsortho` produces orthographic mosaics and DEMs from XYZ data. `marsrelabel`
 copies a product with an updated label (`-cm` camera model, `-pm` pointing model,
 `navtable=`) — its `.pdf` states the image data is unchanged and only the label is
@@ -262,16 +261,16 @@ tig difpic inp=\( mosaic_raw.img mosaic_nav.img \)
 available.` and then `19 values read from navigation file` — it reads and applies
 the table regardless of that message.
 
-`marsmap` on the same set dies with a floating-point exception (exit 136) on this
-host. That is an MPI/hwloc CPU-detection problem, not a `marsmap` one, and it is
-worked around per invocation:
+`marsmap` on the same set:
 
 ```bash
-tig env HWLOC_COMPONENTS=-x86 marsmap inp=all.lis out=mosaic.img \
-  navtable=pointing.nav
+tig marsmap inp=all.lis out=mosaic.img navtable=pointing.nav
 ```
 
-which completes and writes a cylindrical mosaic (31 MB for this MSL set).
+which completes and writes a cylindrical mosaic (31 MB for this MSL set). On an
+image built before the MPI/hwloc SIGFPE was fixed in the image itself, `marsmap`
+dies with a floating-point exception (exit 136) instead; prefix such a run with
+`tig env HWLOC_COMPONENTS=-x86`.
 
 ## Worked example — M20 NavCam repeat coverage, verified
 
@@ -329,7 +328,7 @@ normalisation before the difference step.
 
 Executed end to end, with the results above: `marschkovl`, `marsautotie`,
 `marsnav`, `marsnav2`, `marsmos` (with and without a navigation table), `marsmap`
-(with a navigation table, under the `HWLOC_COMPONENTS=-x86` workaround), `difpic`,
+(with a navigation table), `difpic`,
 `f2`, `hist`, `marscheckcm` (all components `OK` at `tol=0.001` on an MSL frame).
 
 Not verified:
@@ -361,7 +360,7 @@ Not verified:
 | Mean pixel error barely improves | Often the tracks are all two-observation; the geometry cannot be constrained. Check the track statistics `marsnav2` prints. |
 | `Unable to find ANY entries for solution id 'X'. Using best available.` | Printed by the mosaic programs; they still read the table. Confirm with the `N values read from navigation file` line that follows. |
 | Output tiepoint file not written | The tiepoint programs will not overwrite an existing file; remove it first. |
-| `Floating point exception (core dumped)`, exit 136 | MPI/hwloc CPU detection, seen here from `marsmap`. Re-run as `tig env HWLOC_COMPONENTS=-x86 <prog> ...`. |
+| `Floating point exception (core dumped)`, exit 136 | MPI/hwloc CPU detection, seen from `marsmap` on images built before the image itself set `HWLOC_COMPONENTS=-x86`. Re-run as `tig env HWLOC_COMPONENTS=-x86 <prog> ...`. |
 
 ## Data sources
 

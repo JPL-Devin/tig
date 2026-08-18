@@ -34,12 +34,22 @@ from .broker import (
     STARTUP_TIMEOUT,
     socket_path,
 )
-from .spec import RUNNER_MARKER
+from .config import env_runtime
+from .spec import RUNNER_MARKER, host_gateway
 
-# What the agent dials to reach this broker. On Docker Desktop the container
-# runs in a virtual machine and reaches the host by name; elsewhere the
-# sidecar shares the host's network stack.
-HOST_ADDRESS = "host.docker.internal" if sys.platform == "darwin" else "127.0.0.1"
+
+def host_address() -> str:
+    """What the agent dials to reach this broker.
+
+    On macOS the container runs in a virtual machine and reaches the host by
+    the name its runtime gives the gateway; on Linux it shares the host's
+    network stack.
+    """
+    if sys.platform != "darwin":
+        return "127.0.0.1"
+    # The runtime may be named by path; the gateway goes by the command.
+    return host_gateway(os.path.basename(env_runtime() or "docker"))
+
 
 # Sent to a client whose command was never started, telling it to run the
 # command itself.
@@ -107,7 +117,7 @@ class Broker:
                     "-c",
                     AGENT,
                     "tig-agent",
-                    HOST_ADDRESS,
+                    host_address(),
                     str(self.port),
                     RUNNER_MARKER,
                 ],

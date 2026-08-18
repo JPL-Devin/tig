@@ -1,15 +1,21 @@
 # tig-cli
 
 Run [VICAR](https://github.com/nasa/VICAR) terrain-processing tools from your host shell,
-executing them transparently inside the TIG Docker image. `tig-cli` handles container
+executing them transparently inside the TIG container image. `tig-cli` handles container
 lifecycle, X11 display forwarding, and host↔container path translation so VICAR commands
 behave as if they ran locally.
 
 ## Requirements
 
 - Python 3.9+
-- A running Docker daemon
+- A container runtime on `PATH`: Docker, Podman, nerdctl or Finch
 - Access to a TIG VICAR image (defaults to the public open-source image)
+
+Nothing here is Docker-specific: the container is created and commands are run
+through the runtime's own command line, which these runtimes share. The first
+one of `docker`, `podman`, `nerdctl`, `finch` that is installed is used;
+`TIG_CONTAINER_RUNTIME` or the `runtime` config key names one instead, and may
+name any other command that takes the same arguments.
 
 ## Installation
 
@@ -57,6 +63,15 @@ tig label /data/scenes/image.vic
 | `--shim` | Write one command per VICAR tool into `~/.local/share/tig/shims`, then exit. See [Running tools unqualified](#running-tools-unqualified). |
 | `--shim-dir PATH` | Write those commands somewhere else; implies `--shim`. |
 | `--shim-force` | With `--shim`, also create commands whose names already exist on your `PATH`. |
+| `--build [UNIT]` | Compile a VICAR program unit from local source and install it in the container, then exit. See [Building from source](#building-from-source). |
+| `--build-unit NAME` | The unit to build; the same as the positional argument. Implies `--build`. |
+| `--build-source PATH` | Build from this directory instead of the current one; implies `--build`. |
+| `--build-image TAG` | Build an image (the runtime image plus one layer holding the program) instead of installing into the running container; implies `--build`. |
+| `--builder-image IMAGE` | Image to compile in. Defaults to `terrain-intelligence-generator:opensource-builder`. |
+| `--build-jobs N` | Parallel compile jobs. |
+| `--build-list` | List the locally built programs installed over the image, then exit. |
+| `--build-clean` | Forget them and remove this image's containers, which carry them, restoring the image's own programs. Containers another invocation is using are left alone. Scoped by `--build-unit`. |
+| `--build-force` | Build even when the builder and runtime images are different VICAR releases. |
 | `--status` | List the containers tig has created, with their writable mounts, then exit. |
 | `--shutdown` | Remove the containers tig has created, then exit. |
 | `--help` | Show help, including the active container image and the config files in use. |
@@ -89,6 +104,8 @@ and loads only that file.
 ```toml
 # ~/.config/tig/config.toml or ./tig.toml
 image = "ghcr.io/my-org/custom-vicar:latest"
+builder_image = "terrain-intelligence-generator:opensource-builder"
+runtime = "podman"
 writable_paths = ["/data/scenes", "/scratch"]
 calibration_path = "~/mars_calibration_m20"
 disable_path_translation = false
@@ -97,7 +114,9 @@ selinux_label_disable = true
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `image` | string | `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource` | VICAR Docker image to run. |
+| `image` | string | `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource` | VICAR container image to run. |
+| `builder_image` | string | `terrain-intelligence-generator:opensource-builder` | Image `--build` compiles in. |
+| `runtime` | string | auto | Container runtime command to use, e.g. `podman`. Unset means the first of `docker`, `podman`, `nerdctl`, `finch` on `PATH`. |
 | `writable_paths` | list of strings | `[]` | Host directories mounted read-write in the container. |
 | `calibration_path` | string | unset | Host directory with MARS/VISOR calibration files. Mounted read-only at `/usr/local/vicar/mars_calib`, and exported as `MARS_CONFIG_PATH` inside the container. `~` is expanded. |
 | `disable_path_translation` | boolean | `false` | Disable host→container path translation. |
@@ -107,7 +126,9 @@ selinux_label_disable = true
 
 | Variable | Overrides | Description |
 | --- | --- | --- |
-| `CONTAINER_IMAGE` | `image` | VICAR Docker image to run. |
+| `CONTAINER_IMAGE` | `image` | VICAR container image to run. |
+| `TIG_BUILDER_IMAGE` | `builder_image` | Image `--build` compiles in. |
+| `TIG_CONTAINER_RUNTIME` | `runtime` | Container runtime command to use, e.g. `podman`. |
 | `TIG_WRITABLE_PATHS` | `writable_paths` | `:`-separated list of host directories to mount read-write. |
 | `MARS_CONFIG_PATH` | `calibration_path` | Host directory with MARS/VISOR calibration files. |
 | `TIG_DISABLE_PATH_TRANSLATION` | `disable_path_translation` | `1`/`true`/`yes`/`on` to disable path translation. |
@@ -140,6 +161,64 @@ Names that already exist on your `PATH` — VICAR ships a `sort`, a `patch` and 
 on `PATH` cannot shadow your system commands. Reach those as `tig sort ...`, or
 pass `--shim-force` if you want the VICAR ones to win.
 
+## Building from source
+
+`tig --build` compiles a VICAR program from your own source and makes it the
+program tig runs, so a patch can be tested without a native VICAR install:
+
+```bash
+cd mars/src/prog/marsmesh     # your copy, with marsmesh.imake in it
+tig --build                   # compile, then install it in the container
+tig marsmesh INP=in.vic OUT=out.obj
+```
+
+From a source root, name the unit and tig finds it below:
+
+```bash
+cd ~/vicar-work               # holds mars/src/prog/marsxyz/marsxyz.imake
+tig --build marsxyz
+```
+
+Compilation happens in a separate builder image, because the runtime image has
+no compilers and none of the headers, imakefiles or external archives a build
+needs. Build it once per machine (it is not published: the VICAR release
+tarballs are yours to fetch):
+
+```bash
+terrain-intelligence-generator/build-builder-image.sh
+```
+
+What `--build` does: runs `vimake` and `make` on `<unit>.imake` in the builder,
+with your source mounted read-only and objects kept in
+`~/.local/share/tig/builds` rather than your source tree; copies the program —
+and `<unit>.pdf`, its TAE parameter definition, when there is one — over the
+image's own at `/usr/local/vicar/dev/{p2,p3,mars}/lib/x86-64-linx/<unit>`; adds
+a `/usr/local/bin` wrapper for a program the image does not already have; and
+checks it loads in the runtime container.
+
+Installed programs live in the container, not the image, and tig replaces
+containers routinely, so each build is recorded and re-applied automatically —
+to a fresh container, and to any container that predates the build or still
+carries an earlier one, whose next command takes the slow path once:
+
+```bash
+tig --build-list    # gen  /usr/local/vicar/dev/p2/lib/x86-64-linx/gen  built 2026-08-11T19:17:27Z  from ~/src/gen
+tig --build-clean   # forget them; the image's own programs are back
+```
+
+For something shareable or reproducible — CI, Airflow, a colleague — build an
+image instead. It is the runtime image plus one layer:
+
+```bash
+tig --build-image my-vicar:marsmesh-fix
+CONTAINER_IMAGE=my-vicar:marsmesh-fix tig marsmesh INP=in.vic OUT=out.obj
+```
+
+Only `PROGRAM` units are supported: `SUBROUTINE` units build into VICAR's link
+libraries, and changing one means rebuilding everything that links it. See
+[Building from source](../docs/demos/building-from-source.md) for a worked
+example.
+
 ## Container reuse
 
 The container is created on first use and then reused, so a pipeline of many
@@ -169,18 +248,18 @@ container up for the next one; `tig --shutdown` removes it.
 ## Warm command latency
 
 Once the container is up, `tig <tool> <args...>` runs on a warm path that costs
-neither the `docker` CLI's startup nor the Docker SDK's and click's imports.
+neither the runtime CLI's startup nor click's imports.
 Commands are handed to a small shell runner already running in the container,
 which starts them without a container exec and without the daemon being
 involved at all. On Linux the two meet over FIFOs under `~/.cache/tig/`; on
-macOS, where a bind-mounted FIFO does not cross into the Docker Desktop VM,
+macOS, where a bind-mounted FIFO does not cross into the runtime's virtual machine,
 the runner instead dials back to a broker on the host (see below). On this
 machine, against the `:opensource` image:
 
 | per command | |
 | --- | --- |
 | `tig <tool>` | 27 ms |
-| `docker exec` in a sidecar container | 32-34 ms |
+| the runtime's `exec` in a sidecar container | 32-34 ms |
 | `tig <tool>` without the in-container runner | 55 ms |
 | `tig <tool>` before this path existed | 158 ms |
 
@@ -189,25 +268,28 @@ slow way, so nothing waits for it, and it needs nothing of the image beyond
 `/bin/sh` (`/bin/bash` for the broker's agent). Each command is run in a
 process group of its own, so interrupting `tig` stops what the tool started
 too. Because a command reaching it proves the container is running, the
-daemon is asked whether the container still matches its image only every 30
+runtime is asked whether the container still matches its image only every 30
 seconds, after the command rather than before it; a container left behind by a
 re-pulled tag is retired then and replaced on the next command.
 
-Anything the warm path does not recognise - options, a container that is not
-running, an interactive terminal, a Docker setup it cannot drive (TLS, an
-unknown context) - falls back, and behaves exactly as before. Set
-`TIG_NO_DISPATCHER=1` to use the daemon socket directly and
-`TIG_NO_FAST_PATH=1` to always take the full path.
+The warm path needs the runtime's Docker-compatible API socket, which Docker
+and Podman serve but containerd-backed runtimes such as nerdctl and Finch do
+not; without one, every command goes through the runtime's command line.
+Anything else the warm path does not recognise - options, a container that is
+not running, an interactive terminal, a setup it cannot drive (TLS, an unknown
+context) - falls back too, and behaves exactly as before. Set
+`TIG_NO_DISPATCHER=1` to use the API socket directly and `TIG_NO_FAST_PATH=1`
+to always take the full path.
 
 ### The macOS broker
 
 Where FIFOs cannot be shared, `tig` starts a broker process on the host and an
-agent in the container; the agent reaches the broker through
-`host.docker.internal`, and each `tig` hands its own standard input, output
+agent in the container; the agent reaches the broker through the gateway name
+its runtime gives the host, and each `tig` hands its own standard input, output
 and error to the broker over a unix socket in `~/.cache/tig/`, which only the
 invoking user can reach. A token in the agent's greeting means nothing else
 on the machine can push commands into the container. If the broker or the
-agent cannot be started, the command goes to the daemon socket as before. Set
+agent cannot be started, the command goes to the API socket as before. Set
 `TIG_NO_BROKER=1` to leave it out, `TIG_BROKER=1` to use it where the FIFO
 dispatcher would otherwise be preferred.
 
@@ -242,7 +324,9 @@ directory you invoke `tig` from, and anything passed with `--writable-path`.
 Writing anywhere else fails with `Read-only file system`.
 
 On Linux the container runs as your own user and group, so output files are owned
-by you rather than by root.
+by you rather than by root. Under rootless Podman, which maps you to a
+subordinate uid instead, the container is run with `--userns=keep-id` for the
+same reason.
 
 ## GUI tools and X11
 
@@ -256,7 +340,8 @@ creates a container it first authorizes the display, so you do not have to:
 - **macOS** — makes XQuartz listen on TCP
   (`defaults write org.xquartz.X11 nolisten_tcp -bool false`), starts it if it
   is not running, and runs `xhost +localhost`; the container uses
-  `DISPLAY=host.docker.internal:0`.
+  `DISPLAY=host.docker.internal:0` (`host.containers.internal` under Podman,
+  `host.lima.internal` under Finch).
 
 This happens only when a container is created, not on every command, and is
 skipped silently when there is no `DISPLAY` or no `xhost` (a headless host has
@@ -290,7 +375,7 @@ pip install -e ".[dev]"
 # Run unit tests
 pytest -m "not integration"
 
-# Run integration tests (requires Docker + a pullable TIG image)
+# Run integration tests (requires a container runtime + a pullable TIG image)
 pytest -m integration
 ```
 

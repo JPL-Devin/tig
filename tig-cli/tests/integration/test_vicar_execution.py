@@ -107,7 +107,9 @@ def test_interrupting_tig_stops_the_tool_in_the_container():
 def _sleepers(manager) -> bool:
     """Whether the test's sleep is still running inside the container."""
     listing = subprocess.run(
-        ["docker", "exec", manager.container_name, "ps", "-e", "-o", "args"],
+        manager.runtime.args(
+            "exec", manager.container_name, "ps", "-e", "-o", "args"
+        ),
         capture_output=True,
         text=True,
     )
@@ -124,6 +126,9 @@ def test_container_is_reused_across_invocations():
         second.ensure_container([])
 
         assert second.container_name == first.container_name
-        assert second.container.id == first.container.id
+        assert (
+            second._inspect(second.container_name)["Id"]
+            == first._inspect(first.container_name)["Id"]
+        )
     finally:
         first.shutdown()

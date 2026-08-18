@@ -17,12 +17,6 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# The hwloc bundled in the image divides by zero in its x86 backend on some
-# host CPUs, so MPI_Init kills marsmap with SIGFPE before it prints anything.
-# Disabling that backend falls back to sysfs. See docs/demos/panorama-mosaic.md.
-marsmap() { tig env HWLOC_COMPONENTS=-x86 marsmap "$@"; }
-marsbrt() { tig env HWLOC_COMPONENTS=-x86 marsbrt "$@"; }
-
 # Find calibration files using helper script
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"
@@ -264,7 +258,7 @@ add_arg wrap_az "$WRAP_AZ"
 # per-frame correction. The overlap pass is a full mosaic run, hence zoomed out.
 if [ "$BRIGHTNESS_MATCH" -eq 1 ]; then
   echo "Step 2: Measuring frame overlaps (marsmap ovr_out)..."
-  marsmap inp=panorama_frames.txt out=panorama_overlap_mosaic.img \
+  tig marsmap inp=panorama_frames.txt out=panorama_overlap_mosaic.img \
     ovr_out=panorama_overlaps.xml -norad -nogrid zoom=0.25 \
     "${PROJ_ARGS[@]}" 2>&1 | grep -E "Projection|Pixel scale|Output lines" || true
 
@@ -278,7 +272,7 @@ if [ "$BRIGHTNESS_MATCH" -eq 1 ]; then
   echo "Step 3: Solving brightness corrections (marsbrt)..."
   # DO_MULT solves one gain per frame. The default DO_LINEAR also solves an
   # offset, which on a five-frame ring is not always well conditioned.
-  marsbrt inp=panorama_frames.txt in_ovr=panorama_overlaps.xml \
+  tig marsbrt inp=panorama_frames.txt in_ovr=panorama_overlaps.xml \
     out=panorama_brtcorr.xml out_solution_id=TIGDEMO do_what=DO_MULT 2>&1 |
     grep -A100 "^Image  " || true
 
@@ -297,7 +291,7 @@ MAP_ARGS=(inp=panorama_frames.txt out=panorama.img -norad "-$GRID" "${PROJ_ARGS[
 [ -f panorama_brtcorr.xml ] && MAP_ARGS+=(brtcorr=panorama_brtcorr.xml)
 [ -n "$ZOOM" ] && MAP_ARGS+=(zoom="$ZOOM")
 
-marsmap "${MAP_ARGS[@]}" 2>&1 |
+tig marsmap "${MAP_ARGS[@]}" 2>&1 |
   grep -E "Projection|Pixel scale|azimuth of first sample|line of zero elevation|Output lines" || true
 
 if [ ! -f panorama.img ]; then

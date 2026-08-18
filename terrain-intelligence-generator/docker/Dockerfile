@@ -85,10 +85,15 @@ RUN echo "Downloading VICAR external libraries..." && \
 # ============================================================================
 FROM oraclelinux:8
 
+ARG VICAR_VERSION=5.0
+
 LABEL org.opencontainers.image.title="Terrain Intelligence Generator"
 LABEL org.opencontainers.image.description="Open source distribution of VICAR-based terrain intelligence generation tools (optimized)"
 LABEL org.opencontainers.image.version="5.0-opensource-optimized"
 LABEL org.opencontainers.image.source="https://github.com/NASA-AMMOS/VICAR"
+# 'tig --build' compares this with the builder image's label: a unit built there
+# links against this image's libraries, so the two must be one VICAR release.
+LABEL org.nasa.tig.vicar-version="${VICAR_VERSION}"
 
 # Set VICAR environment
 ENV V2TOP=/usr/local/vicar/dev
@@ -104,6 +109,11 @@ ENV SHELL=/bin/bash
 # another VICAR program still sees VICAR's own exit codes.
 ENV PATH="/usr/local/bin:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/tae53/bin/x86_64_linx:${PATH}"
 ENV LD_LIBRARY_PATH="${V2TOP}/olb/x86-64-linx:${V2TOP}/p2/lib/x86-64-linx:${V2TOP}/mars/lib/x86-64-linx"
+# hwloc, bundled in the statically linked MPICH, divides by zero in its x86 CPUID
+# backend on CPUs reporting fewer logical processors than cores per package, so
+# MPI_Init kills marsmap, marscor2, marsint and marsremos with SIGFPE. Excluding
+# it falls back to sysfs topology; nothing else in this image uses hwloc.
+ENV HWLOC_COMPONENTS=-x86
 
 # Enable PowerTools (CodeReady Builder) for additional packages
 RUN dnf install -y dnf-plugins-core && \
