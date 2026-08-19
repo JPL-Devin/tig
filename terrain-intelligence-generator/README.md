@@ -67,7 +67,8 @@ signed off by looking at the imagery.
 ```
 
 Data is the pinned public VICAR 5.0 VISOR sample data plus the MSL calibration
-(740 MB + 380 MB compressed, 1.8 GB on disk); `--download` fetches both. Missing
+(740 MB + 380 MB compressed, 1.8 GB on disk); `--download` fetches both into the
+data root, so it cannot be combined with a custom `--calibration`. Missing
 data or calibration is a hard failure carrying the exact `curl` command to fix
 it, never a silent skip. Runtime is ~7 minutes, ~6 of them the full-frame
 `marscorr`.
@@ -79,7 +80,7 @@ it, never a silent skip. Runtime is ~7 minutes, ~6 of them the full-frame
 | `polar-mosaic` | `demo-panorama-mosaic.sh --projection polar` | square projection above a size floor, non-degenerate histogram |
 | `stereo-xyz` | `marscorr` -> `marscor3` -> `marsxyz` | 2-band disparity with real spread, valid XYZ point count, 3-band cloud |
 | `mesh` | `demo-mesh-generation-with-xyz.sh --xyz` | vertex and face counts, every coordinate finite and within 1e6 m |
-| `surface-characteristics` | `demo-surface-characteristics.sh` | products share the XYZ grid, slope in degrees, roughness a small height, both normals fields written |
+| `surface-characteristics` | `demo-surface-characteristics.sh` | products share the XYZ grid, slope in degrees, roughness a small height that actually varies (a raster of the 0.1 m "could not compute" fill fails), both normals fields written |
 | `co-registration` | `demo-co-registration.sh` plus a difference raster | tiepoints kept, mean pixel error improved and under tolerance, non-zero difference raster |
 
 Bounds are floors and ranges taken from an observed run and commented with the

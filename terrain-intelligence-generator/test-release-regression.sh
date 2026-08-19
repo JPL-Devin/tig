@@ -32,7 +32,8 @@
 #   ./test-release-regression.sh [image-tag] [options]
 #
 #   --data-dir DIR      VISOR data root (default $VISOR_DATA_DIR or ~/visor_data)
-#   --calibration DIR   mission calibration dir (default DATA_DIR/calibration/msl)
+#   --calibration DIR   mission calibration dir (default DATA_DIR/calibration/msl;
+#                       not combinable with --download)
 #   --out-dir DIR       report + PNG output (default ./release-regression-<stamp>)
 #   --download          fetch the pinned VICAR 5.0 archives into DATA_DIR first
 #   --keep              keep the per-stage scratch directories
@@ -75,6 +76,11 @@ while [ $# -gt 0 ]; do
 done
 
 SAMPLE_DIR="${DATA_DIR}/sample_data"
+# The archive dictates its own layout, so --download cannot fill a custom dir.
+if [ -n "${CALIB_DIR}" ] && [ "${DO_DOWNLOAD}" -eq 1 ]; then
+    echo "--download extracts to DATA_DIR/calibration/msl; drop --calibration or --download" >&2
+    exit 1
+fi
 CALIB_DIR="${CALIB_DIR:-${DATA_DIR}/calibration/msl}"
 OUT_DIR="${OUT_DIR:-${PWD}/release-regression-$(date +%Y%m%d-%H%M%S)}"
 IMAGE_DIR="${OUT_DIR}/images"
@@ -114,6 +120,9 @@ MIN_FACES=8000              # 38680
 MAX_SLOPE_DEG=180           # max 118.96 (overhangs exceed 90)
 MIN_SLOPE_STD=1             # 12.50
 MAX_ROUGHNESS_M=1.0         # max 0.100, mean 0.055
+# marsrough writes 0.1 where it cannot compute, so an all-sentinel raster is
+# flat: a spread floor is what separates it from a real product (observed 0.043).
+MIN_ROUGH_STD=0.005
 MIN_TIEPOINTS=10            # 25
 MAX_COREG_RESIDUAL_PX=5.0   # 5.96 commanded -> 2.66 solved
 MAX_COREG_DIFF_MEAN=5.0     # 0.00005 DN, std 0.138
@@ -419,7 +428,7 @@ SURF_RC=$?
 if [ ${SURF_RC} -eq 0 ] && [ -s "${SURF_WS}/slope.img" ] && [ -s "${SURF_WS}/roughness.img" ]; then
     read -r SL_L SL_S _ <<<"$(vic_dims "${SURF_WS}/slope.img")"
     read -r SL_MEAN SL_STD SL_MIN SL_MAX <<<"$(vic_stat "${SURF_WS}/slope.img")"
-    read -r RG_MEAN _ RG_MIN RG_MAX <<<"$(vic_stat "${SURF_WS}/roughness.img")"
+    read -r RG_MEAN RG_STD RG_MIN RG_MAX <<<"$(vic_stat "${SURF_WS}/roughness.img")"
     read -r XYZ_IN_L XYZ_IN_S _ <<<"$(vic_dims "${SURFACE_XYZ}")"
     collect_png "${SURF_WS}/slope.png" "slope"
     collect_png "${SURF_WS}/roughness.png" "roughness"
@@ -429,13 +438,14 @@ if [ ${SURF_RC} -eq 0 ] && [ -s "${SURF_WS}/slope.img" ] && [ -s "${SURF_WS}/rou
     # Slope shares the XYZ grid, stays in degrees, roughness is a small height.
     if [ "${SL_L}" -eq "${XYZ_IN_L}" ] && [ "${SL_S}" -eq "${XYZ_IN_S}" ] \
        && ge "${SL_MIN}" 0 && le "${SL_MAX}" ${MAX_SLOPE_DEG} && ge "${SL_STD}" ${MIN_SLOPE_STD} \
-       && ge "${RG_MIN}" 0 && le "${RG_MAX}" ${MAX_ROUGHNESS_M} && [ ${NORMALS_OK} -eq 1 ]; then
+       && ge "${RG_MIN}" 0 && le "${RG_MAX}" ${MAX_ROUGHNESS_M} \
+       && ge "${RG_STD}" ${MIN_ROUGH_STD} && [ ${NORMALS_OK} -eq 1 ]; then
         record PASS "surface-characteristics" \
-            "${SL_L}x${SL_S} products: slope mean ${SL_MEAN}deg (max ${SL_MAX}, std ${SL_STD}), roughness mean ${RG_MEAN} m (max ${RG_MAX}), both normals fields written" \
+            "${SL_L}x${SL_S} products: slope mean ${SL_MEAN}deg (max ${SL_MAX}, std ${SL_STD}), roughness mean ${RG_MEAN} m (max ${RG_MAX}, std ${RG_STD}), both normals fields written" \
             "images/slope.png"
     else
         record FAIL "surface-characteristics" \
-            "slope ${SL_L}x${SL_S} range ${SL_MIN}..${SL_MAX} std ${SL_STD}, roughness ${RG_MIN}..${RG_MAX} m, normals=${NORMALS_OK} (expected ${XYZ_IN_L}x${XYZ_IN_S}, slope <=${MAX_SLOPE_DEG}deg, roughness <=${MAX_ROUGHNESS_M} m)" \
+            "slope ${SL_L}x${SL_S} range ${SL_MIN}..${SL_MAX} std ${SL_STD}, roughness ${RG_MIN}..${RG_MAX} m std ${RG_STD}, normals=${NORMALS_OK} (expected ${XYZ_IN_L}x${XYZ_IN_S}, slope <=${MAX_SLOPE_DEG}deg, roughness <=${MAX_ROUGHNESS_M} m with std >=${MIN_ROUGH_STD})" \
             "images/slope.png"
     fi
 else
