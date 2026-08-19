@@ -147,6 +147,15 @@ calibration_setup() {
         return 0
     fi
 
+    # An explicit setting that failed verification is usually a typo, so say so
+    # rather than quietly using the container's own copy instead.
+    local var
+    for var in MARS_CONFIG_PATH MARS_CALIB_PATH; do
+        [ -n "${!var}" ] || continue
+        echo "WARNING: $var=${!var} is set but holds no usable calibration" >&2
+        echo "         (needs nonempty camera_models/ and param_files/); ignoring it." >&2
+    done
+
     local probed
     if probed=$(find_image_calibration) && [ -n "$probed" ]; then
         CALIB_IN_IMAGE="${probed%|*}"
