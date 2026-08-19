@@ -1,0 +1,52 @@
+# MMGIS + PostGIS, trimmed down from MMGIS' own docker-compose.sample.yml
+# (https://github.com/NASA-AMMOS/MMGIS). The sample's optional adjacent servers
+# (STAC, TiPG, TiTiler, TiTiler-pgSTAC, veloserver) are left out: the TIG layers
+# in this example are static TMS tiles and a mesh served straight out of
+# Missions/, so nothing here needs them. Turn them back on by copying those
+# services from the sample and flipping the matching WITH_* in .env.
+services:
+  mmgis:
+    image: ghcr.io/nasa-ammos/mmgis:5.2.24
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    env_file: .env
+    ports:
+      - 8888:8888
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-XGET",
+          "-k",
+          "http://mmgis:8888/api/utils/healthcheck",
+        ]
+      interval: 20s
+      retries: 5
+      start_period: 15s
+      timeout: 8s
+    restart: on-failure
+    volumes:
+      - ./Missions:/usr/src/app/Missions
+
+  db:
+    image: postgis/postgis:18-3.6-alpine
+    env_file: .env
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+    shm_size: "1g"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d postgres -U ${DB_USER}"]
+      interval: 10s
+      retries: 10
+      start_period: 10s
+      timeout: 8s
+    restart: on-failure
+    volumes:
+      - mmgis-db:/var/lib/postgresql
+
+volumes:
+  mmgis-db:
