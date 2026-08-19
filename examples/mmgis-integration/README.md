@@ -178,7 +178,17 @@ shell history.
 
 That creates the mission, points its `msv.view` at the site and sets the body
 radii, then `POST /addLayer`s every `*.layer.json`. Pass `--token` instead of
-`--username` to use an API token from the Configure page. Then open
+`--username` to use a long-term token; note MMGIS compares `period` against
+`Date.now()` in milliseconds (`scripts/server.js`), so `1d` expires instantly and
+a day is `86400000`:
+
+```bash
+curl -s -b cookies -X POST http://localhost:8888/api/longtermtoken/generate \
+    -H "Content-Type: application/json" -H "x-csrf-token: $CSRF" \
+    -d '{"name":"tig","period":"86400000"}'
+```
+
+Then open
 <http://localhost:8888/?mission=TIG-Demo>: the mosaic draws in **Map**, and the
 mesh in **Globe** (model layers are globe-only).
 

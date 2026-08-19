@@ -88,6 +88,12 @@ api() {
     -d "$body"
 }
 
+# GETs need the token too: on the --token path the cookie jar is empty.
+api_get() {
+  curl -s -b "$COOKIE_JAR" -H "Authorization:Bearer $TOKEN" \
+    "$MMGIS_URL/api/configure/$1"
+}
+
 # Values reach python through the environment: interpolating them into the source
 # would break on a quote and let an argument execute python.
 json_field() { FIELD="$1" python3 -c "import json,os,sys; print(json.load(sys.stdin).get(os.environ['FIELD'],''))"; }
@@ -129,7 +135,7 @@ esac
 # /add deep-merges any config it is given into the template, which concatenates
 # arrays rather than replacing them, so msv.view is set with /upsert instead.
 echo "Pointing the mission at $CENTER_LON, $CENTER_LAT (zoom $ZOOM)..."
-CONFIG=$(curl -s -b "$COOKIE_JAR" "$MMGIS_URL/api/configure/get?mission=$MISSION" \
+CONFIG=$(api_get "get?mission=$MISSION" \
   | MISSION="$MISSION" CENTER_LAT="$CENTER_LAT" CENTER_LON="$CENTER_LON" ZOOM="$ZOOM" \
     RADIUS_MAJOR="$RADIUS_MAJOR" RADIUS_MINOR="$RADIUS_MINOR" python3 -c "
 import json, os, sys
@@ -149,7 +155,7 @@ import json, os
 print(json.load(open(os.environ['LAYER_JSON']))['name'])")
   # A second run has to update the layer MMGIS already holds, and /updateLayer
   # addresses it by the uuid MMGIS assigned it.
-  UUID=$(curl -s -b "$COOKIE_JAR" "$MMGIS_URL/api/configure/get?mission=$MISSION" \
+  UUID=$(api_get "get?mission=$MISSION" \
     | NAME="$NAME" python3 -c "
 import json, os, sys
 def find(layers):
