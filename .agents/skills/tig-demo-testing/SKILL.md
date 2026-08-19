@@ -113,6 +113,49 @@ can emit an all-black image.
   (`Property: RSM_ARTICULATION_STATE` → first `ARTICULATION_DEVICE_ANGLE` element, in radians).
   These two differ by roughly 180 degrees on M2020 — don't compare them to each other.
 
+## Two-epoch change monitoring (`demo-change-monitoring.sh`)
+- Runs ~6 min for six M20 NavCam frames on an 8-core VM; each run writes ~700 MB into its
+  `--workspace`, so always give a fresh workspace dir and keep any reference run untouched.
+- The whole solve happens *before* the statistics-box validation, so a negative test on `--box`
+  (e.g. `--box "1 1 100 100"`) costs a full run — budget for it.
+- Reference magnitudes with `--scale 40 --bounds "0 93 0 -70" --box "100 300 2200 3100"`:
+  15/15 overlap pairs, ~1000 tiepoints, residual ~7.6 → ~1.5 px, renders 2799x3720,
+  epoch σ 367.5 / 713.6, raw diff σ ~638, gain ~700, linear ~384.4, shift controls
+  133.68 / 220.01 / 270.25, difpic re-render 0, no-navtable σ 102-107 with ~10.2 M pixels differing.
+  Tiepoint counts, residuals and the *nav-effect* control move a few percent run to run (the
+  nav-effect control depends on the nav solution); the pixel-shift controls are stable to 4 figures.
+- `marsbrt` conditioning depends on the mode: a `DO_LINEAR` (gain+offset) solve on a multi-sol set is
+  ill-conditioned — multipliers vary in *sign* between runs and can be near-zero *positive*, which a
+  guard testing only `MultCorr <= 0` misses. Gain-only (`do_what=DO_MULT`) is well conditioned on the
+  same data (multipliers ~0.23-2.51, AddCorr exactly 0, BRTCORR renders keeping σ ~85 / ~210). If a
+  BRTCORR stage looks flattened (σ < 1, or < 10% of the raw σ), suspect the mode before the data.
+- When a demo scrapes a VICAR log table with awk, check the scan *terminates* at the blank line after
+  the table and requires the captured field to be numeric — otherwise trailing log lines (e.g.
+  `Solution 9 0.000005 written`) fake a near-zero entry and trip the guard. You can test that scan in
+  isolation on a hand-written fake log instead of re-running the pipeline.
+- Overlap coverage: `marsmap ovr_out=` only measures frames whose footprint lands inside the
+  `--bounds` window, but `marsbrt` still assigns every frame in `joint.lis` a multiplier — so an
+  out-of-bounds tie frame is silently normalised by an unconstrained value. To exercise that path you
+  need frames with genuinely different pointing: the six M20 sol-649/650 frames are all co-pointed
+  (`INSTRUMENT_AZIMUTH` 1.19-1.39°), so no `--bounds` can include the primaries and exclude a tie
+  frame. Use MSL `sample_data/CylindricalMosaic` ILT frames instead, which span all azimuths — e.g.
+  two `NCAM00293` frames as the epochs with an `NCAM00294` frame (~200° away) as `--tie-extra` and
+  `--bounds "150 200 5 -40"`. Verify per-frame coverage directly with
+  `grep '<img ' joint.ovr | grep -o 'key="[0-9]*"' | sort | uniq -c` against the `<images>` block.
+- Pitfall to check in any of these demos: a validation helper that `echo`s its result for capture
+  (`MIN=$(validate ...)`) **swallows its own error messages**, because the `echo "ERROR: ..."` goes to
+  the same captured stdout. With `set -e` the script exits with the right status but prints nothing,
+  so a guardrail looks like a silent crash. When a demo aborts with no message, re-run the failing
+  helper outside command substitution, or check whether stderr (`>&2`) was used.
+- Workspace reuse: the demo marks its workspace with a dotfile and refuses a non-empty directory that
+  lacks it (without deleting anything), but on an *accepted* reuse it deletes its own product types
+  (`*.img *.png *.log *.lis ...`) first. Copy any PNG/log evidence out of a workspace before re-running
+  into it, and note that killing a run mid-way leaves that workspace stripped.
+- Guardrail negative tests that abort before the first VICAR call are cheap and worth doing first:
+  a bogus `--calibration` must fail fast even when a valid `MARS_CONFIG_PATH` is exported (no silent
+  fallback), and a nested `<dir>/mars_calibration_m20` layout must resolve — you can fake the nested
+  layout with symlinks to the real `camera_models`/`param_files`.
+
 ## Testing image-bundled calibration in the demo scripts
 - The in-image branch is proven only if the run is genuinely clean: wrap every command in
   `env -u MARS_CONFIG_PATH -u MARS_CALIB_PATH` **and** re-check the other probe paths
