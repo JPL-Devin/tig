@@ -75,10 +75,19 @@ for cmd in docker tig curl tar; do
 done
 [ -f "${DEMO}" ] || { echo -e "${RED}✗ ${DEMO} not found${NC}"; exit 2; }
 
+# Installed before anything is created, so --keep also preserves the log of an
+# early failure; a supplied --data-dir is a download cache and is never removed.
+CLEANUP_DIRS=()
+cleanup() {
+    [ "${KEEP}" = true ] && return 0
+    [ "${#CLEANUP_DIRS[@]}" -gt 0 ] && rm -rf "${CLEANUP_DIRS[@]}"
+    return 0
+}
+trap cleanup EXIT
+
 if [ -z "${DATA_DIR}" ]; then
     DATA_DIR=$(mktemp -d)
-    # Honour --keep here, or an early failure still takes the log with it.
-    [ "${KEEP}" = true ] || trap 'rm -rf "${DATA_DIR}"' EXIT
+    CLEANUP_DIRS+=("${DATA_DIR}")
 fi
 mkdir -p "${DATA_DIR}"
 # The demo runs from a subdirectory below, where a relative path would not resolve.
@@ -121,6 +130,7 @@ print_header "Step 2: demo-surface-characteristics.sh on real data"
 # A fresh directory per run: a warm container from a previous run still holds
 # the old bind mount, so reusing the path silently loses the outputs.
 RUN_DIR=$(mktemp -d "${DATA_DIR}/run.XXXXXX")
+CLEANUP_DIRS+=("${RUN_DIR}")
 DEMO_LOG="${RUN_DIR}/demo.log"
 
 set +e
