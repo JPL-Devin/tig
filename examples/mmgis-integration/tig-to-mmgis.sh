@@ -252,25 +252,37 @@ if [ -n "$MESH" ]; then
   else
     echo "  ⚠ no $MESH_BASE.mtl beside the mesh: the model will be untextured"
   fi
-  if [ -f "$TEXTURE" ] && [ "$TEXTURE_GAMMA" != "1" ]; then
-    # MMGIS 5.2.24's globe is three.js r118 with a linear output encoding, but
-    # GLTFLoader tags the base colour texture sRGB, so it is linearised on
-    # sampling and never re-encoded: pre-encoding cancels that darkening.
-    command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin), or pass --texture-gamma 1"; exit 1; }
-    gdal_translate -q -of PNG -scale 0 255 0 255 \
-      -exponent "$(TEXTURE_GAMMA="$TEXTURE_GAMMA" python3 -c \
-        'import os; print(1.0 / float(os.environ["TEXTURE_GAMMA"]))')" \
-      "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
-    rm -f "$MESH_OUT/$TEXTURE_OUT.aux.xml"
-    echo "  ✓ texture pre-encoded with gamma $TEXTURE_GAMMA as $TEXTURE_OUT"
-  elif [ -f "$TEXTURE" ] && [ "$TEXTURE" != "${TEXTURE%.png}" ]; then
+  if [ -f "$TEXTURE" ] && [ "$TEXTURE_GAMMA" = "1" ] && [ "$TEXTURE" != "${TEXTURE%.png}" ]; then
     cp "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
+    echo "  ✓ texture copied as $TEXTURE_OUT"
   elif [ -f "$TEXTURE" ]; then
-    # The exported name says .png, so anything else is transcoded, not copied.
-    command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin), needed to convert $TEXTURE to PNG"; exit 1; }
-    gdal_translate -q -of PNG "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
+    command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin); a PNG texture with --texture-gamma 1 needs no GDAL"; exit 1; }
+    # 8-bit sources already span 0-255; anything wider (marsmesh's Int16
+    # texture.img reaches 4048) has to be scaled from its own range, not clipped.
+    read -r SRC_MIN SRC_MAX <<< "$(TEXTURE="$TEXTURE" python3 << 'PY'
+import json, os, subprocess
+
+info = json.loads(subprocess.run(
+    ['gdalinfo', '-json', '-stats', '--config', 'GDAL_PAM_ENABLED', 'NO',
+     os.environ['TEXTURE']], capture_output=True, text=True, check=True).stdout)
+bands = info['bands']
+if all(band['type'] == 'Byte' for band in bands):
+    print(0, 255)
+else:
+    print(min(b['minimum'] for b in bands), max(b['maximum'] for b in bands))
+PY
+)"
+    GDAL_ARGS=(-q -of PNG -ot Byte -scale "$SRC_MIN" "$SRC_MAX" 0 255)
+    if [ "$TEXTURE_GAMMA" != "1" ]; then
+      # MMGIS 5.2.24's globe is three.js r118 with a linear output encoding, but
+      # GLTFLoader tags the base colour texture sRGB, so it is linearised on
+      # sampling and never re-encoded: pre-encoding cancels that darkening.
+      GDAL_ARGS+=(-exponent "$(TEXTURE_GAMMA="$TEXTURE_GAMMA" python3 -c \
+        'import os; print(1.0 / float(os.environ["TEXTURE_GAMMA"]))')")
+    fi
+    gdal_translate "${GDAL_ARGS[@]}" "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
     rm -f "$MESH_OUT/$TEXTURE_OUT.aux.xml"
-    echo "  ✓ texture converted to $TEXTURE_OUT"
+    echo "  ✓ texture scaled from $SRC_MIN-$SRC_MAX with gamma $TEXTURE_GAMMA as $TEXTURE_OUT"
   else
     echo "  ⚠ no texture at $TEXTURE: the model will be untextured"
     echo "    marsmesh writes texture.img; convert it with: tig vicario texture.img texture.png"

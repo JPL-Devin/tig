@@ -140,6 +140,10 @@ a normal-less mesh and draws it almost black. The export fixes both ends:
   while `GLTFLoader` tags the base colour texture sRGB: the texture is
   linearised on sampling and never re-encoded, costing about a gamma.
 
+A texture that is not already 8-bit PNG (marsmesh writes an Int16 `texture.img`)
+is converted to 8-bit PNG and scaled from its own min/max rather than clipped at
+255.
+
 Even so the model renders dimmer than the same imagery served as a tile layer —
 that is the globe's model shading path, not a broken export.
 
