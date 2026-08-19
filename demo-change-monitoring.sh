@@ -666,6 +666,17 @@ MEAN1="${STAT_MEAN[epoch1]}"
 MEAN2="${STAT_MEAN[epoch2]}"
 STD1="${STAT_STD[epoch1]}"
 STD2="${STAT_STD[epoch2]}"
+require_positive_stat() {
+  local label="$1"
+  local value="$2"
+  if [ -z "$value" ] || [[ ! "$value" =~ $GEOMETRY_NUMBER_RE ]] ||
+    ! awk -v value="$value" 'BEGIN { exit !((value + 0) > 0) }'; then
+    echo "ERROR: $label is missing, unparsable, or zero; see $WORKSPACE/stats_epoch2.txt." >&2
+    exit 1
+  fi
+}
+require_positive_stat "Epoch 2 mean" "$MEAN2"
+require_positive_stat "Epoch 2 stdev" "$STD2"
 GAIN=$(awk -v a="$MEAN1" -v b="$MEAN2" 'BEGIN {printf "%.12g", a/b}')
 G2=$(awk -v a="$STD1" -v b="$STD2" 'BEGIN {printf "%.12g", a/b}')
 O2=$(awk -v a="$MEAN1" -v g="$G2" -v b="$MEAN2" 'BEGIN {printf "%.12g", a-g*b}')
@@ -738,7 +749,18 @@ echo "Nav effect difpic: ${NAV_EFFECT_COUNT:-not parsed} differences"
 echo ""
 
 echo "Step 13: Difference display and PNG products"
-K=$(awk -v sigma="${STAT_STD[diff_lin]}" 'BEGIN {printf "%.12g", 255/(6*sigma)}')
+LINEAR_SIGMA="${STAT_STD[diff_lin]}"
+if [ -z "$LINEAR_SIGMA" ] || [[ ! "$LINEAR_SIGMA" =~ $GEOMETRY_NUMBER_RE ]] ||
+  ! awk -v sigma="$LINEAR_SIGMA" 'BEGIN { exit !((sigma + 0) >= 0) }'; then
+  echo "ERROR: Linear difference stdev is missing or invalid; see $WORKSPACE/stats_diff_lin.txt." >&2
+  exit 1
+fi
+if awk -v sigma="$LINEAR_SIGMA" 'BEGIN { exit !(sigma > 0) }'; then
+  K=$(awk -v sigma="$LINEAR_SIGMA" 'BEGIN {printf "%.12g", 255/(6*sigma)}')
+else
+  K=1
+  echo "Linear difference sigma is zero: epochs are identical within the statistics box, not a detected change."
+fi
 DISPLAY_FUNC="\"min(255,max(0,in1*${K}+128))\""
 run_logged diffview.log tig f2 inp=diff_lin.img out=diffview.img \
   func="$DISPLAY_FUNC" format=BYTE
