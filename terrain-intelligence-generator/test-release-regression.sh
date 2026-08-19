@@ -201,15 +201,15 @@ if [ "${DO_DOWNLOAD}" -eq 1 ]; then
     mkdir -p "${DATA_DIR}" || hard_fail "cannot create ${DATA_DIR}"
     [ -d "${SAMPLE_DIR}" ] || curl -fL "${SAMPLE_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "sample data download failed: ${SAMPLE_URL}"
-    [ -d "${CALIB_DIR}" ] || { mkdir -p "${DATA_DIR}/calibration" && \
-        curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}/calibration"; } \
+    # Both archives carry their own top-level dir, so they extract into DATA_DIR.
+    [ -d "${CALIB_DIR}" ] || curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "calibration download failed: ${CALIB_URL}"
 fi
 
 [ -d "${CALIB_DIR}/camera_models" ] || hard_fail \
     "no MSL calibration at ${CALIB_DIR} (expected a camera_models/ directory)" \
     "re-run with --download, or fetch it manually:" \
-    "  curl -L '${CALIB_URL}' | tar -zxf - -C '${DATA_DIR}/calibration'"
+    "  curl -L '${CALIB_URL}' | tar -zxf - -C '${DATA_DIR}'"
 
 MISSING=()
 for f in "${STEREO_L}" "${STEREO_R}" "${SURFACE_XYZ}"; do
