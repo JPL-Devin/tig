@@ -37,21 +37,32 @@ jobs:
       - name: Install the tig CLI
         run: pip install ./tig-cli
 
-      - name: Resolve image tag
-        id: image
-        run: |
-          TAG="${{ github.event.inputs.image_tag }}"
-          if [ -z "${TAG}" ]; then
-            TAG="ghcr.io/${{ github.repository }}/terrain-intelligence-generator:opensource"
-          fi
-          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image tag
+        id: image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/terrain-intelligence-generator"
+          TAG="${{ github.event.inputs.image_tag }}"
+          # On a release, sign off the image built for that tag; :opensource
+          # floats across every pushed build, so it may be a different one.
+          if [ -z "${TAG}" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+            if [ -n "${VERSION}" ] && docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+              TAG="${IMAGE}:${VERSION}"
+            else
+              echo "::warning::no ${IMAGE}:${VERSION} image for this release; testing :opensource instead"
+              TAG="${IMAGE}:opensource"
+            fi
+          fi
+          echo "testing ${TAG}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Free disk space for the VISOR data and image
         run: |

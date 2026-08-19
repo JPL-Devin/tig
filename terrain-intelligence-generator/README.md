@@ -103,7 +103,9 @@ than omitted:
 CI runs it from
 [`release-visual-regression.yml`](../.github/workflows/release-visual-regression.yml)
 on published releases and on `workflow_dispatch` only — never on pull requests
-or ordinary pushes — and uploads `report.md` and every PNG as an artifact.
+or ordinary pushes — and uploads `report.md` and every PNG as an artifact. On a
+release it tests the image tagged with that release's version, warning and
+falling back to `:opensource` when the release published no image.
 
 ## What is in the image
 

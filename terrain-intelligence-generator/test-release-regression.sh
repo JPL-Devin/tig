@@ -208,14 +208,31 @@ command -v tig >/dev/null 2>&1 || hard_fail "the tig CLI is not on PATH" \
     "install it from this repo: pip install ./tig-cli"
 command -v docker >/dev/null 2>&1 || hard_fail "docker is not on PATH"
 
+# Fills MISSING with the input frames not on disk.  The download guards use it
+# so a cancelled extraction, which still leaves the directory behind, is refetched.
+missing_frames() {
+    local f
+    MISSING=()
+    for f in "${STEREO_L}" "${STEREO_R}" "${SURFACE_XYZ}"; do
+        [ -s "${f}" ] || MISSING+=("${f}")
+    done
+    for f in "${PANO_SEQ[@]}"; do
+        [ -s "${PANO_SRC}/${f}${PANO_SUFFIX}" ] || MISSING+=("${PANO_SRC}/${f}${PANO_SUFFIX}")
+    done
+}
+
 if [ "${DO_DOWNLOAD}" -eq 1 ]; then
     banner "Downloading pinned VICAR 5.0 VISOR data (~1.1 GB compressed)"
+    # Without pipefail a truncated curl hides behind tar's exit status.
+    set -o pipefail
     mkdir -p "${DATA_DIR}" || hard_fail "cannot create ${DATA_DIR}"
-    [ -d "${SAMPLE_DIR}" ] || curl -fL "${SAMPLE_URL}" | tar -zxf - -C "${DATA_DIR}" \
+    missing_frames
+    [ ${#MISSING[@]} -eq 0 ] || curl -fL "${SAMPLE_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "sample data download failed: ${SAMPLE_URL}"
     # Both archives carry their own top-level dir, so they extract into DATA_DIR.
-    [ -d "${CALIB_DIR}" ] || curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}" \
+    [ -d "${CALIB_DIR}/camera_models" ] || curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "calibration download failed: ${CALIB_URL}"
+    set +o pipefail
 fi
 
 [ -d "${CALIB_DIR}/camera_models" ] || hard_fail \
@@ -223,13 +240,7 @@ fi
     "re-run with --download, or fetch it manually:" \
     "  curl -L '${CALIB_URL}' | tar -zxf - -C '${DATA_DIR}'"
 
-MISSING=()
-for f in "${STEREO_L}" "${STEREO_R}" "${SURFACE_XYZ}"; do
-    [ -s "${f}" ] || MISSING+=("${f}")
-done
-for s in "${PANO_SEQ[@]}"; do
-    [ -s "${PANO_SRC}/${s}${PANO_SUFFIX}" ] || MISSING+=("${PANO_SRC}/${s}${PANO_SUFFIX}")
-done
+missing_frames
 if [ ${#MISSING[@]} -gt 0 ]; then
     hard_fail "${#MISSING[@]} input frame(s) missing from ${SAMPLE_DIR}" \
         "${MISSING[@]}" \
