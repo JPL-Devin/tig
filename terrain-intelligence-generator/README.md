@@ -295,16 +295,15 @@ MARS programs run against this image with no calibration anywhere on the host:
 `marsrad` reports the camera model it loaded from
 `/usr/local/vicar/mars_calib/<mission>/camera_models/`.
 
-The shipped `demo-*.sh` scripts, however, still require calibration *on the
-host*: they `source find-calibration.sh`, which looks for a host directory
-containing `camera_models/` and `param_files/` and exits before calling `tig`
-when it finds none. Calibration inside the image cannot satisfy that check, so
-with this image a demo script aborts with `ERROR: MARS calibration not found.`
-unless a host calibration path also exists. Making the demos recognise
-image-bundled calibration is a change to `find-calibration.sh` and the demo
-scripts, which this variant deliberately does not touch. Until then, run the
-programs directly - `CONTAINER_IMAGE=...:fullfeatured tig marsrad ...` - or copy
-the stages out of the demo script.
+The shipped `demo-*.sh` scripts work the same way, with nothing mounted:
+`find-calibration.sh` falls back to probing this image when it finds no host
+calibration, and the demos then leave `MARS_CONFIG_PATH` unset so the bundled
+data is not shadowed:
+
+```bash
+CONTAINER_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:fullfeatured \
+  ./demo-panorama-mosaic.sh frames/*.IMG
+```
 
 ### Overriding the bundled calibration
 
