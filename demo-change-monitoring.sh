@@ -422,9 +422,16 @@ PROBE_LEFTAZ=$(grep -m1 "Azimuth minimum" probe.log | \
   sed -E 's/.*Azimuth minimum ([^,]+), Azimuth maximum ([^ ]+).*/\1/')
 PROBE_RIGHTAZ=$(grep -m1 "Azimuth minimum" probe.log | \
   sed -E 's/.*Azimuth minimum ([^,]+), Azimuth maximum ([^ ]+).*/\2/')
-if [ -z "$NATURAL_SCALE" ] || [ -z "$PROBE_TOPEL" ] ||
-  [ -z "$PROBE_BOTTOMEL" ] || [ -z "$PROBE_LEFTAZ" ] || [ -z "$PROBE_RIGHTAZ" ]; then
-  echo "ERROR: Could not parse common geometry from probe.log"
+GEOMETRY_PARSE_FIELD=""
+GEOMETRY_NUMBER_RE='^[+-]?([0-9]+([.][0-9]+)?|[.][0-9]+)([eE][+-]?[0-9]+)?$'
+for field in NATURAL_SCALE PROBE_TOPEL PROBE_BOTTOMEL PROBE_LEFTAZ PROBE_RIGHTAZ; do
+  if [[ ! "${!field}" =~ $GEOMETRY_NUMBER_RE ]]; then
+    GEOMETRY_PARSE_FIELD="$field"
+    break
+  fi
+done
+if [ -n "$GEOMETRY_PARSE_FIELD" ]; then
+  echo "ERROR: Could not parse $GEOMETRY_PARSE_FIELD from probe.log as a numeric geometry value; see $WORKSPACE/probe.log"
   exit 1
 fi
 if [ -n "$SCALE" ]; then
