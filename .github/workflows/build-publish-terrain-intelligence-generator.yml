@@ -140,7 +140,9 @@ jobs:
             EXTERNAL_FILE=${{ steps.build-args.outputs.external_file }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || '' }}
+          # Whenever the build is not pushed, load it instead - otherwise the
+          # tests below would have no image to run, or a stale published one.
+          load: ${{ github.event_name == 'pull_request' || github.event.inputs.push_to_registry == 'false' }}
       
       - name: Generate build summary
         if: always()
@@ -187,7 +189,8 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Note:** Image was built successfully but not pushed (pull request)." >> $GITHUB_STEP_SUMMARY
-            echo "Tests are skipped for PRs to conserve disk space. The image will be tested when merged." >> $GITHUB_STEP_SUMMARY
+            echo "The terrain product tests ran against the locally built image." >> $GITHUB_STEP_SUMMARY
+            echo "The 16 comprehensive tests need the pushed image and run on merge." >> $GITHUB_STEP_SUMMARY
           fi
       
       - name: Run comprehensive tests
@@ -204,8 +207,8 @@ jobs:
           echo "Testing image: ${IMAGE_TAG}"
           echo ""
           
-          # Pull the image from registry
-          docker pull ${IMAGE_TAG}
+          # Already local when the build was loaded rather than pushed
+          docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || docker pull "${IMAGE_TAG}"
           
           # Create temporary workspace for testing
           TEST_WORKSPACE=$(mktemp -d)
@@ -570,12 +573,18 @@ jobs:
           echo "✅ ALL TESTS PASSED"
           echo "============================================"
 
-      # The tests above prove the image is wired up; these prove it produces
-      # terrain products (stereo -> disparity -> XYZ -> mesh, and mosaics),
-      # asserting on product content.  Fixture is synthetic and built in-image,
-      # so no VISOR calibration or downloaded data is needed.  ~1 minute.
+      # On a pull request nothing has pruned the build cache yet, and the
+      # loaded image has to fit next to it.
+      - name: Reclaim disk before the product tests
+        if: success() && github.event_name == 'pull_request'
+        run: |
+          docker builder prune -af
+          df -h /
+
+      # Asserts terrain product content from a synthetic in-image fixture (no
+      # calibration, ~9s).  Runs on pull requests too - the image is loaded above.
       - name: Run terrain product tests
-        if: success() && github.event_name != 'pull_request'
+        if: success()
         run: |
           IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
           ./terrain-intelligence-generator/test-product-pipeline.sh "${IMAGE_TAG}"

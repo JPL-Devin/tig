@@ -291,6 +291,25 @@ documents (passing a 3-band file instead is rejected earlier, with
 any data line. The script treats this stage as optional: it reports the abend
 and continues, and `marsigood` then runs on the tilt status band alone.
 
+The invocation is not the problem. It is what `marsirough.pdf` documents
+(`INP`, `OUT`, `UIX`, `ZIX`, `INST`) and the `uix`/`zix` files are the ones
+`marsitilt.pdf` says to write — 3-band `UIX`, 1-band `ZIX`, confirmed with
+`label -list`. The program then reads **band 2** of the file it has just
+required to have one band, which is why the read ends at end-of-file on line 0:
+under `gdb` the ZIX `zvread` is issued with `BAND 2`. In VICAR's
+[`marsirough.cc`](https://github.com/NASA-AMMOS/VICAR/blob/master/vos/mars/src/prog/marsirough/marsirough.cc)
+the ZIX arrays are `zix_unit[1]`/`zix_band[1]`, but `open_inputs()` fills
+`unit[0..2]`/`band[0..2]` for every input it is given, so `band[1] = 2` and
+`band[2] = 3` are written past the end of the one-element array. Sizing the ZIX
+arrays like the others, or bounding `open_inputs()` by the band count it is
+passed, is the fix — it is an upstream change, not one this repository can make.
+
+`terrain-intelligence-generator/test-marsirough-abend.sh` is the filable
+reproduction: it builds its own fixture in the image (no calibration, no
+download), or takes a real product with `--xyz FILE`, and exits 0 while the
+abend reproduces and 1 once it stops — so when a fixed image appears, CI says
+so and this section becomes wrong on purpose.
+
 **Every PNG is black except a fringe at the horizon:** the product was converted
 with `vicario` alone. Stretch it through a physical range with `cform` first, as
 in [PNG conversion](#9-png-conversion).
@@ -323,8 +342,10 @@ Node), XYZ from `demo-mesh-generation-with-xyz.sh`, VISOR M20 calibration:
 `marsrough`, `marsitilt -heli`, `marsigood`, and every `cform` + `vicario`
 conversion. All statistics quoted above are measured from those outputs.
 
-Not verified: `marsirough` (abends, above); `marsgreach` on a real reachability
-product (no such product available — the producing program is not in the image);
+Not verified: `marsirough` (abends, above — diagnosed as an upstream defect,
+reproduced with the synthetic fixture and with the VISOR sample MSL Navcam XYZ);
+`marsgreach` on a real reachability product (no such product available — the
+producing program is not in the image);
 `marsslope type=direction` and `type=magnitude`; `--instrument seis|hp3|wts`
 beyond confirming that `marsitilt -seis` runs and `marsirough -seis` abends the
 same way; `--coord` values other than `site`.
