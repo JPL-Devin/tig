@@ -166,7 +166,7 @@ fi
 
 if [ -n "${CALIB_IN_IMAGE:-}" ]; then
   # Bundled in the image: nothing to mount, and MARS_CONFIG_PATH must stay
-  # unset, since tig reads it as a host path to mount.
+  # unset, since it is read as a host path to mount.
   echo "Using calibration ${CALIB_IN_IMAGE_DESC:-already in the container}: $CALIB_IN_IMAGE"
   unset MARS_CONFIG_PATH
 else
