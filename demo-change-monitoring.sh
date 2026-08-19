@@ -669,14 +669,17 @@ STD2="${STAT_STD[epoch2]}"
 require_positive_stat() {
   local label="$1"
   local value="$2"
+  local stats="$3"
   if [ -z "$value" ] || [[ ! "$value" =~ $GEOMETRY_NUMBER_RE ]] ||
     ! awk -v value="$value" 'BEGIN { exit !((value + 0) > 0) }'; then
-    echo "ERROR: $label is missing, unparsable, or zero; see $WORKSPACE/stats_epoch2.txt." >&2
+    echo "ERROR: $label is missing, unparsable, or zero; see $WORKSPACE/$stats." >&2
     exit 1
   fi
 }
-require_positive_stat "Epoch 2 mean" "$MEAN2"
-require_positive_stat "Epoch 2 stdev" "$STD2"
+require_positive_stat "Epoch 1 mean" "$MEAN1" stats_epoch1.txt
+require_positive_stat "Epoch 1 stdev" "$STD1" stats_epoch1.txt
+require_positive_stat "Epoch 2 mean" "$MEAN2" stats_epoch2.txt
+require_positive_stat "Epoch 2 stdev" "$STD2" stats_epoch2.txt
 GAIN=$(awk -v a="$MEAN1" -v b="$MEAN2" 'BEGIN {printf "%.12g", a/b}')
 G2=$(awk -v a="$STD1" -v b="$STD2" 'BEGIN {printf "%.12g", a/b}')
 O2=$(awk -v a="$MEAN1" -v g="$G2" -v b="$MEAN2" 'BEGIN {printf "%.12g", a-g*b}')
