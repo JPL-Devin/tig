@@ -113,5 +113,25 @@ can emit an all-black image.
   (`Property: RSM_ARTICULATION_STATE` → first `ARTICULATION_DEVICE_ANGLE` element, in radians).
   These two differ by roughly 180 degrees on M2020 — don't compare them to each other.
 
+## Two-epoch change monitoring (`demo-change-monitoring.sh`)
+- Runs ~6 min for six M20 NavCam frames on an 8-core VM; each run writes ~700 MB into its
+  `--workspace`, so always give a fresh workspace dir and keep any reference run untouched.
+- The whole solve happens *before* the statistics-box validation, so a negative test on `--box`
+  (e.g. `--box "1 1 100 100"`) costs a full run — budget for it.
+- Reference magnitudes with `--scale 40 --bounds "0 93 0 -70" --box "100 300 2200 3100"`:
+  15/15 overlap pairs, ~1000 tiepoints, residual ~7.6 → ~1.5 px, renders 2799x3720,
+  epoch σ 367.5 / 713.6, raw diff σ ~638, gain ~700, linear ~384.4, shift controls
+  133.68 / 220.01 / 270.25, difpic re-render 0, no-navtable σ 102-107 with ~10.2 M pixels differing.
+  Tiepoint counts, residuals and the *nav-effect* control move a few percent run to run (the
+  nav-effect control depends on the nav solution); the pixel-shift controls are stable to 4 figures.
+- `marsbrt` is genuinely ill-conditioned on multi-sol sets: multipliers vary in *sign* between runs,
+  so a guard that only tests `MultCorr <= 0` can miss a run where the primaries get near-zero
+  *positive* multipliers. Check that the flattened-σ guard (BRTCORR σ < 10% of raw σ) is what fires.
+- Pitfall to check in any of these demos: a validation helper that `echo`s its result for capture
+  (`MIN=$(validate ...)`) **swallows its own error messages**, because the `echo "ERROR: ..."` goes to
+  the same captured stdout. With `set -e` the script exits with the right status but prints nothing,
+  so a guardrail looks like a silent crash. When a demo aborts with no message, re-run the failing
+  helper outside command substitution, or check whether stderr (`>&2`) was used.
+
 ## Devin Secrets Needed
 None. Everything above runs from local data plus a public container image.
