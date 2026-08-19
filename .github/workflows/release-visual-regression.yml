@@ -19,9 +19,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'TIG image to test'
+        description: "TIG image to test (empty: this repository's :opensource)"
         required: false
-        default: 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource'
+        default: ''
 
 # contents: write only for the release upload; packages: read for the GHCR pull.
 permissions:

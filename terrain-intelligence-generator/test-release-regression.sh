@@ -206,7 +206,18 @@ echo "output:      ${OUT_DIR}"
 
 command -v tig >/dev/null 2>&1 || hard_fail "the tig CLI is not on PATH" \
     "install it from this repo: pip install ./tig-cli"
-command -v docker >/dev/null 2>&1 || hard_fail "docker is not on PATH"
+# Same resolution order as tig-cli's Runtime.detect, so a Podman or Finch host
+# runs the suite too.
+RUNTIME="${TIG_CONTAINER_RUNTIME:-}"
+if [ -z "${RUNTIME}" ]; then
+    for r in docker podman nerdctl finch; do
+        command -v "${r}" >/dev/null 2>&1 && { RUNTIME="${r}"; break; }
+    done
+fi
+command -v "${RUNTIME:-none}" >/dev/null 2>&1 || hard_fail \
+    "no container runtime on PATH (tried docker, podman, nerdctl, finch)" \
+    "install one, or set TIG_CONTAINER_RUNTIME to the command to use"
+echo "runtime:     ${RUNTIME}"
 
 # Fills MISSING with the input frames not on disk.  The download guards use it
 # so a cancelled extraction, which still leaves the directory behind, is refetched.
@@ -264,8 +275,8 @@ export CONTAINER_IMAGE="${IMAGE_TAG}"
 
 # Pull first: :opensource is a moving tag, so a stale local copy would be tested
 # under the released tag's name.  Fall back to a local image when offline.
-docker pull "${IMAGE_TAG}" >/dev/null 2>&1 || \
-    docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || \
+"${RUNTIME}" pull "${IMAGE_TAG}" >/dev/null 2>&1 || \
+    "${RUNTIME}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || \
     hard_fail "cannot pull ${IMAGE_TAG}"
 
 PANO_FRAMES=()
