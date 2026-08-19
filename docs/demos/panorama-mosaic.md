@@ -246,7 +246,8 @@ Those two runs gave 4646 x 774 and 4646 x 1161 mosaics. In the first, the last
 line of the PNG (elevation -90) has no background pixels at all across its 4646
 samples: the nadir is a single view direction smeared across the full width, and
 the bottom of the image is that smear. In the second, the top line (elevation
-+90) is filled except for 12 samples, entirely from the one frame that sees the
++90) is filled except for 12 background samples (a 24-sample gap once the
+grid-shaded edge pixels are counted), entirely from the one frame that sees the
 zenith. That is the picture-space counterpart of the closing points above.
 
 The same nadir set in the polar projection has no hole in the middle:
