@@ -1,0 +1,223 @@
+name: Build and Publish Fullfeatured Variant
+
+# The batteries-included image: the base Terrain Intelligence Generator image
+# plus one mission's VISOR calibration, published as :fullfeatured for the
+# default mission and :fullfeatured-<mission> otherwise.
+#
+# Like the VISOR variants this builds FROM the published base image rather than
+# rebuilding VICAR, so it deliberately does not depend on the base image build;
+# run it after a new base image has been pushed.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    tags:
+      - 'v*'
+    paths:
+      - 'terrain-intelligence-generator/fullfeatured/**'
+      - 'terrain-intelligence-generator/visor/calibration.sha256'
+      - 'terrain-intelligence-generator/visor/install-visor-calibration.sh'
+      - 'terrain-intelligence-generator/test-fullfeatured-image.sh'
+      - '.github/workflows/build-publish-fullfeatured.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'terrain-intelligence-generator/fullfeatured/**'
+      - 'terrain-intelligence-generator/visor/calibration.sha256'
+      - 'terrain-intelligence-generator/visor/install-visor-calibration.sh'
+      - 'terrain-intelligence-generator/test-fullfeatured-image.sh'
+      - '.github/workflows/build-publish-fullfeatured.yml'
+  workflow_dispatch:
+    inputs:
+      missions:
+        description: 'Space-separated missions to bundle in one image (default: m20)'
+        required: false
+        default: 'm20'
+      base_tag:
+        description: 'Tag of the base image to build on top of'
+        required: false
+        default: 'opensource'
+      vicar_version:
+        description: 'VICAR release holding the calibration assets'
+        required: false
+        default: '5.0'
+      push_to_registry:
+        description: 'Push to GitHub Container Registry'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/terrain-intelligence-generator
+
+jobs:
+  build-and-push:
+    name: fullfeatured
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+
+          # m20 calibration is 5.3GB extracted on top of a 3.12GB base image,
+          # so a hosted runner needs the same cleanup the base image build does.
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+          docker system prune -af --volumes
+
+          echo ""
+          echo "Disk space after cleanup:"
+          df -h
+
+      # Deliberately no docker/setup-buildx-action: its container driver would
+      # keep the built image out of the local daemon, and the image has to be
+      # in the daemon for the test step below to run it.
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine build arguments
+        id: build-args
+        # The inputs arrive as environment variables rather than through
+        # template interpolation, which would splice them into this script.
+        env:
+          MISSIONS_INPUT: ${{ github.event.inputs.missions }}
+          BASE_TAG_INPUT: ${{ github.event.inputs.base_tag }}
+          VICAR_VERSION_INPUT: ${{ github.event.inputs.vicar_version }}
+        run: |
+          MISSIONS="${MISSIONS_INPUT:-m20}"
+          for mission in ${MISSIONS}; do
+            case "${mission}" in
+              m20|mer|msl|msam|phx|nsyt) ;;
+              *) echo "Unknown mission '${mission}'" >&2; exit 1;;
+            esac
+          done
+          echo "missions=${MISSIONS}" >> $GITHUB_OUTPUT
+          # :fullfeatured means the default mission; anything else is named.
+          if [ "${MISSIONS}" = "m20" ]; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=-$(echo "${MISSIONS}" | tr ' ' '-')" >> $GITHUB_OUTPUT
+          fi
+          echo "base_tag=${BASE_TAG_INPUT:-opensource}" >> $GITHUB_OUTPUT
+          echo "vicar_version=${VICAR_VERSION_INPUT:-5.0}" >> $GITHUB_OUTPUT
+          # A repository owner may be mixed case; an image reference may not.
+          echo "image=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.build-args.outputs.image }}
+          tags: |
+            # The stable identifier, the counterpart of 'opensource' for the
+            # base image
+            type=raw,value=fullfeatured${{ steps.build-args.outputs.suffix }}
+            type=ref,event=branch,suffix=-fullfeatured${{ steps.build-args.outputs.suffix }}
+            type=ref,event=pr,suffix=-fullfeatured${{ steps.build-args.outputs.suffix }}
+            type=semver,pattern={{version}},suffix=-fullfeatured${{ steps.build-args.outputs.suffix }}
+            type=sha,prefix=sha-,format=short,suffix=-fullfeatured${{ steps.build-args.outputs.suffix }}
+
+      # Built to the local daemon first so the image can be tested before it is
+      # published. Nothing is cached: the layer is the calibration data itself,
+      # so a cache would only store another copy of it.
+      - name: Build fullfeatured image
+        env:
+          BASE_IMAGE: ${{ steps.build-args.outputs.image }}
+          BASE_TAG: ${{ steps.build-args.outputs.base_tag }}
+          VICAR_VERSION: ${{ steps.build-args.outputs.vicar_version }}
+          MISSIONS: ${{ steps.build-args.outputs.missions }}
+          LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          # docker/metadata-action emits newline-separated key=value labels;
+          # plain docker build has no labels input to hand them to.
+          label_args=()
+          while read -r label; do
+            if [ -n "${label}" ]; then
+              label_args+=(--label "${label}")
+            fi
+          done <<< "${LABELS}"
+
+          # Context is terrain-intelligence-generator/: the calibration
+          # installer and pinned digests are shared with the VISOR variants.
+          docker build \
+            --platform linux/amd64 \
+            --file terrain-intelligence-generator/fullfeatured/Dockerfile \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "BASE_TAG=${BASE_TAG}" \
+            --build-arg "VICAR_VERSION=${VICAR_VERSION}" \
+            --build-arg "VISOR_MISSIONS=${MISSIONS}" \
+            "${label_args[@]}" \
+            --label "org.opencontainers.image.title=Terrain Intelligence Generator (fullfeatured, ${MISSIONS})" \
+            --label "org.opencontainers.image.description=Terrain Intelligence Generator with ${MISSIONS} VISOR calibration bundled, ready to run the TIG demos with no external downloads" \
+            --tag "fullfeatured:local" \
+            terrain-intelligence-generator
+
+      - name: Test fullfeatured image
+        run: ./terrain-intelligence-generator/test-fullfeatured-image.sh fullfeatured:local
+
+      - name: Push fullfeatured image
+        if: github.event_name != 'pull_request' && github.event.inputs.push_to_registry != 'false'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # The m20 image is 8.75GB, so a rejected push is a plausible failure
+          # mode and must not read as a generic red job.
+          for tag in ${TAGS}; do
+            docker tag "fullfeatured:local" "${tag}"
+            if ! docker push "${tag}"; then
+              {
+                echo "## ❌ Push of the fullfeatured image failed"
+                echo ""
+                echo "\`${tag}\` ($(docker image inspect "${tag}" \
+                  --format '{{.Size}}' | numfmt --to=iec)) was built and tested"
+                echo "but the registry would not take it. If this is a size or"
+                echo "quota rejection, the image needs a different"
+                echo "distribution path rather than a workflow retry."
+              } >> $GITHUB_STEP_SUMMARY
+              echo "::error title=Push failed::${tag} was rejected by ${REGISTRY}"
+              exit 1
+            fi
+          done
+
+      - name: Generate build summary
+        if: always()
+        run: |
+          SIZE=$(docker image inspect "fullfeatured:local" \
+            --format '{{.Size}}' 2>/dev/null | numfmt --to=iec 2>/dev/null) || true
+          SIZE="${SIZE:-n/a}"
+          {
+            echo "## Fullfeatured variant"
+            echo ""
+            echo "- Missions: \`${{ steps.build-args.outputs.missions }}\`"
+            echo "- Base image: \`${{ steps.build-args.outputs.base_tag }}\`"
+            echo "- Calibration release: VICAR \`${{ steps.build-args.outputs.vicar_version }}\`"
+            echo "- Image size: \`${SIZE}\`"
+            echo "- Published tag: \`fullfeatured${{ steps.build-args.outputs.suffix }}\`"
+            echo ""
+            df -h / | tail -1
+          } >> $GITHUB_STEP_SUMMARY

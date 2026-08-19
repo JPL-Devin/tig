@@ -193,9 +193,18 @@ plus the Java `vicario` converter. Published as
 
 VICAR Institutional Stereo Observation Repository — camera calibration files for
 M20, MSL, MER and other missions. Not bundled in the base image; mount it at
-runtime, or use a `:visor-<mission>` image variant that bundles it.
+runtime, or use a `:visor-<mission>` or `:fullfeatured` image variant that
+bundles it.
 
 📖 [Downloading VISOR Data](docs/demos/downloading-visor-data.md) · [Calibration Data](docs/reference/calibration-data.md)
+
+### Fullfeatured image variant
+
+The base image plus M20 VISOR calibration, so MARS calibration-dependent
+programs run with nothing downloaded and nothing mounted. Opt-in via
+`CONTAINER_IMAGE`; the tig default image is unchanged.
+
+📁 `terrain-intelligence-generator/fullfeatured/` · 📖 [README](terrain-intelligence-generator/README.md#fullfeatured-variant)
 
 ### Demos
 

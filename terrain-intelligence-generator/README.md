@@ -13,8 +13,12 @@ build-opensource-image.sh  Local build, mirrors CI
 build-builder-image.sh     Local build of the builder image (not published)
 test-docker-image.sh       Smoke tests, mirrors CI
 visor/Dockerfile           VISOR calibration variants, built FROM the base image
+visor/install-visor-calibration.sh  Calibration download/verify/extract, shared by both variants
 build-visor-image.sh       Local variant build, mirrors CI
 test-visor-image.sh        Variant smoke tests, mirrors CI
+fullfeatured/Dockerfile    Batteries-included variant (base image + M20 calibration)
+build-fullfeatured-image.sh Local fullfeatured build, mirrors CI
+test-fullfeatured-image.sh  Fullfeatured smoke tests, mirrors CI
 ```
 
 ## Using the published image
@@ -116,6 +120,8 @@ On `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator`:
 - `:main`, `:develop` — branch builds
 - `:v*` — version tags
 - `:visor-<mission>` — base image plus one mission's VISOR calibration (below)
+- `:fullfeatured` — base image plus M20 calibration, ready to run with nothing
+  mounted (below)
 
 ## Troubleshooting
 
@@ -232,6 +238,81 @@ bundled data lives in a per-mission subdirectory
 mission's files directly; `MARS_CONFIG_PATH` lists the mount point first and
 each mission directory after it, and MARS `CONFIG_PATH` entries that do not
 exist are skipped. Both layouts therefore resolve, with the mount winning.
+
+## Fullfeatured variant
+
+`:fullfeatured` is the one-image answer to "what do I pull to just run
+something?": the published base image plus M20 VISOR calibration, on
+`MARS_CONFIG_PATH`, with no download, no mount and no environment variable to
+set.
+
+```bash
+CONTAINER_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:fullfeatured \
+  tig marsrad NLF_0300_0693569889_022FDR_N0090000NCAM00501_0A0295J01.IMG out.RAD.IMG
+```
+
+| Tag | Missions bundled | Image size |
+| --- | --- | --- |
+| `:fullfeatured` | `m20` (default) | 8.75 GB |
+| `:fullfeatured-msl` | `msl` | 3.68 GB |
+
+It bundles calibration and nothing else, because nothing else is missing. Every
+program the shipped demos invoke - `marsrad`, `marsnav`, `marsmap`, `marsmos`,
+`marsbrt`, `marsxyz`, `marsmesh`, `stretch`, `vicario`, `obj2gltf`, `obj2plane`,
+`marstile` - is already in the base image, and the demo scripts run on the host
+through `tig`, not inside the image. Adding packages would only undo the
+slimming that took the base image from ~8GB to ~2GB, so no package is added.
+
+That makes `:fullfeatured` the same content as `:visor-m20` under a name that
+says what it is for, plus a mission default (`m20`) chosen because the demos and
+docs are written around M20 NavCam products. `VISOR_MISSIONS` is a
+space-separated build argument exactly as in `visor/Dockerfile`, so a
+multi-mission image needs no separate definition.
+
+The variant is opt-in. `tig`'s default image is unchanged
+(`:opensource`); select this one per invocation with `CONTAINER_IMAGE`, or
+permanently with the `image` key in `~/.config/tig/config.toml`.
+
+### Building and testing it locally
+
+```bash
+./build-fullfeatured-image.sh                        # m20, tag :fullfeatured
+./build-fullfeatured-image.sh msl                    # tag :fullfeatured-msl
+./build-fullfeatured-image.sh "m20 msl" tig:ff-both
+./test-fullfeatured-image.sh terrain-intelligence-generator:fullfeatured
+```
+
+The tests assert the bundled calibration exists for every mission in
+`VISOR_MISSIONS`, that `MARS_CONFIG_PATH` covers them, that no compressed
+archive survived into the image, that a calibration mount overrides the bundled
+data, and that every program the shipped demo scripts invoke is present. These
+are the checks CI runs in
+[`build-publish-fullfeatured.yml`](../.github/workflows/build-publish-fullfeatured.yml).
+
+### Running a demo against it
+
+MARS programs run against this image with no calibration anywhere on the host:
+`marsrad` reports the camera model it loaded from
+`/usr/local/vicar/mars_calib/<mission>/camera_models/`.
+
+The shipped `demo-*.sh` scripts, however, still require calibration *on the
+host*: they `source find-calibration.sh`, which looks for a host directory
+containing `camera_models/` and `param_files/` and exits before calling `tig`
+when it finds none. Calibration inside the image cannot satisfy that check, so
+with this image a demo script aborts with `ERROR: MARS calibration not found.`
+unless a host calibration path also exists. Making the demos recognise
+image-bundled calibration is a change to `find-calibration.sh` and the demo
+scripts, which this variant deliberately does not touch. Until then, run the
+programs directly - `CONTAINER_IMAGE=...:fullfeatured tig marsrad ...` - or copy
+the stages out of the demo script.
+
+### Overriding the bundled calibration
+
+Identical to the VISOR variants: a host calibration path is mounted read-only
+at `/usr/local/vicar/mars_calib` and hides the bundled data completely. Note
+that this hides `flat_fields/` too, which is nearly all of M20's 5.3 GB
+(`camera_models/` and `param_files/` together are 1.3 MB), so a partial host
+copy is not a way to keep the bundled radiometry.
 
 ## License
 
