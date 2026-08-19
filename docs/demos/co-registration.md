@@ -5,14 +5,19 @@ Bringing overlapping frames into a common geometry with the MARS tools, driven b
 top of that.
 
 `demo-co-registration.sh` runs the sequence: overlap check → tiepoints → pointing
-solution.
+solution. `demo-change-monitoring.sh` composes that into a two-epoch change
+product: joint solve → common projection → difference raster → registration
+controls.
 
-> **There is no change-detection program in this image.** Nothing in the ~74
-> `mars*` programs takes two epochs and returns a difference product. Change
-> monitoring is a workflow you compose: acquire repeat coverage, co-register it
-> with the programs below, then difference or measure the registered products
-> with general VICAR arithmetic (`f2`, `difpic`, `hist`). The
-> [Change monitoring](#change-monitoring) section says what that costs you.
+> **There is still no change-detection program in this image.** Nothing in the
+> ~74 `mars*` programs takes two epochs and returns a difference product. Change
+> monitoring is a workflow you compose, and `demo-change-monitoring.sh` is that
+> composition, run end to end on two sols of M20 NavCam repeat coverage:
+> `marschkovl` → `marsautotie` → `marsnav` → `marsmap` per epoch with one shared
+> navigation table → `f2`/`difpic`/`hist`. What it produces is a *difference
+> raster with a measured registration floor*, not a change map — see
+> [Two-epoch change product](#two-epoch-change-product--verified) for the numbers
+> and for what dominates the difference (illumination, not surface change).
 
 ## What co-registration means here
 
@@ -99,7 +104,10 @@ rather than correlation, and its `.pdf` notes it is patent-encumbered (SIFT and
 ASIFT) and camera-specific in its tuning. `marstie` gathers tiepoints manually or
 automatically and accepts `in_tpt=` for refining an existing set.
 `marsfidfinder` finds projected fiducial points instead of image features. All
-four write the same tiepoint file for `marsnav`.
+four write the same tiepoint file for `marsnav` — but see
+[The other tiepoint sources](#the-other-tiepoint-sources--marstie-marsautotie2-marsfidfinder)
+for what happened when they were actually run: only `marsautotie` and `marstie`
+produced tiepoints `marsnav` could use.
 
 ### 3. Pointing solution — `marsnav`
 
@@ -178,6 +186,10 @@ registration half; the differencing half is general VICAR:
 6. **Difference.** `f2 inp=(a,b) out=diff.img func="in1-in2"`, `difpic` for a
    changed-pixel count, `hist` for statistics.
 
+`demo-change-monitoring.sh` is exactly that sequence, plus the normalisation and
+the control experiments without which the difference cannot be interpreted — see
+[Two-epoch change product](#two-epoch-change-product--verified).
+
 Two constraints that this workflow does not solve for you, and neither does any
 program in the image:
 
@@ -196,7 +208,235 @@ The stereo comparison helpers named alongside these programs are not change
 detectors either: `marsdispcompare` cross-checks L→R against R→L disparity to
 build a rejection mask, `marserrdisp` computes disparity error images, and
 `marserror` propagates those into range/XYZ error volumes. They quantify stereo
-uncertainty within one acquisition.
+uncertainty within one acquisition. All three are verified below.
+
+## Two-epoch change product — verified
+
+`demo-change-monitoring.sh` implements the sequence above and adds what makes the
+output readable: a common projection, a normalisation step, the difference
+rasters, and **control experiments that measure the registration floor** so the
+difference can be compared against it.
+
+It is a separate script rather than a `--change` mode of
+`demo-co-registration.sh` because it does a different job downstream of the same
+solve — projection, radiometric matching, four differences, five controls and
+display conversion — and folding that into the co-registration demo would have
+buried the three-stage sequence that demo exists to show. It calls the same
+programs with the same conventions.
+
+```bash
+./demo-change-monitoring.sh \
+  --epoch1 NLF_0649_0724552533_722RAD_N0320000NCAM08111_0A0095J01.IMG \
+  --epoch2 NLF_0650_0724654126_005RAD_N0320000NCAM08111_0A0095J01.IMG \
+  --tie-extra sol649_extra.lis --tie-extra sol650_extra.lis \
+  --calibration /path/to/calibration/m20 \
+  --scale 40 --bounds "0 93 0 -70" --box "100 300 2200 3100"
+```
+
+Stages: label/solar-geometry report → `marschkovl` → `marsautotie` → `marsnav` →
+`marsmap` geometry probe → `marsmap` overlap-statistics pass → `marsbrt` → one
+`marsmap` render per epoch with the *same* navigation table and *identical*
+projection parameters → statistics box validation → `f2` differences → controls
+→ `f2`/`vicario` display products.
+`--tie-extra` frames take part in the overlap, tiepoint and pointing solve but
+are not rendered or differenced: more frames tie the two epochs together, only
+the two primaries need to be pixel-comparable.
+
+Every `marsmap` call in the workflow — probe, overlap pass, both epoch renders,
+the repeat render and the no-navigation control — shares one parameter array, and
+that array carries `grid=NOGRID`. `marsmap` defaults to `grid=GRID`, which draws
+a 4096-DN graticule into the product; forget it on one call and the difference
+carries graticule residue while the controls compare grid against no-grid.
+
+### The data
+
+Two epochs of Mars 2020 left NavCam coverage of the same scene, same product
+family (`N0320000NCAM08111_0A0095J01`, SITE 32 DRIVE 0), from
+`mars2020_navcam_ops_calibrated`, three frames per sol:
+
+| | Sol 649 (epoch 1) | Sol 650 (epoch 2) |
+|---|---|---|
+| Primary frame | `NLF_0649_0724552533_722RAD_…` | `NLF_0650_0724654126_005RAD_…` |
+| Local true solar time | 11:04:54 | 14:33:07 |
+| Solar azimuth / elevation | 100.685° / 66.917° | 201.858° / 46.5214° |
+| Instrument az / el | 45.769° / −34.6043° | 45.5813° / −34.3798° |
+| Exposure | 17.161 ms | 18.111 ms |
+
+The rover did not move between the two sols and the commanded pointing is
+effectively identical, which is what makes a pointing-only workflow legitimate
+here. What did change is the sun: ~101° of solar azimuth and ~20° of solar
+elevation. That is the dominant signal in the difference, by design of the
+available data — repeat coverage at matched local time is what you would actually
+want and is not what sol 649/650 offers.
+
+### Measured results
+
+One run of that command, on `…/terrain-intelligence-generator:opensource` (digest
+`sha256:1ea12248a0014a34263aec530b1e42780f57f8d135857d7cec53a82a791e9af6`),
+tig-cli 0.2.0, M20 VISOR calibration:
+
+| Stage | Result |
+|-------|--------|
+| `marschkovl overlap=40` | 15 of 15 pairs accepted; the cross-epoch primary pair at **99.961068%** overlap |
+| `marsautotie density=50 grid_spacing=40` | 998 tiepoints across all six frames |
+| `marsnav -remove max_residual=5` | mean pixel error **7.673833 → 1.601917 px**; 742 of 998 tiepoints kept |
+| pointing deltas | ≤ 0.02° for five frames, 0.19°/0.21° for one |
+| `marsmap` probe (`zoom=0.25`) | natural scale 51.623641 px/degree; el −71.06…+9.53°, az 326.50…126.95° |
+| epoch renders | 2799 × 3720 HALF, `scale=40`, az 0…93°, el 0…−70°, `grid=NOGRID`, one per epoch |
+| `marsbrt do_what=DO_MULT` | well-conditioned gains (0.231…2.508), but not a cross-epoch normaliser (see below) |
+
+Statistics, all over the interior box `sl=100 ss=300 nl=2200 ns=3100` (excludes
+the projection's empty margins — `maxmin` in the script refuses a box containing
+0 DN):
+
+| Product | mean | σ | min | max |
+|---------|-----:|---:|----:|----:|
+| epoch 1 render | 2852.426 | 367.5240 | 615 | 5068 |
+| epoch 2 render | 2590.362 | 713.6342 | 487 | 4597 |
+| raw difference `in1-in2` | 262.0645 | **637.7048** | −2410 | 3300 |
+| gain-matched `in1-1.10117*in2` | 0.000602 | **700.6278** | −2791.407 | 3191.952 |
+| linear-matched `in1-0.515003*in2-1518.38` | 0.000386 | **384.3717** | −2241.196 | 2403.104 |
+
+The linear match (scale by the σ ratio, offset by the mean) is the usable
+normalisation: it is the only one of the three that reduces the spread rather
+than moving it around. Gain-only matching makes it *worse* (700.6 vs 637.7),
+because the two epochs differ in contrast, not just in level.
+
+### The registration floor — why the controls matter
+
+A difference image is only meaningful relative to how much signal
+mis-registration alone produces. The script measures that on the same data by
+differencing epoch 1 against deliberately perturbed versions of itself:
+
+| Control | σ of the difference | difpic |
+|---------|--------------------:|-------:|
+| re-render epoch 1, difference against the first render | 0 | **0 pixels differ** |
+| epoch 1 shifted **1 px** in sample | 133.6843 | — |
+| epoch 1 shifted **2 px** | 220.0077 | — |
+| epoch 1 shifted **3 px** | 270.2535 | — |
+| epoch 1 rendered *without* the navigation table | 101.9572 | 10,174,707 pixels differ |
+
+Read against those numbers:
+
+- Rendering is bit-exact reproducible (difpic 0), so nothing in the difference is
+  pipeline noise.
+- **One pixel of mis-registration produces σ ≈ 134 DN** on this terrain. The
+  normalised epoch difference is σ = 384.4, i.e. ~2.9× the one-pixel floor —
+  above the floor, but the same order of magnitude. A σ = 150 "change" on this
+  scene would be indistinguishable from a sub-pixel registration error.
+- Applying the navigation table moves the render by less than the one-pixel
+  control (102.0 < 133.7) while changing 10.2 M pixels: the correction is real
+  and sub-pixel, which is also why co-registration cannot be validated by
+  "did the mosaic change".
+
+### `marsbrt` — conditioned, but still not the normaliser you want
+
+`marsbrt` computes per-frame corrections from the overlap statistics in
+`marsmap`'s `ovr_out=` file, and `marsmap brtcorr=` applies them. Two things
+about the invocation matter, and getting either wrong makes the solve look
+broken when it is not:
+
+- The overlap pass must cover **every frame in `marsbrt`'s input list** and use
+  **the same projection as the renders being corrected** (only `zoom` reduced).
+  An earlier version of this demo measured overlaps over the two primaries at
+  the probe's own extents and then solved over all six frames, so four frames
+  entered the solve with no measurements at all.
+  The script warns if any frame in the solve ends up with no overlap records,
+  which is what a `--tie-extra` frame pointing outside the `--bounds` window
+  would produce. On MSL frames ~200° apart, with `--bounds "150 200 5 -40"`
+  covering only the two primaries, the warning names the excluded frame
+  (`no measurements for frame keys: 2`) while `marsbrt` still hands it a
+  multiplier — the silent hazard the check exists for.
+- `do_what=DO_MULT` (one gain per frame). The default `DO_LINEAR` also solves an
+  offset, which — as [panorama-mosaic.md](panorama-mosaic.md) records for the
+  mosaic case — is only sometimes well conditioned.
+
+With both fixed, the six-frame solve is well behaved:
+
+```
+Image   MultCorr        AddCorr
+      0    0.2312808567    0.0000000000
+      1    0.2946363090    0.0000000000
+      2    0.2430624214    0.0000000000
+      3    2.4022907342    0.0000000000
+      4    0.3184563864    0.0000000000
+      5    2.5102732923    0.0000000000
+```
+
+No near-zero or negative multipliers and no collapse: the corrected renders keep
+real structure (epoch 1 mean 659.3276 σ 85.00184, epoch 2 mean 762.8611
+σ 210.2624, same box), and the script's ill-conditioning warning does not fire.
+It is still **not** the normalisation this product differences, for two reasons
+visible in those numbers:
+
+- Gain-only cannot absorb an additive difference, and this illumination change is
+  partly additive: the BRTCORR difference keeps a mean bias of −103.533 DN,
+  where both the gain and linear matches sit at ~0.
+- It does not make the epochs comparable in contrast, which is the requirement.
+  The corrected σ are still a factor of 2.5 apart (85.00 vs 210.26, i.e. 23% and
+  29% of their raw σ), and the BRTCORR difference σ of 187.7208 is *larger* than
+  either corrected epoch's own σ. The linear mean/σ match reduces the spread
+  relative to the epochs it differences; BRTCORR does not.
+
+So `marsbrt` is verified as executing and as producing a sane multi-frame gain
+solution, and the linear match remains this product's normalisation.
+`--no-brtcorr` skips the overlap pass and the solve. The script still checks for
+any multiplier below 0.01 (including negative ones) and for a BRTCORR render
+whose σ falls below 10% of the raw σ, and warns rather than silently reporting
+numbers from a degenerate solve — the earlier mis-scoped `DO_LINEAR` runs
+produced exactly that (multipliers 0.0008/0.0011, renders flattened to σ < 1,
+varying run to run), which is what the check exists to catch.
+
+### What the difference image actually shows
+
+`diffview.png` is the linear difference scaled so 0 → 128 DN and ±3σ → 0/255,
+next to 2%-stretched renders of both epochs. Inspected: the difference is
+dominated by (a) the scene-wide illumination change: every rock's own shadow
+flips direction between 11:04 and 14:33, on top of an overall
+brightness/contrast shift, (b) the shadow of the rover and its mast, which
+enters the 14:33 epoch along the bottom edge of this framing and is absent from
+the 11:04 epoch, and (c) thin bright/dark outlines on the highest-contrast
+edges — the wheel tracks and the rover deck — which is the sub-pixel residual
+and resampling signature, not change. The terrain itself is unchanged between
+the two sols, and that is the honest verdict for this pair: **the product works;
+the scene did not change; almost all of the difference is illumination.**
+
+Confounders, in the order they bit on this data:
+
+1. **Illumination.** 101° of solar azimuth and 20° of solar elevation between
+   epochs. Shadows move, and moving shadows are the largest feature in the
+   difference. Nothing in the toolset corrects for this; only acquiring the
+   epochs at matched local solar time does.
+2. **Radiometry.** A factor-of-1.1 mean and 1.9 σ difference even at nearly equal
+   exposure. Normalise before differencing, and say which normalisation you used.
+3. **Pointing residual.** 1.58 px mean tiepoint residual here, against a 1 px
+   floor worth σ ≈ 134 DN. Any change smaller than that is not detectable.
+4. **Resampling.** Both epochs are resampled into the cylindrical frame at
+   40 px/degree, below the 51.6 px/degree natural scale. Edges pick up
+   interpolation differences the flat terrain does not.
+5. **Parallax.** Zero here because the rover did not move. Between drives,
+   pointing correction cannot register the epochs at all — that needs
+   `marsortho` on XYZ products.
+6. **Rover hardware in frame.** The deck, wheels and their shadows are in the
+   foreground of both epochs and move relative to the terrain whenever the
+   mast or the rover moves.
+
+A non-zero difference is not, by itself, detected surface change. Report the
+difference statistic and the shift-control statistic together, or the number
+means nothing.
+
+### Reproducibility
+
+The tiepoint and pointing stages move between runs on identical inputs: nine runs
+of the same command gave 994–1010 tiepoints, 742–796 kept, 7.56–7.86 px initial
+and 1.47–1.60 px final residual. The render is coarser than that spread: two runs
+whose solutions differed (1.601917 vs 1.589508 px final) produced every render
+and difference statistic identical in each printed digit — epoch stats, raw/gain/
+linear differences, the three shift controls and the nav-effect control — so the
+residual scatter is below the 0.025°/pixel sampling. Only the `marsbrt` gains
+(fourth decimal) and the BRTCORR difference (σ 187.29 vs 187.72) move with the
+solution. Treat the residuals and tiepoint counts as magnitudes, not fixed
+values.
 
 ## Worked example — MSL NavCam, verified
 
@@ -324,30 +564,192 @@ Essentially every pixel "changed", because the two frames differ radiometrically
 by a factor of three. Any real change-monitoring product needs radiometric
 normalisation before the difference step.
 
+## The other tiepoint sources — `marstie`, `marsautotie2`, `marsfidfinder`
+
+Run on the two-epoch M20 primary pair above (sol 649 + sol 650, M20 VISOR
+calibration), which `marsautotie` alone ties with 126 tiepoints:
+
+**`marstie` works, in batch mode, and it is a matcher — not only an editor.**
+
+```bash
+tig marstie inp=pair.lis out_tpt=ties.tpt interact=BATCH pairs=ALL_PAIRS cull=0
+```
+
+Exit 0 in 0.3 s, 9 tiepoints across the cross-epoch pair, printed as a table with
+per-point quality and Δsample/Δline. At the default `cull=1` it keeps only the
+best point per pair (1 tiepoint). `INTERACT` must be given **by name**: passing
+the keyword positionally (`tig marstie 'BATCH' inp=...`) is silently dropped, the
+program falls back to `INTERACT` and tries to launch the X11 tiepoint editor —
+which is not in the image (`sh: /tp: No such file or directory`) — and still exits
+0. The manual editing path is therefore unusable in this image; `interact=BATCH`
+is the only way to run it.
+
+**`marsautotie2` runs, produces tiepoints, and `marsnav` cannot use them.**
+
+```bash
+tig marsautotie2 inp=pair.lis out=ties_asift.tpt
+```
+
+Exit 0 in 2 m 13 s, 135 tiepoints on these two 5120×3840 frames. With
+`navtable=`, `match_method=TIGHT` and
+`crosscheck=CROSSCHECK`: 3 m 00 s, 109 tiepoints. In every record the
+`<projected>` element is `0.000000` in both line and sample, where `marsautotie`
+fills it with the predicted position. `marsnav` measures its "commanded" error
+against that field, so it reads the whole set as wildly inconsistent:
+
+| Tiepoint source | `marsnav` commanded error | Final | Kept |
+|-----------------|--------------------------:|------:|-----:|
+| `marsautotie` (126 ties) | 2.328178 px | 2.101460 px | 124 |
+| `marsautotie2` (135 ties) | 554.716959 px | 0.010000 px | 1 |
+| `marsautotie2` + `CROSSCHECK` (109 ties) | 297.546606 px | `inf` | 0 |
+
+Passing the ASIFT file back through `marstie` as `in_tpt=` does not fill the
+projected field either. So `marsautotie2` is verified as *executing* and as
+producing plausible left/right coordinates, and is **not** usable as a drop-in
+tiepoint source for `marsnav` here — consistent with its `.pdf` warning that its
+parameters are camera-specific and "some tuning may be required".
+
+**`marsfidfinder` cannot run on the public calibration bundles.** It reaches the
+per-image search and then needs fiducial-template configuration that the VISOR
+calibration data does not contain:
+
+```
+Error opening camera mapping file 'param_files/M20_M20_camera_mapping.xml'
+```
+
+That file name is the mission id twice; the bundle ships `M20_camera_mapping.xml`.
+With a copy under the doubled name placed on `MARS_CONFIG_PATH`, it gets one step
+further and stops on the file that actually matters:
+
+```
+couldnt open param_files/M20_M20_fiducial_info.parms
+** ABEND called **
+```
+
+`marsfidfinder.pdf` says it "requires a set of templates for the fiducials … for
+each fiducial, there needs to be a template matching all possible filters and
+eyes", described in an engineering or flight parameter file. Neither the
+`.parms` file nor the template images are in the public M20 or MSL VISOR
+calibration, so this program stays unverified.
+
+## Orthorectification and localisation — `marsortho`, `marsautoloco`
+
+**`marsortho` verified** on the MSL sample data, which ships matching linearised
+images and XYZ maps (`sample_data/OrthorectifiedMosaic/NLB_*ILT_*.IMG` +
+`NLB_*XYZ_*.IMG`), four frames, MSL VISOR calibration:
+
+```bash
+tig marsortho inp=ilt.lis in_xyz=xyz.lis out=ortho.img out_dem=ortho_dem.img \
+  scale=0.05
+```
+
+Exit 0 in 0.9 s. It computes the output extent from the XYZ data
+(`MINX=-144.239960 MAXX=-54.620903 MINY=60.657669 MAXY=166.535324`, metres) and
+writes a 1792×2118 HALF ortho mosaic (7.6 MB, mean DN 290.7244, σ 774.8824 over
+the whole frame, i.e. sparse coverage inside the bounding box) plus a REAL DEM
+(15 MB). `scale=` or `nl=` is mandatory even though the extent is derived: with
+neither, it abends on `Neither NL nor SCALE is defined. Cannot compute output's
+geometry.`
+
+**`marsautoloco` remains unverified: it needs an orbital base map.** It
+co-registers an orthomosaic to a base map in map coordinates, and there is no
+HiRISE/orbital base map for the sample scene in the VISOR data. Substituting a
+4× decimated copy of the `marsortho` product above as a synthetic base map gets
+through label parsing, resolution ratio (`4.00, 4.00`) and rescaling, then stops
+at the correlation:
+
+```
+No Image Map Projection labels could be read from base map
+Using weighted correlation.
+Correlation unsuccessful! No output generated
+```
+
+Most easting/northing sign conventions abend earlier with `Error. Required base
+map footprint steps out of bounds` — the base map has to be larger than the
+orthomosaic footprint plus the search space, and the program takes its footprint
+geometry from map-projection labels a home-made base map does not have. Verifying
+this program needs a real map-projected base map, not the frames we have.
+
+## The stereo uncertainty helpers — verified
+
+Run on the MSL sample stereo pair
+(`sample_data/StereoCorrelation/N{L,R}B_712299404EDR_F0961766NCAM00353M1.IMG`,
+MSL calibration), following `sample_data/Scripts/run_corr`. Every stage exit 0,
+with statistics from `hist`/`maxmin` on each output — none of them all-zero:
+
+| Stage | Output | mean | σ | Notes |
+|-------|--------|-----:|---:|-------|
+| `marsecorr` L→R / R→L | 2-band 512×512 | 113.05 / 134.70 | 131.66 / 156.14 | 56.23% / 54.78% coverage |
+| `marscor3` L→R / R→L | 2-band 1024×1024 | 228.74 / 271.78 | 265.61 / 313.18 | 889,531 / 871,173 tiepoints (84.8% / 83.1%) |
+| `marsdispcompare` | 1-band mask | 117.68 | 127.12 | L→R vs R→L consistency mask, 0…255 |
+| `marsmask` | masked disparity | 216.80 | 260.00 | applies that mask |
+| `marsxyz` → `marsrfilt` | 3-band XYZ | −10.20 | 49.75 | 562,365 valid points, 483,919 rejected for missing correlation |
+| `marserrdisp` | 2-band disparity error | 0.182156 | 0.021816 | line/sample uncertainty, px |
+| `marserror` | range error, XYZ error, range, error magnitude | 1.5257 (range) | 1.4787 | range error magnitude mean 0.002790 m |
+
+```bash
+tig marsdispcompare inp=\( ldsr.img rdsr.img \) out=mask.img -scaling point=cm=label
+tig marserrdisp inp=\( left.IMG right.IMG \) out=disp_err.img ls_order=1 point=cm=label
+tig marserror inp=\( left.IMG right.IMG \) out=range_err.img dispar=ldsp.img \
+  xyz=lxyz.img disp_err=disp_err.img range=range.img rng_err_magnt=rng_mag.img \
+  xyz_err=xyz_err.img point=cm=label
+```
+
+`marserror` abends with `XYZ_ERR must have 0, 1 or 3 filenames` unless `xyz_err=`
+is supplied as well — it is optional in the `.pdf` but not independent of the
+other error outputs. `marscor3 band=2` on these single-band EDRs does not fail; it
+prints `Input band (2) is greater than number of bands in input image. Band set to
+1.` and continues, and an explicit `band=1` rerun gave identical statistics.
+
+These quantify stereo uncertainty inside one acquisition. They are the right tool
+for "how well do I know this XYZ point", and no part of them compares epochs.
+
 ## What is documented but not verified here
 
 Executed end to end, with the results above: `marschkovl`, `marsautotie`,
 `marsnav`, `marsnav2`, `marsmos` (with and without a navigation table), `marsmap`
-(with a navigation table), `difpic`,
-`f2`, `hist`, `marscheckcm` (all components `OK` at `tol=0.001` on an MSL frame).
+(with a navigation table, with explicit projection bounds, and with `brtcorr=`),
+`marsbrt`, `marstie` (`interact=BATCH`), `marsautotie2`, `marsortho`,
+`marsecorr`, `marscor3`, `marsdispcompare`, `marsmask`, `marsxyz`, `marsrfilt`,
+`marserrdisp`, `marserror`, `difpic`, `f2`, `hist`, `maxmin`, `stretch`,
+`vicario`, `marscheckcm` (all components `OK` at `tol=0.001` on an MSL frame),
+and the whole of `demo-change-monitoring.sh` on two sols of M20 NavCam coverage.
 
-Not verified:
+Ran, but not usable as documented:
 
-- **`marsautotie2`, `marstie`, `marsfidfinder`, `marsautoloco`** — described from
-  their `.pdf` files only. Not run.
+- **`marsautotie2`** — produces tiepoints with an unfilled `<projected>` field, and
+  `marsnav` keeps 1 of 135 / 0 of 109 of them. Verified as executing; not
+  verified as a tiepoint source for a pointing solve. See
+  [The other tiepoint sources](#the-other-tiepoint-sources--marstie-marsautotie2-marsfidfinder).
+- **`marsbrt` across epochs** — with `do_what=DO_MULT` and a correctly scoped
+  overlap pass it solves a well-conditioned gain per frame, but gain-only leaves
+  a −105.6 DN mean bias and does not equalise the two epochs' contrast, so the
+  linear mean/σ match is what the demo differences. Verified as executing and as
+  producing a sane solution; not verified as a radiometric normaliser for change
+  monitoring.
+- **`marstie` interactive mode** — only `interact=BATCH` is verified. The manual
+  editor is not present in the image (`sh: /tp: No such file or directory`).
 - **`marsrelabel navtable=`** — the program runs, but the output with a navigation
   table was byte-identical to the output without one apart from the history label,
   and the pointing it printed was the uncorrected label pointing. Whether, and
   how, the corrected pointing reaches a relabelled product is not established
   here; prefer passing `navtable=` to the mosaic program.
-- **`marsortho`, `marsdispcompare`, `marserrdisp`, `marserror`** — described from
-  their `.pdf` files only. Not run.
-- **The end-to-end change-monitoring workflow** — steps 1–4 are verified
-  individually above, but no two-epoch difference product was produced from
-  co-registered, radiometrically normalised mosaics. Treat the
-  [Change monitoring](#change-monitoring) sequence as a composition of verified
-  parts, not as a tested pipeline.
-- **`--nav2` on the M20 example** and any run above 200 frames.
+
+Not run at all:
+
+- **`marsfidfinder`** — needs `param_files/M20_M20_fiducial_info.parms` and per
+  filter/eye fiducial templates, which are in neither the public M20 nor the MSL
+  VISOR calibration bundle. Abends before any image processing.
+- **`marsautoloco`** — needs a map-projected orbital base map covering the scene
+  (HiRISE-class), which the VISOR sample data does not include. With a synthetic
+  base map it reaches `Correlation unsuccessful! No output generated`.
+
+Also unverified: **`--nav2` on the M20 examples**, any run above 200 frames,
+change monitoring **across a drive** (all epochs here are from one rover
+position, so parallax is zero and `marsortho` is not in the change path), and
+change monitoring **at matched local solar time** — no such repeat pair was
+available, so the illumination confounder is present in every number above rather
+than controlled for.
 
 ## Troubleshooting
 
@@ -360,6 +762,14 @@ Not verified:
 | Mean pixel error barely improves | Often the tracks are all two-observation; the geometry cannot be constrained. Check the track statistics `marsnav2` prints. |
 | `Unable to find ANY entries for solution id 'X'. Using best available.` | Printed by the mosaic programs; they still read the table. Confirm with the `N values read from navigation file` line that follows. |
 | Output tiepoint file not written | The tiepoint programs will not overwrite an existing file; remove it first. |
+| `marsmap`/`marsmos` does not apply the corrections | Pass `match_method=TIGHT` with `navtable=`, then confirm one `Pointing Correction has been applied` line per input in the log. With loose matching the corrections were silently not applied on the M20 set. |
+| `[TAE-POSERR] Positional values may not follow values specified by name.` | A keyword given positionally (`nohist`, `NOGRID`) after named parameters. Put it first (`tig hist file -nohist sl=…`) or use the named form (`grid=NOGRID`). |
+| `Output Solution ID required!` from `marsbrt` | `out_solution_id=` is mandatory even though its `.pdf` shows no default. |
+| `BAD FUNCTION STRING` from `f2` | The expression parser rejects some parenthesised forms. Write `in1-0.515003*in2-1518.38` flat, and for a byte display double-quote inside the shell quotes: `func='"min(255,max(0,in1*0.11+128))"'`. |
+| `Neither NL nor SCALE is defined` from `marsortho` | Supply `scale=` (metres/pixel) or `nl=`; the extent is derived from the XYZ data but the sampling is not. |
+| `XYZ_ERR must have 0, 1 or 3 filenames` from `marserror` | Add `xyz_err=` alongside the other error outputs. |
+| Statistics dominated by 0 DN | A projected raster has empty margins. Measure inside an interior box (`sl/ss/nl/ns`); `demo-change-monitoring.sh` refuses a box whose `maxmin` minimum is 0. |
+| `INTERACT` ignored, `sh: /tp: No such file or directory` | `marstie` keywords must be named: `interact=BATCH`. The X11 tiepoint editor is not in the image. |
 | `Floating point exception (core dumped)`, exit 136 | MPI/hwloc CPU detection, seen from `marsmap` on images built before the image itself set `HWLOC_COMPONENTS=-x86`. Re-run as `tig env HWLOC_COMPONENTS=-x86 <prog> ...`. |
 
 ## Data sources
@@ -369,12 +779,18 @@ Not verified:
 - Mars 2020 NavCam products, PDS Geosciences Node:
   <https://pds-geosciences.wustl.edu/missions/mars2020/>. The calibrated NavCam
   frames used above came from the `mars2020_navcam_ops_calibrated` bundle,
-  `data/sol/00650/ids/rdr/ncam/`.
+  `data/sol/00649/ids/rdr/ncam/` and `data/sol/00650/ids/rdr/ncam/` (the two-epoch
+  example uses three frames from each sol). Fetch them from
+  <https://planetarydata.jpl.nasa.gov/img/data/mars2020/mars2020_navcam_ops_calibrated/>;
+  the `pds-geosciences.wustl.edu` browse paths return HTML, not VICAR data.
+- MSL stereo pair and orthorectification inputs: the VISOR sample data
+  (`sample_data/StereoCorrelation/`, `sample_data/OrthorectifiedMosaic/`), with
+  `sample_data/Scripts/run_corr` as the authoritative stereo recipe.
 
 ## References
 
 - Program parameter definitions inside the image:
-  `$V2TOP/mars/lib/x86-64-linx/{marsautotie,marsautotie2,marstie,marsnav,marsnav2,marschkovl,marsmos,marsmap,marsortho,marsrelabel,marscheckcm,marsfidfinder,marsautoloco}.pdf`
+  `$V2TOP/mars/lib/x86-64-linx/{marsautotie,marsautotie2,marstie,marsnav,marsnav2,marschkovl,marsmos,marsmap,marsbrt,marsortho,marsrelabel,marscheckcm,marsfidfinder,marsautoloco,marsecorr,marscor3,marsdispcompare,marsmask,marsxyz,marsrfilt,marserrdisp,marserror}.pdf`
 - [Mesh Generation](mesh-generation.md) — the stereo/XYZ path
 - [Command Reference](commands.md) — the wider VICAR toolset
 - [Components](../architecture/components.md) — where these programs sit

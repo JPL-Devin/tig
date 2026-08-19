@@ -219,7 +219,7 @@ programs run with nothing downloaded and nothing mounted. Opt-in via
 - **[Mesh Generation Demo](docs/demos/mesh-generation.md)** - Step-by-step mesh creation
 - **[Panorama Mosaic Demo](docs/demos/panorama-mosaic.md)** - 360-degree in-situ NavCam panorama
 - **[Surface Characteristics Demo](docs/demos/surface-characteristics.md)** - Slope, roughness, normals and goodness from an XYZ cloud
-- **[Co-registration Demo](docs/demos/co-registration.md)** - Tiepoints, pointing correction, and composing change monitoring
+- **[Co-registration Demo](docs/demos/co-registration.md)** - Tiepoints, pointing correction, and the two-epoch change product composed from them
 - **[Command Reference](docs/demos/commands.md)** - Tour of the VICAR toolset
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
