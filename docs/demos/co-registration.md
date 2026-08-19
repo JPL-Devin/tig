@@ -242,6 +242,12 @@ projection parameters → statistics box validation → `f2` differences → con
 are not rendered or differenced: more frames tie the two epochs together, only
 the two primaries need to be pixel-comparable.
 
+Every `marsmap` call in the workflow — probe, overlap pass, both epoch renders,
+the repeat render and the no-navigation control — shares one parameter array, and
+that array carries `grid=NOGRID`. `marsmap` defaults to `grid=GRID`, which draws
+a 4096-DN graticule into the product; forget it on one call and the difference
+carries graticule residue while the controls compare grid against no-grid.
+
 ### The data
 
 Two epochs of Mars 2020 left NavCam coverage of the same scene, same product
@@ -272,11 +278,11 @@ tig-cli 0.2.0, M20 VISOR calibration:
 | Stage | Result |
 |-------|--------|
 | `marschkovl overlap=40` | 15 of 15 pairs accepted; the cross-epoch primary pair at **99.961068%** overlap |
-| `marsautotie density=50 grid_spacing=40` | 1003 tiepoints across all six frames |
-| `marsnav -remove max_residual=5` | mean pixel error **7.762723 → 1.580886 px**; 748 of 1003 tiepoints kept |
+| `marsautotie density=50 grid_spacing=40` | 998 tiepoints across all six frames |
+| `marsnav -remove max_residual=5` | mean pixel error **7.673833 → 1.601917 px**; 742 of 998 tiepoints kept |
 | pointing deltas | ≤ 0.02° for five frames, 0.19°/0.21° for one |
 | `marsmap` probe (`zoom=0.25`) | natural scale 51.623641 px/degree; el −71.06…+9.53°, az 326.50…126.95° |
-| epoch renders | 2799 × 3720 HALF, `scale=40`, az 0…93°, el 0…−70°, one per epoch |
+| epoch renders | 2799 × 3720 HALF, `scale=40`, az 0…93°, el 0…−70°, `grid=NOGRID`, one per epoch |
 | `marsbrt do_what=DO_MULT` | well-conditioned gains (0.231…2.508), but not a cross-epoch normaliser (see below) |
 
 Statistics, all over the interior box `sl=100 ss=300 nl=2200 ns=3100` (excludes
@@ -285,15 +291,15 @@ the projection's empty margins — `maxmin` in the script refuses a box containi
 
 | Product | mean | σ | min | max |
 |---------|-----:|---:|----:|----:|
-| epoch 1 render | 2852.428 | 367.5240 | 616 | 5058 |
+| epoch 1 render | 2852.426 | 367.5240 | 615 | 5068 |
 | epoch 2 render | 2590.362 | 713.6342 | 487 | 4597 |
-| raw difference `in1-in2` | 262.0670 | **637.8832** | −2404 | 3299 |
-| gain-matched `in1-1.10117*in2` | 0.001243 | **700.8071** | −2785.409 | 3190.951 |
-| linear-matched `in1-0.515003*in2-1518.38` | 0.000804 | **384.5241** | −2233.198 | 2422.102 |
+| raw difference `in1-in2` | 262.0645 | **637.7048** | −2410 | 3300 |
+| gain-matched `in1-1.10117*in2` | 0.000602 | **700.6278** | −2791.407 | 3191.952 |
+| linear-matched `in1-0.515003*in2-1518.38` | 0.000386 | **384.3717** | −2241.196 | 2403.104 |
 
 The linear match (scale by the σ ratio, offset by the mean) is the usable
 normalisation: it is the only one of the three that reduces the spread rather
-than moving it around. Gain-only matching makes it *worse* (700.8 vs 637.9),
+than moving it around. Gain-only matching makes it *worse* (700.6 vs 637.7),
 because the two epochs differ in contrast, not just in level.
 
 ### The registration floor — why the controls matter
@@ -306,20 +312,20 @@ differencing epoch 1 against deliberately perturbed versions of itself:
 |---------|--------------------:|-------:|
 | re-render epoch 1, difference against the first render | 0 | **0 pixels differ** |
 | epoch 1 shifted **1 px** in sample | 133.6843 | — |
-| epoch 1 shifted **2 px** | 220.0082 | — |
-| epoch 1 shifted **3 px** | 270.2544 | — |
-| epoch 1 rendered *without* the navigation table | 106.5743 | 10,179,460 pixels differ |
+| epoch 1 shifted **2 px** | 220.0077 | — |
+| epoch 1 shifted **3 px** | 270.2535 | — |
+| epoch 1 rendered *without* the navigation table | 101.9572 | 10,174,707 pixels differ |
 
 Read against those numbers:
 
 - Rendering is bit-exact reproducible (difpic 0), so nothing in the difference is
   pipeline noise.
 - **One pixel of mis-registration produces σ ≈ 134 DN** on this terrain. The
-  normalised epoch difference is σ = 384.5, i.e. ~2.9× the one-pixel floor —
+  normalised epoch difference is σ = 384.4, i.e. ~2.9× the one-pixel floor —
   above the floor, but the same order of magnitude. A σ = 150 "change" on this
   scene would be indistinguishable from a sub-pixel registration error.
 - Applying the navigation table moves the render by less than the one-pixel
-  control (106.6 < 133.7) while changing 10.2 M pixels: the correction is real
+  control (102.0 < 133.7) while changing 10.2 M pixels: the correction is real
   and sub-pixel, which is also why co-registration cannot be validated by
   "did the mosaic change".
 
@@ -337,37 +343,38 @@ broken when it is not:
   entered the solve with no measurements at all.
   The script warns if any frame in the solve ends up with no overlap records,
   which is what a `--tie-extra` frame pointing outside the `--bounds` window
-  would produce.
+  would produce. On MSL frames ~200° apart, with `--bounds "150 200 5 -40"`
+  covering only the two primaries, the warning names the excluded frame
+  (`no measurements for frame keys: 2`) while `marsbrt` still hands it a
+  multiplier — the silent hazard the check exists for.
 - `do_what=DO_MULT` (one gain per frame). The default `DO_LINEAR` also solves an
   offset, which — as [panorama-mosaic.md](panorama-mosaic.md) records for the
   mosaic case — is only sometimes well conditioned.
 
-With both fixed, the six-frame solve is well behaved (this table and the BRTCORR
-numbers below come from the run that introduced the fix, not from the run quoted
-in [Measured results](#measured-results); nothing before `marsbrt` changed):
+With both fixed, the six-frame solve is well behaved:
 
 ```
 Image   MultCorr        AddCorr
-      0    0.2311796546    0.0000000000
-      1    0.2953049432    0.0000000000
-      2    0.2431132369    0.0000000000
-      3    2.4022321776    0.0000000000
-      4    0.3205904556    0.0000000000
-      5    2.5075795320    0.0000000000
+      0    0.2312808567    0.0000000000
+      1    0.2946363090    0.0000000000
+      2    0.2430624214    0.0000000000
+      3    2.4022907342    0.0000000000
+      4    0.3184563864    0.0000000000
+      5    2.5102732923    0.0000000000
 ```
 
 No near-zero or negative multipliers and no collapse: the corrected renders keep
-real structure (epoch 1 mean 659.0392 σ 84.96453, epoch 2 mean 764.5943
-σ 210.7401, same box), and the script's ill-conditioning warning does not fire.
+real structure (epoch 1 mean 659.3276 σ 85.00184, epoch 2 mean 762.8611
+σ 210.2624, same box), and the script's ill-conditioning warning does not fire.
 It is still **not** the normalisation this product differences, for two reasons
 visible in those numbers:
 
 - Gain-only cannot absorb an additive difference, and this illumination change is
-  partly additive: the BRTCORR difference keeps a mean bias of −105.555 DN,
+  partly additive: the BRTCORR difference keeps a mean bias of −103.533 DN,
   where both the gain and linear matches sit at ~0.
 - It does not make the epochs comparable in contrast, which is the requirement.
-  The corrected σ are still a factor of 2.5 apart (84.96 vs 210.74, i.e. 23% and
-  30% of their raw σ), and the BRTCORR difference σ of 188.1616 is *larger* than
+  The corrected σ are still a factor of 2.5 apart (85.00 vs 210.26, i.e. 23% and
+  29% of their raw σ), and the BRTCORR difference σ of 187.7208 is *larger* than
   either corrected epoch's own σ. The linear mean/σ match reduces the spread
   relative to the epochs it differences; BRTCORR does not.
 
@@ -420,17 +427,16 @@ means nothing.
 
 ### Reproducibility
 
-The stage counts move between runs on identical inputs: seven runs of the same
-command gave 994–1008 tiepoints, 744–796 kept, 7.56–7.86 px initial and
-1.47–1.60 px final residual, and σ 384.3–384.5 for the linear difference. The
-render is coarser than that spread: two runs whose solutions differed (1.516076
-vs 1.598129 px final) produced difference statistics identical in every printed
-digit, so the residual scatter is below the 0.025°/pixel sampling. The
-pixel-shift controls reproduce to four figures (133.68 / 220.01 / 270.25), but
-the nav-effect control varies by a few percent: 106.5743 / 10,179,460 differing
-pixels in the quoted run versus 102.1765 / 10,175,950 in the independent run.
-Both are below the one-pixel floor of 133.7, so the conclusion is unchanged.
-Treat the residuals, tiepoint counts, and nav-effect control as magnitudes.
+The tiepoint and pointing stages move between runs on identical inputs: nine runs
+of the same command gave 994–1010 tiepoints, 742–796 kept, 7.56–7.86 px initial
+and 1.47–1.60 px final residual. The render is coarser than that spread: two runs
+whose solutions differed (1.601917 vs 1.589508 px final) produced every render
+and difference statistic identical in each printed digit — epoch stats, raw/gain/
+linear differences, the three shift controls and the nav-effect control — so the
+residual scatter is below the 0.025°/pixel sampling. Only the `marsbrt` gains
+(fourth decimal) and the BRTCORR difference (σ 187.29 vs 187.72) move with the
+solution. Treat the residuals and tiepoint counts as magnitudes, not fixed
+values.
 
 ## Worked example — MSL NavCam, verified
 
