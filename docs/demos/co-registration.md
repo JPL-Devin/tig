@@ -384,13 +384,14 @@ varying run to run), which is what the check exists to catch.
 
 `diffview.png` is the linear difference scaled so 0 → 128 DN and ±3σ → 0/255,
 next to 2%-stretched renders of both epochs. Inspected: the difference is
-dominated by (a) the shadow of the rover and its mast falling across the
-foreground in the 14:33 epoch and absent from the 11:04 epoch, (b) an overall
-brightness/contrast change across the whole scene, and (c) thin bright/dark
-outlines on the highest-contrast edges — the wheel tracks and the rover deck —
-which is the sub-pixel residual and resampling signature, not change. The terrain
-itself is unchanged between the two sols, and that is the honest verdict for this
-pair: **the product works; the scene did not change; almost all of the difference
+dominated by (a) the scene-wide illumination change: every rock's own shadow
+flips direction between 11:04 and 14:33, on top of an overall
+brightness/contrast shift, (b) the shadow of the rover and its mast, which
+enters the 14:33 epoch along the bottom edge of this framing and is absent from
+the 11:04 epoch, and (c) thin bright/dark outlines on the highest-contrast
+edges — the wheel tracks and the rover deck — which is the sub-pixel residual
+and resampling signature, not change. The terrain itself is unchanged between
+the two sols, and that is the honest verdict for this pair: **the product works; the scene did not change; almost all of the difference
 is illumination.**
 
 Confounders, in the order they bit on this data:

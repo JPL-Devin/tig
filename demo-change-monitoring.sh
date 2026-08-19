@@ -468,7 +468,10 @@ if $USE_BRTCORR; then
   sed -n '/^Image   MultCorr/,/^$/p' marsbrt.log
   BRTCORR_BAD_MULTS=$(awk '
     /^Image[[:space:]]+MultCorr/ { table=1; next }
-    table && $1 ~ /^[0-9]+$/ && ($2 + 0) < 0.01 {
+    table && /^[[:space:]]*$/ { table=0; next }
+    table && $1 ~ /^[0-9]+$/ &&
+      $2 ~ /^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([Ee][+-]?[0-9]+)?$/ &&
+      ($2 + 0) < 0.01 {
       printf "image %s MultCorr=%s\n", $1, $2
     }
   ' marsbrt.log)
@@ -708,8 +711,9 @@ run_logged diffview.log tig f2 inp=diff_lin.img out=diffview.img \
   func="$DISPLAY_FUNC" format=BYTE
 run_logged diffview_vicario.log tig vicario diffview.img diffview.png
 for epoch in 1 2; do
-  tig stretch inp="epoch${epoch}_raw.img" out="epoch${epoch}_display.img" \
-    -astretch percent=2 dnmin=0 dnmax=255 > "epoch${epoch}_stretch.log" 2>&1
+  run_logged "epoch${epoch}_stretch.log" tig stretch \
+    inp="epoch${epoch}_raw.img" out="epoch${epoch}_display.img" \
+    -astretch percent=2 dnmin=0 dnmax=255
   run_logged "epoch${epoch}_vicario.log" tig vicario \
     "epoch${epoch}_display.img" "epoch${epoch}_display.png"
 done
