@@ -1,0 +1,4 @@
+# Local instance state: the mission data the export script writes and the
+# environment file it is served with.
+Missions/
+.env

@@ -126,8 +126,10 @@ tens of milliseconds rather than a container start.
 So the scope is unambiguous:
 
 - No telemetry ingest or depacketization; inputs are instrument image products.
-- No MMGIS, ASTTRO or Astria adapter, exporter or tiling recipe. TIG writes
-  interchange formats those tools can consume; connecting them is up to you.
+- No ASTTRO or Astria adapter, exporter or tiling recipe. TIG writes interchange
+  formats those tools can consume; connecting them is up to you. MMGIS is the
+  exception: [`examples/mmgis-integration/`](examples/mmgis-integration/README.md)
+  is a worked export and tiling recipe that was run end to end.
 - No PDS4 reader or writer.
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
@@ -216,6 +218,7 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
 - **[Architecture](docs/architecture/components.md)** - How the pieces fit together
 - **[Airflow + Kubernetes Pipeline](examples/airflow-k8s-pipeline/README.md)** - Event-driven terrain mesh generation example
+- **[MMGIS Integration](examples/mmgis-integration/README.md)** - Getting a TIG mosaic and mesh onto a map in NASA-AMMOS MMGIS
 
 ## Key Tools
 
@@ -286,7 +289,8 @@ tig/
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
 ├── QUICKSTART.md                       # Common workflows end to end
 ├── examples/
-│   └── airflow-k8s-pipeline/           # Airflow + Kubernetes terrain pipeline example
+│   ├── airflow-k8s-pipeline/           # Airflow + Kubernetes terrain pipeline example
+│   └── mmgis-integration/              # TIG products as MMGIS layers
 └── docs/
     ├── demos/                          # Demo guides
     ├── architecture/                   # System design
