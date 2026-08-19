@@ -450,7 +450,9 @@ TIEPOINTS=0
 RESID_BEFORE=""
 RESID_AFTER=""
 if [ ${COREG_RC} -eq 0 ] && [ -s "${COREG_WS}/pointing.nav" ]; then
-    TIEPOINTS=$(grep -c '<tie ' "${COREG_WS}/tiepoints_kept.tpt" 2>/dev/null || echo 0)
+    # grep -c already prints 0 when nothing matches; '|| echo 0' would double it.
+    TIEPOINTS=$(grep -c '<tie ' "${COREG_WS}/tiepoints_kept.tpt" 2>/dev/null)
+    TIEPOINTS=${TIEPOINTS:-0}
     RESID_BEFORE=$(grep -m1 'Commanded mean pixel error' "${COREG_WS}/marsnav.log" | awk '{print $NF}')
     RESID_AFTER=$(grep 'Final solution mean pixel error' "${COREG_WS}/marsnav.log" | tail -1 | awk '{print $NF}')
 

@@ -79,7 +79,9 @@ jobs:
             release-regression/report.md
             release-regression/images/**
             release-regression/scratch/**/*.log
-          if-no-files-found: error
+          # A hard failure (missing data or calibration) exits before the
+          # out-dir exists; the FATAL message is the signal, not this step.
+          if-no-files-found: warn
 
       - name: Attach the report to the release
         if: github.event_name == 'release'
