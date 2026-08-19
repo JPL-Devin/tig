@@ -140,9 +140,9 @@ jobs:
             EXTERNAL_FILE=${{ steps.build-args.outputs.external_file }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # A pull request build is not pushed, so load it instead - otherwise
-          # the product tests below would have no image to run.
-          load: ${{ github.event_name == 'pull_request' }}
+          # Whenever the build is not pushed, load it instead - otherwise the
+          # tests below would have no image to run, or a stale published one.
+          load: ${{ github.event_name == 'pull_request' || github.event.inputs.push_to_registry == 'false' }}
       
       - name: Generate build summary
         if: always()
@@ -207,8 +207,8 @@ jobs:
           echo "Testing image: ${IMAGE_TAG}"
           echo ""
           
-          # Pull the image from registry
-          docker pull ${IMAGE_TAG}
+          # Already local when the build was loaded rather than pushed
+          docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || docker pull "${IMAGE_TAG}"
           
           # Create temporary workspace for testing
           TEST_WORKSPACE=$(mktemp -d)
