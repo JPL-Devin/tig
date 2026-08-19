@@ -335,6 +335,7 @@ broken when it is not:
   An earlier version of this demo measured overlaps over the two primaries at
   the probe's own extents and then solved over all six frames, so four frames
   entered the solve with no measurements at all.
+  The script warns if any frame in the solve ends up with no overlap records, which is what a `--tie-extra` frame pointing outside the `--bounds` window would produce.
 - `do_what=DO_MULT` (one gain per frame). The default `DO_LINEAR` also solves an
   offset, which — as [panorama-mosaic.md](panorama-mosaic.md) records for the
   mosaic case — is only sometimes well conditioned.

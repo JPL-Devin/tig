@@ -217,17 +217,27 @@ for spec in "${TIE_EXTRA_SPECS[@]}"; do append_spec "$spec" TIE_EXTRA; done
 if [ -n "$CALIBRATION" ]; then
   CALIBRATION=$(abspath "$CALIBRATION")
   export MARS_CONFIG_PATH="$CALIBRATION"
+  EXPLICIT_CALIBRATION=true
+else
+  EXPLICIT_CALIBRATION=false
 fi
 
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/find-calibration.sh"
-  CALIB_DIR=$(find_calibration) || true
-  if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
-    echo "ERROR: MARS calibration not found."
-    echo ""
-    print_calibration_help
-    exit 1
+  if $EXPLICIT_CALIBRATION; then
+    if ! CALIB_DIR=$(resolve_calib_dir "$CALIBRATION"); then
+      echo "ERROR: Explicit MARS calibration path is invalid: $CALIBRATION"
+      exit 1
+    fi
+  else
+    CALIB_DIR=$(find_calibration) || true
+    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
+      echo "ERROR: MARS calibration not found."
+      echo ""
+      print_calibration_help
+      exit 1
+    fi
   fi
 else
   echo "ERROR: find-calibration.sh not found next to this script."
@@ -238,6 +248,16 @@ CALIB_DIR=$(cd "$CALIB_DIR" && pwd)
 export MARS_CONFIG_PATH="$CALIB_DIR"
 WORKSPACE=$(abspath "$WORKSPACE")
 mkdir -p "$WORKSPACE"
+if [ -n "$(find "$WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  if [ ! -f "$WORKSPACE/.tig-change-monitoring" ]; then
+    echo "ERROR: Workspace $WORKSPACE contains files this demo did not create."
+    echo "       Use an empty or dedicated workspace."
+    exit 1
+  fi
+else
+  : > "$WORKSPACE/.tig-change-monitoring"
+fi
+
 cd "$WORKSPACE"
 
 rm -rf labels
@@ -408,6 +428,35 @@ if $USE_BRTCORR; then
   echo "Step 6: Computing joint overlap statistics"
   run_logged overlap.log tig marsmap inp=joint.lis out=joint_overlap.img \
     "${MAP_COMMON[@]}" zoom=0.25 ovr_out=joint.ovr
+  UNMEASURED_KEYS=$(awk '
+    function key_value(line) {
+      if (match(line, /key="[^"]+"/)) {
+        return substr(line, RSTART + 5, RLENGTH - 6)
+      }
+      return ""
+    }
+    /<images>/ { in_images=1; next }
+    /<\/images>/ { in_images=0; next }
+    in_images && /<image[[:space:]]/ {
+      key=key_value($0)
+      if (key != "") image_keys[key]=1
+      next
+    }
+    /<img[[:space:]]/ {
+      key=key_value($0)
+      if (key != "") measured_keys[key]=1
+    }
+    END {
+      for (key in image_keys) {
+        if (!(key in measured_keys)) print key
+      }
+    }
+  ' joint.ovr | sort -n | paste -sd' ' -)
+  if [ -n "$UNMEASURED_KEYS" ]; then
+    echo "WARNING: BRTCORR overlap statistics have no measurements for frame keys: $UNMEASURED_KEYS"
+    echo "         These frames are outside the --bounds window and enter the radiometric solve unmeasured."
+    echo "         Use --no-brtcorr or bounds covering all tie frames."
+  fi
   echo ""
 
   echo "Step 7: Solving radiometric normalization (marsbrt)"
