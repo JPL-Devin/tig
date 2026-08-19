@@ -185,7 +185,9 @@ so GUI tools such as `xvd` display on your desktop.
 The container image: VICAR built from the
 [NASA-AMMOS/VICAR](https://github.com/NASA-AMMOS/VICAR) open-source releases,
 plus the Java `vicario` converter. Published as
-`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`.
+`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`. Release
+sign-off runs `terrain-intelligence-generator/test-release-regression.sh`, which
+replays the demos on real VISOR frames and reports every product with an image.
 
 📁 `terrain-intelligence-generator/` · 📖 [README](terrain-intelligence-generator/README.md)
 

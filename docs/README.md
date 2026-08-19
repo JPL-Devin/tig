@@ -29,4 +29,4 @@ New here? Start with **[Getting Started](getting-started.md)**.
 
 - **[Project README](../README.md)** — Top-level project overview.
 - **[tig-cli](../tig-cli/README.md)** — The command-line client that runs all ~550 VICAR tools.
-- **[TIG VICAR image](../terrain-intelligence-generator/README.md)** — Building and testing the container image.
+- **[TIG VICAR image](../terrain-intelligence-generator/README.md)** — Building and testing the container image, including the release visual regression suite.

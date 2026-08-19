@@ -12,6 +12,7 @@ builder/vicar-build        vimake + make for one unit, run inside the builder im
 build-opensource-image.sh  Local build, mirrors CI
 build-builder-image.sh     Local build of the builder image (not published)
 test-docker-image.sh       Smoke tests, mirrors CI
+test-release-regression.sh Release-only visual regression on real VISOR data
 visor/Dockerfile           VISOR calibration variants, built FROM the base image
 build-visor-image.sh       Local variant build, mirrors CI
 test-visor-image.sh        Variant smoke tests, mirrors CI
@@ -52,6 +53,56 @@ These are the same checks CI runs in
 [`build-publish-terrain-intelligence-generator.yml`](../.github/workflows/build-publish-terrain-intelligence-generator.yml),
 which builds, tests and publishes to GHCR on pushes to `main`/`develop` and on
 version tags.
+
+### Release visual regression
+
+`test-release-regression.sh` is the release gate: it runs the shipped demo
+pipelines on real MSL Navcam frames, asserts on the content of every product,
+and writes a `report.md` with the generated PNGs embedded, so a release can be
+signed off by looking at the imagery.
+
+```bash
+./test-release-regression.sh                        # published image, ~/visor_data
+./test-release-regression.sh <image-tag> --download --out-dir ./rr
+```
+
+Data is the pinned public VICAR 5.0 VISOR sample data plus the MSL calibration
+(740 MB + 380 MB compressed, 1.8 GB on disk); `--download` fetches both. Missing
+data or calibration is a hard failure carrying the exact `curl` command to fix
+it, never a silent skip. Runtime is ~7 minutes, ~6 of them the full-frame
+`marscorr`.
+
+| Stage | Pipeline | Assertion |
+| --- | --- | --- |
+| `radiometric-correction` | `marsrad` frames from the mosaic run | one corrected frame per input, DN scale changed, contrast retained |
+| `cylindrical-mosaic` | `demo-panorama-mosaic.sh --auto-extent` | mosaic dimensions and a non-degenerate histogram |
+| `polar-mosaic` | `demo-panorama-mosaic.sh --projection polar` | square projection above a size floor, non-degenerate histogram |
+| `stereo-xyz` | `marscorr` -> `marscor3` -> `marsxyz` | 2-band disparity with real spread, valid XYZ point count, 3-band cloud |
+| `mesh` | `demo-mesh-generation-with-xyz.sh --xyz` | vertex and face counts, every coordinate finite and within 1e6 m |
+| `surface-characteristics` | `demo-surface-characteristics.sh` | products share the XYZ grid, slope in degrees, roughness a small height, both normals fields written |
+| `co-registration` | `demo-co-registration.sh` plus a difference raster | tiepoints kept, mean pixel error improved and under tolerance, non-zero difference raster |
+
+Bounds are floors and ranges taken from an observed run and commented with the
+value seen, not golden images: VICAR residuals do not reproduce bit for bit
+between runs, so an exact-match comparison would be flaky.
+
+Not demonstrated by the suite, and reported as UNVERIFIED in its report rather
+than omitted:
+
+- **change-monitoring** — needs `demo-change-monitoring.sh`; the stage runs
+  automatically once that demo is in the tree.
+- **the demos' built-in stereo path** — `demo-mesh-generation-with-xyz.sh
+  --stereo-left/--stereo-right` relies on `marscorr`'s default seed, which
+  reports "No valid seed points found" on these Navcam frames. The suite seeds
+  the frame centre itself and feeds the resulting cloud to the demo's `--xyz`
+  path.
+- **M20 frames** — the suite is MSL-only, because M20 calibration is 2.7 GB
+  across two release assets.
+
+CI runs it from
+[`release-visual-regression.yml`](../.github/workflows/release-visual-regression.yml)
+on published releases and on `workflow_dispatch` only — never on pull requests
+or ordinary pushes — and uploads `report.md` and every PNG as an artifact.
 
 ## What is in the image
 
