@@ -565,6 +565,16 @@ if [ -z "$BOX_SL" ] || [ -z "$BOX_SS" ] || [ -z "$BOX_NL" ] || [ -z "$BOX_NS" ];
   echo "ERROR: invalid statistics box: $BOX"
   exit 1
 fi
+# The shift controls are cropped to these dimensions and reuse this box.
+CONTROL_NL=$((NL - 1))
+CONTROL_NS=$((NS - 4))
+if [ "$((BOX_SL + BOX_NL - 1))" -gt "$CONTROL_NL" ] ||
+  [ "$((BOX_SS + BOX_NS - 1))" -gt "$CONTROL_NS" ]; then
+  echo "ERROR: statistics box $BOX_SL $BOX_SS $BOX_NL $BOX_NS does not fit the"
+  echo "       ${CONTROL_NL}x${CONTROL_NS} shift-control crops of the ${NL}x${NS} renders."
+  echo "       Choose a box ending at or before line $CONTROL_NL and sample $CONTROL_NS."
+  exit 1
+fi
 echo "Step 9: Validating statistics box ($BOX_SL $BOX_SS $BOX_NL $BOX_NS)"
 
 parse_maxmin_value() {
