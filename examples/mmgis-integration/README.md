@@ -169,12 +169,16 @@ curl -X POST http://localhost:8888/api/users/first_signup \
 
 ```bash
 ./register-layers.sh --center-lon 137.4417 --center-lat -4.5895 \
-    --username tigadmin --password '<strong password>'
+    --username tigadmin
 ```
+
+It prompts for the password; `MMGIS_PASSWORD` and `MMGIS_TOKEN` are read from the
+environment too. `--password` exists but puts the password in `ps` output and your
+shell history.
 
 That creates the mission, points its `msv.view` at the site and sets the body
 radii, then `POST /addLayer`s every `*.layer.json`. Pass `--token` instead of
-`--username`/`--password` to use an API token from the Configure page. Then open
+`--username` to use an API token from the Configure page. Then open
 <http://localhost:8888/?mission=TIG-Demo>: the mosaic draws in **Map**, and the
 mesh in **Globe** (model layers are globe-only).
 

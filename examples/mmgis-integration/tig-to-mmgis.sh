@@ -206,12 +206,19 @@ if [ -n "$MESH" ]; then
   rm -rf "$MESH_OUT"
   mkdir -p "$MESH_OUT"
 
+  # gdal_translate writes PNG bytes, and the MTL is rewritten to this name below,
+  # so a texture called anything else still resolves.
+  TEXTURE_OUT="$(basename "${TEXTURE%.*}").png"
+
   echo "Step 1: Copying the OBJ, its MTL and its texture..."
   cp "$MESH" "$MESH_OUT/$MESH_BASE-site-frame.obj"
   # The MTL names the texture, so both have to travel with the OBJ.
   if [ -f "$MESH_DIR/$MESH_BASE.mtl" ]; then
     cp "$MESH_DIR/$MESH_BASE.mtl" "$MESH_OUT/$MESH_BASE.mtl"
     sed "s/^mtllib .*/mtllib $MESH_BASE.mtl/" -i "$MESH_OUT/$MESH_BASE-site-frame.obj"
+    if [ -f "$TEXTURE" ]; then
+      sed -E "s@^[[:space:]]*map_Kd[[:space:]].*@map_Kd $TEXTURE_OUT@" -i "$MESH_OUT/$MESH_BASE.mtl"
+    fi
   else
     echo "  ⚠ no $MESH_BASE.mtl beside the mesh: the model will be untextured"
   fi
@@ -222,11 +229,11 @@ if [ -n "$MESH" ]; then
     command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin), or pass --texture-gamma 1"; exit 1; }
     gdal_translate -q -of PNG -scale 0 255 0 255 \
       -exponent "$(python3 -c "print(1.0 / $TEXTURE_GAMMA)")" \
-      "$TEXTURE" "$MESH_OUT/$(basename "$TEXTURE")"
-    rm -f "$MESH_OUT/$(basename "$TEXTURE").aux.xml"
-    echo "  ✓ texture pre-encoded with gamma $TEXTURE_GAMMA"
+      "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
+    rm -f "$MESH_OUT/$TEXTURE_OUT.aux.xml"
+    echo "  ✓ texture pre-encoded with gamma $TEXTURE_GAMMA as $TEXTURE_OUT"
   elif [ -f "$TEXTURE" ]; then
-    cp "$TEXTURE" "$MESH_OUT/$(basename "$TEXTURE")"
+    cp "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
   else
     echo "  ⚠ no texture at $TEXTURE: the model will be untextured"
     echo "    marsmesh writes texture.img; convert it with: tig vicario texture.img texture.png"
