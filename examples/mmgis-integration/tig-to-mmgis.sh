@@ -96,7 +96,13 @@ mkdir -p "$LAYERS_DIR"
 MISSION_DIR="$(cd "$MISSIONS_DIR/$MISSION" && pwd)"
 
 # Layer names double as directory names, so keep them filesystem-safe.
-slug() { echo "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//; s/_$//'; }
+slug() {
+  local s
+  s=$(echo "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//; s/_$//')
+  # An empty slug would make the output directory the Layers/ directory itself.
+  [ -n "$s" ] || { echo "ERROR: layer name '$1' has no characters usable in a directory name" >&2; exit 1; }
+  echo "$s"
+}
 
 if [ -n "$MOSAIC" ]; then
   [ -f "$MOSAIC" ] || { echo "ERROR: no such mosaic: $MOSAIC"; exit 1; }
@@ -182,7 +188,8 @@ PY
   [ -n "$ZOOMS" ] || { echo "ERROR: gdal2tiles wrote no tiles"; exit 1; }
   MIN_ZOOM=$(echo "$ZOOMS" | head -1)
   MAX_ZOOM=$(echo "$ZOOMS" | tail -1)
-  TILES=$(find "$MOSAIC_OUT" -name '*.png' -path '*/*/*' | wc -l)
+  # Depth 3 is {z}/{x}/{y}.png, which excludes the converted source PNG.
+  TILES=$(find "$MOSAIC_OUT" -mindepth 3 -name '*.png' | wc -l)
   echo "  ✓ $TILES tiles, zoom $MIN_ZOOM-$MAX_ZOOM, under Layers/$MOSAIC_SLUG/{z}/{x}/{y}.png"
 
   MOSAIC_LAYER="$MOSAIC_LAYER" MOSAIC_SLUG="$MOSAIC_SLUG" \
