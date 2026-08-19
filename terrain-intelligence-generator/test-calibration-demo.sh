@@ -77,7 +77,8 @@ done
 
 if [ -z "${DATA_DIR}" ]; then
     DATA_DIR=$(mktemp -d)
-    trap 'rm -rf "${DATA_DIR}"' EXIT
+    # Honour --keep here, or an early failure still takes the log with it.
+    [ "${KEEP}" = true ] || trap 'rm -rf "${DATA_DIR}"' EXIT
 fi
 mkdir -p "${DATA_DIR}"
 
@@ -115,9 +116,9 @@ docker pull "${IMAGE_TAG}" > /dev/null || {
 
 print_header "Step 2: demo-surface-characteristics.sh on real data"
 
-RUN_DIR="${DATA_DIR}/run"
-rm -rf "${RUN_DIR}"
-mkdir -p "${RUN_DIR}"
+# A fresh directory per run: a warm container from a previous run still holds
+# the old bind mount, so reusing the path silently loses the outputs.
+RUN_DIR=$(mktemp -d "${DATA_DIR}/run.XXXXXX")
 DEMO_LOG="${RUN_DIR}/demo.log"
 
 set +e
@@ -194,12 +195,11 @@ if [ "${FAILED}" -eq 0 ]; then
     echo "  Input:       $(basename "${XYZ_MEMBER}")"
 else
     echo -e "${RED}❌ Real-calibration demo failed${NC}"
-    echo "  Full log: ${DEMO_LOG}"
+    # The log goes to stdout: on a runner the workspace is gone afterwards.
+    echo "  Demo log (${DEMO_LOG}):"
+    tail -40 "${DEMO_LOG}"
 fi
 
-if [ "${KEEP}" = true ]; then
-    trap - EXIT
-    echo "  Workspace kept: ${WS}"
-fi
+[ "${KEEP}" = true ] && echo "  Workspace kept: ${WS}"
 
 exit "${FAILED}"
