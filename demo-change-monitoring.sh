@@ -312,7 +312,7 @@ run_logged() {
   local log="$1"
   shift
   if ! "$@" > "$log" 2>&1; then
-    echo "ERROR: command failed; see $WORKSPACE/$(basename "$log")" >&2
+    echo "ERROR: command failed; see $WORKSPACE/$log" >&2
     tail -20 "$log" >&2 || true
     exit 1
   fi
