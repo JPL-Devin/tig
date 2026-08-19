@@ -46,14 +46,19 @@ jobs:
 
       - name: Resolve image tag
         id: image
+        # Dispatch input and release tag come in as env, never interpolated into
+        # the script body.
+        env:
+          INPUT_TAG: ${{ github.event.inputs.image_tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           # A repository owner may be mixed case; an image reference may not.
           IMAGE="$(echo "ghcr.io/${{ github.repository }}/terrain-intelligence-generator" | tr '[:upper:]' '[:lower:]')"
-          TAG="${{ github.event.inputs.image_tag }}"
+          TAG="${INPUT_TAG}"
           # On a release, sign off the image built for that tag; :opensource
           # floats across every pushed build, so it may be a different one.
           if [ -z "${TAG}" ]; then
-            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${RELEASE_TAG}"
             VERSION="${VERSION#v}"
             if [ -n "${VERSION}" ] && docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
               TAG="${IMAGE}:${VERSION}"
@@ -78,9 +83,11 @@ jobs:
           key: visor-msl-sample-20230623-calib-20230608
 
       - name: Run the release visual regression suite
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
         run: |
           ./terrain-intelligence-generator/test-release-regression.sh \
-            "${{ steps.image.outputs.tag }}" \
+            "${IMAGE_TAG}" \
             --download \
             --out-dir "${GITHUB_WORKSPACE}/release-regression"
 
@@ -111,7 +118,8 @@ jobs:
         run: |
           cd release-regression
           tar -czf release-visual-regression.tar.gz report.md images
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "${RELEASE_TAG}" \
             release-visual-regression.tar.gz --clobber
         env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

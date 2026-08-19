@@ -512,7 +512,12 @@ if [ ${COREG_RC} -eq 0 ] && [ -s "${COREG_WS}/pointing.nav" ]; then
     make_png "${COREG_WS}/coreg_diff.img" "coreg_difference" -1 1
 
     DIFF_ABS_MEAN=$(awk -v m="${DIFF_MEAN}" 'BEGIN{print (m<0 ? -m : m)}')
-    if [ "${TIEPOINTS}" -ge ${MIN_TIEPOINTS} ] && [ -n "${RESID_AFTER}" ] \
+    if [ -z "${RESID_BEFORE}" ] || [ -z "${RESID_AFTER}" ]; then
+        # An unparsed residual is a log-format change, not an alignment regression.
+        record FAIL "co-registration" \
+            "cannot read the mean pixel error from scratch/coreg/workspace-coreg/marsnav.log (commanded='${RESID_BEFORE}', final='${RESID_AFTER}')" \
+            "images/coreg_difference.png"
+    elif [ "${TIEPOINTS}" -ge ${MIN_TIEPOINTS} ] \
        && le "${RESID_AFTER}" "${RESID_BEFORE}" && le "${RESID_AFTER}" ${MAX_COREG_RESIDUAL_PX} \
        && ge "${DIFF_STD}" 0.001 && le "${DIFF_ABS_MEAN}" ${MAX_COREG_DIFF_MEAN}; then
         record PASS "co-registration" \
