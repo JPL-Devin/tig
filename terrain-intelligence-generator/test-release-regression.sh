@@ -75,7 +75,6 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-SAMPLE_DIR="${DATA_DIR}/sample_data"
 # The archive dictates its own layout, so --download cannot fill a custom dir.
 if [ -n "${CALIB_DIR}" ] && [ "${DO_DOWNLOAD}" -eq 1 ]; then
     echo "--download extracts to DATA_DIR/calibration/msl; drop --calibration or --download" >&2
@@ -83,6 +82,14 @@ if [ -n "${CALIB_DIR}" ] && [ "${DO_DOWNLOAD}" -eq 1 ]; then
 fi
 CALIB_DIR="${CALIB_DIR:-${DATA_DIR}/calibration/msl}"
 OUT_DIR="${OUT_DIR:-${PWD}/release-regression-$(date +%Y%m%d-%H%M%S)}"
+
+# Absolutise: each stage runs its demo from its own scratch directory, where a
+# relative path off the caller's cwd would no longer resolve.
+abs_path() { case "$1" in /*) echo "$1" ;; *) echo "${PWD%/}/${1#./}" ;; esac; }
+DATA_DIR="$(abs_path "${DATA_DIR}")"
+CALIB_DIR="$(abs_path "${CALIB_DIR}")"
+OUT_DIR="$(abs_path "${OUT_DIR}")"
+SAMPLE_DIR="${DATA_DIR}/sample_data"
 IMAGE_DIR="${OUT_DIR}/images"
 SCRATCH="${OUT_DIR}/scratch"
 REPORT="${OUT_DIR}/report.md"
