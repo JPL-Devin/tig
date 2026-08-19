@@ -81,6 +81,8 @@ if [ -z "${DATA_DIR}" ]; then
     [ "${KEEP}" = true ] || trap 'rm -rf "${DATA_DIR}"' EXIT
 fi
 mkdir -p "${DATA_DIR}"
+# The demo runs from a subdirectory below, where a relative path would not resolve.
+DATA_DIR="$(cd "${DATA_DIR}" && pwd)"
 
 print_header "Step 1: MSL VISOR calibration and sample data"
 
