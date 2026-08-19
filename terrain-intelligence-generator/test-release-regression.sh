@@ -221,6 +221,13 @@ missing_frames() {
     done
 }
 
+# Same requirement as find-calibration.sh's verify_calibration, so the demos
+# cannot fail on calibration the suite already accepted.
+calib_complete() {
+    [ -n "$(ls -A "${CALIB_DIR}/camera_models" 2>/dev/null)" ] &&
+        [ -n "$(ls -A "${CALIB_DIR}/param_files" 2>/dev/null)" ]
+}
+
 if [ "${DO_DOWNLOAD}" -eq 1 ]; then
     banner "Downloading pinned VICAR 5.0 VISOR data (~1.1 GB compressed)"
     # Without pipefail a truncated curl hides behind tar's exit status.
@@ -230,13 +237,13 @@ if [ "${DO_DOWNLOAD}" -eq 1 ]; then
     [ ${#MISSING[@]} -eq 0 ] || curl -fL "${SAMPLE_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "sample data download failed: ${SAMPLE_URL}"
     # Both archives carry their own top-level dir, so they extract into DATA_DIR.
-    [ -d "${CALIB_DIR}/camera_models" ] || curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}" \
+    calib_complete || curl -fL "${CALIB_URL}" | tar -zxf - -C "${DATA_DIR}" \
         || hard_fail "calibration download failed: ${CALIB_URL}"
     set +o pipefail
 fi
 
-[ -d "${CALIB_DIR}/camera_models" ] || hard_fail \
-    "no MSL calibration at ${CALIB_DIR} (expected a camera_models/ directory)" \
+calib_complete || hard_fail \
+    "no complete MSL calibration at ${CALIB_DIR} (expected camera_models/ and param_files/)" \
     "re-run with --download, or fetch it manually:" \
     "  curl -L '${CALIB_URL}' | tar -zxf - -C '${DATA_DIR}'"
 

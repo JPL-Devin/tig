@@ -47,7 +47,8 @@ jobs:
       - name: Resolve image tag
         id: image
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}/terrain-intelligence-generator"
+          # A repository owner may be mixed case; an image reference may not.
+          IMAGE="$(echo "ghcr.io/${{ github.repository }}/terrain-intelligence-generator" | tr '[:upper:]' '[:lower:]')"
           TAG="${{ github.event.inputs.image_tag }}"
           # On a release, sign off the image built for that tag; :opensource
           # floats across every pushed build, so it may be a different one.
