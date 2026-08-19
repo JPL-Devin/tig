@@ -600,8 +600,8 @@ record UNVERIFIED "demo-stereo-path" \
 # --- report -----------------------------------------------------------------
 
 SUITE_END=$(date +%s)
-RUNTIME=$(( SUITE_END - SUITE_START ))
-RUNTIME_STR=$(printf '%dm%02ds' $(( RUNTIME / 60 )) $(( RUNTIME % 60 )))
+ELAPSED=$(( SUITE_END - SUITE_START ))
+RUNTIME_STR=$(printf '%dm%02ds' $(( ELAPSED / 60 )) $(( ELAPSED % 60 )))
 
 {
     echo "# TIG release visual regression report"
