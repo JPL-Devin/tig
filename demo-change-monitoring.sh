@@ -366,7 +366,7 @@ echo ""
 echo "Step 5: Probing common projection geometry"
 run_logged probe.log tig marsmap inp=epochs.lis out=probe.img \
   navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL \
-  grid=NOGRID zoom=0.25 ovr_out=joint.ovr
+  grid=NOGRID zoom=0.25
 NATURAL_SCALE=$(grep -m1 "Pixel scale: .*pixels/degree" probe.log | \
   sed -E 's/.*or ([0-9.]+) pixels\/degree.*/\1/')
 PROBE_TOPEL=$(grep -m1 "Elevation minimum" probe.log | \
@@ -400,11 +400,22 @@ echo "Output scale: $OUTPUT_SCALE pixels/degree"
 echo "Output bounds: $LEFTAZ $RIGHTAZ $TOPEL $BOTTOMEL"
 echo ""
 
+MAP_COMMON=(navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL
+  leftaz="$LEFTAZ" rightaz="$RIGHTAZ" topel="$TOPEL" bottomel="$BOTTOMEL"
+  scale="$OUTPUT_SCALE" band="$BAND")
+
 if $USE_BRTCORR; then
-  echo "Step 6: Solving radiometric normalization (marsbrt)"
+  echo "Step 6: Computing joint overlap statistics"
+  run_logged overlap.log tig marsmap inp=joint.lis out=joint_overlap.img \
+    "${MAP_COMMON[@]}" zoom=0.25 ovr_out=joint.ovr
+  echo ""
+
+  echo "Step 7: Solving radiometric normalization (marsbrt)"
+  # DO_LINEAR adds a weakly constrained offset; use gain-only DO_MULT for conditioning.
+  # This matches the safer multi-frame solve used by the panorama demo.
   run_logged marsbrt.log tig marsbrt inp=joint.lis out=joint.brt \
     in_ovr=joint.ovr navtable=pointing.nav match_method=TIGHT \
-    out_solution_id="$SOLUTION_ID"
+    out_solution_id="$SOLUTION_ID" do_what=DO_MULT
   sed -n '/^Image   MultCorr/,/^$/p' marsbrt.log
   BRTCORR_BAD_MULTS=$(awk '
     /^Image[[:space:]]+MultCorr/ { table=1; next }
@@ -414,10 +425,6 @@ if $USE_BRTCORR; then
   ' marsbrt.log)
   echo ""
 fi
-
-MAP_COMMON=(navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL
-  leftaz="$LEFTAZ" rightaz="$RIGHTAZ" topel="$TOPEL" bottomel="$BOTTOMEL"
-  scale="$OUTPUT_SCALE" band="$BAND")
 
 render_epoch() {
   local epoch="$1"
@@ -451,7 +458,7 @@ render_epoch() {
   fi
 }
 
-echo "Step 7: Rendering identical epoch geometries"
+echo "Step 8: Rendering identical epoch geometries"
 render_epoch 1 epoch1.lis epoch1_raw.img epoch1_raw.log epoch1_brt.img epoch1_brt.log
 render_epoch 2 epoch2.lis epoch2_raw.img epoch2_raw.log epoch2_brt.img epoch2_brt.log
 echo ""
@@ -475,7 +482,7 @@ if [ -z "$BOX_SL" ] || [ -z "$BOX_SS" ] || [ -z "$BOX_NL" ] || [ -z "$BOX_NS" ];
   echo "ERROR: invalid statistics box: $BOX"
   exit 1
 fi
-echo "Step 8: Validating statistics box ($BOX_SL $BOX_SS $BOX_NL $BOX_NS)"
+echo "Step 9: Validating statistics box ($BOX_SL $BOX_SS $BOX_NL $BOX_NS)"
 
 parse_maxmin_value() {
   local log="$1"
@@ -550,7 +557,7 @@ measure_stats() {
   echo "$name: mean=${STAT_MEAN[$name]} stdev=${STAT_STD[$name]} min=${STAT_MIN[$name]} max=${STAT_MAX[$name]}"
 }
 
-echo "Step 9: Epoch statistics"
+echo "Step 10: Epoch statistics"
 measure_stats epoch1 epoch1_raw.img
 measure_stats epoch2 epoch2_raw.img
 if $USE_BRTCORR; then
@@ -598,7 +605,7 @@ run_f2() {
     out="$out" func="$function" format=REAL
 }
 
-echo "Step 10: Difference products"
+echo "Step 11: Difference products"
 run_f2 diff_raw.img epoch1_raw.img epoch2_raw.img "in1-in2"
 run_f2 diff_gain.img epoch1_raw.img epoch2_raw.img "in1-${GAIN}*in2"
 run_f2 diff_lin.img epoch1_raw.img epoch2_raw.img "$LINEAR_FUNC"
@@ -611,7 +618,7 @@ if $USE_BRTCORR; then
 fi
 echo ""
 
-echo "Step 11: Control experiments"
+echo "Step 12: Control experiments"
 run_logged epoch1_repeat.log tig marsmap inp=epoch1.lis out=epoch1_repeat_raw.img \
   "${MAP_COMMON[@]}"
 run_logged determinism.log tig difpic inp=\( epoch1_raw.img epoch1_repeat_raw.img \)
@@ -645,7 +652,7 @@ echo "Nav effect stdev: ${STAT_STD[nav_effect]}"
 echo "Nav effect difpic: ${NAV_EFFECT_COUNT:-not parsed} differences"
 echo ""
 
-echo "Step 12: Difference display and PNG products"
+echo "Step 13: Difference display and PNG products"
 K=$(awk -v sigma="${STAT_STD[diff_lin]}" 'BEGIN {printf "%.12g", 255/(6*sigma)}')
 DISPLAY_FUNC="\"min(255,max(0,in1*${K}+128))\""
 run_logged diffview.log tig f2 inp=diff_lin.img out=diffview.img \
@@ -689,6 +696,7 @@ artifact_description() {
     kept.tpt) echo "Tiepoints retained by marsnav" ;;
     pointing.nav) echo "Corrected pointing navigation table" ;;
     probe.img) echo "Common-frame probe raster" ;;
+    joint_overlap.img) echo "Joint overlap-statistics raster" ;;
     joint.ovr) echo "Overlap statistics for marsbrt" ;;
     joint.brt) echo "Per-frame radiometric correction table" ;;
     epoch1_raw.img|epoch2_raw.img) echo "Projected unnormalised epoch raster" ;;
@@ -716,7 +724,7 @@ artifact_description() {
 echo "Artifacts:"
 ARTIFACTS=(
   joint.lis epoch1.lis epoch2.lis epochs.lis ovl.lis ovr.lis
-  tiepoints.tpt kept.tpt pointing.nav probe.img joint.ovr joint.brt
+  tiepoints.tpt kept.tpt pointing.nav probe.img joint_overlap.img joint.ovr joint.brt
   epoch1_raw.img epoch2_raw.img epoch1_brt.img epoch2_brt.img
   diff_raw.img diff_gain.img diff_lin.img diff_brt.img diffview.img
   diffview.png epoch1_display.img epoch2_display.img epoch1_display.png
