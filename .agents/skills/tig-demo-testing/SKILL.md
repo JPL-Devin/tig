@@ -113,6 +113,69 @@ can emit an all-black image.
   (`Property: RSM_ARTICULATION_STATE` → first `ARTICULATION_DEVICE_ANGLE` element, in radians).
   These two differ by roughly 180 degrees on M2020 — don't compare them to each other.
 
+## Testing image-bundled calibration in the demo scripts
+- The in-image branch is proven only if the run is genuinely clean: wrap every command in
+  `env -u MARS_CONFIG_PATH -u MARS_CALIB_PATH` **and** re-check the other probe paths
+  (`<repo>/calibration`, `~/.mars_calib`, `/opt/mars_calib`, `./mars_calibration_m20`,
+  `./mars_calib`) right before each run. A stray probe silently sends you down the host branch.
+- Expected in-image message on a `:fullfeatured` (m20) image:
+  `Using calibration bundled in the container image: /usr/local/vicar/mars_calib/m20` — the plain
+  `/usr/local/vicar/mars_calib` entry is on the image's `MARS_CONFIG_PATH` first but has no
+  `camera_models/`, so the mission subdirectory is the expected answer.
+- Two independent proofs of where calibration came from, worth capturing both:
+  - the MARS program log line `... (path=/usr/local/vicar/mars_calib/m20/camera_models/...)`
+    (`marsrad`, `marsuvw`, and friends all print it);
+  - `docker inspect -f '{{range .Mounts}}...'` on the `tig-vicar-*` container: an in-image run has
+    **no** mount whose destination is `/usr/local/vicar/mars_calib`, while a host run shows
+    `<hostcalib> -> /usr/local/vicar/mars_calib (rw=false)`. Note `tig` keys containers by
+    mount set, so the host and in-image runs get *different* containers on the same image tag —
+    list all of them when inspecting.
+- Comparing host-calibration and in-image outputs: don't use `md5sum` on VICAR `.img`/`.uvw`
+  products. Their labels embed `DAT_TIM`, so two identical runs differ in ~3 bytes. Use
+  `cmp -l a b` (expect only bytes inside the label, `LBLSIZE=...`) or, for the PNGs,
+  `compare -metric AE a b diff.png` (expect `0`).
+
+## Getting M20 data from PDS when you need it
+- Directory listings and w10n are useless: any PDS listing URL, and any wrong filename, returns a
+  **24702-byte HTML landing page** with HTTP 200. Always check `size_download` and that the file
+  starts with `ODL_VERSION_ID`. w10n JSON returns empty `leaves`/`nodes`.
+- What did work (only exact, known filenames):
+  - raw EDR bundle:
+    `https://planetarydata.jpl.nasa.gov/img/data/mars2020/mars2020_navcam_ops_raw/data/sol/00650/ids/edr/ncam/<PRODUCT>.IMG`
+  - calibrated FDR bundle, same shape with `mars2020_navcam_ops_calibrated/.../ids/fdr/ncam/`.
+  Filenames quoted in `docs/demos/*.md` are the reliable source; guessed SCLK/version codes fail.
+- A verified M20 stereo pair (both eyes, same SCLK), used by
+  `docs/demos/surface-characteristics.md`:
+  `N{L,R}F_0650_0724654097_444EDR_N0320000NCAM08111_01_295J01.IMG` from the raw EDR bundle.
+- Don't be scared off by `DETECTOR_LINE_SAMPLES=5120` in the label: M20 NavCam products are stored
+  1280x960, 3 bands, 16-bit (file size 7,424,000). Full stereo correlation + mesh on such a pair
+  takes ~5 minutes, not hours.
+
+## Co-registration data suitability (bites you before any calibration bug does)
+- `marschkovl` applies a fixed pointing pre-test — `angle= <deg> theshold= 53.000000` in
+  `marschkovl.log` — and `--overlap` does **not** move that threshold. Frames from a 360 deg
+  panorama sequence are typically 55-131 deg apart, so you get `0 pair(s)`, then
+  `0 tiepoints`, then `marsnav` `** ABEND called **`. That is a data problem, not a demo bug.
+- What works: frames at (nearly) the same pointing. A left/right NavCam stereo pair is the cheapest
+  such input on hand and gave `1 pair`, 25 tiepoints, mean pixel error 2.390458 -> 1.364541.
+  Repeat-coverage sequences (e.g. sol 650 `NCAM08111`) are the documented case.
+
+## Known non-fatal stage failures
+- `demo-surface-characteristics.sh` step 6 (`marsirough -heli`) abends with
+  `[VIC2-GENERR] Exception in XVREAD, processing file: zix_heli.img / [VIC2-EOF] End of file` when
+  the input is an XYZ-derived cloud; the demo prints `⚠ marsirough abended; continuing without it`
+  and finishes. This reproduces identically with host calibration, so it is unrelated to where
+  calibration comes from — don't attribute it to a calibration change.
+- `demo-mesh-generation-with-xyz.sh` prints `Left image: x` /
+  `Note: could not read NL/NS from the label; skipping the size check` for PDS `.IMG` inputs. Only
+  the optional size pre-check is skipped; the pipeline still runs.
+
+## Shell hazards while inspecting output
+- `pkill -f "display ..."` matches the agent's own shell command line and kills it. Close viewers by
+  window (`wmctrl -c`) or just launch the next `display` in a fresh exec call.
+- `nohup ... > log 2>&1 &` plus a later `cat log` must use an absolute path: one-shot exec calls do
+  not share a working directory.
+
 ## Verifying TIG products inside MMGIS (examples/mmgis-integration)
 `cd examples/mmgis-integration && docker compose up -d` starts MMGIS 5.2.24 + postgis on
 `http://localhost:8888`; `Missions/` is bind-mounted, so products are served off disk. Open
