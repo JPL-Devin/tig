@@ -359,7 +359,7 @@ cp "${STEREO_R}" "${STEREO_WS}/right.vic"
       spike_range=0.04 outlier=0.5 > marsxyz.log 2>&1 )
 STEREO_RC=$?
 
-XYZ_POINTS=$(grep -oE 'Computed [0-9]+ valid XYZ points' "${STEREO_WS}/marsxyz.log" 2>/dev/null | awk '{print $2}')
+XYZ_POINTS=$(grep -oE 'Computed [0-9]+ valid XYZ points' "${STEREO_WS}/marsxyz.log" 2>/dev/null | tail -1 | awk '{print $2}')
 XYZ_POINTS=${XYZ_POINTS:-0}
 if [ ${STEREO_RC} -eq 0 ] && [ -s "${STEREO_WS}/pointcloud.xyz" ]; then
     read -r DISP_L DISP_S DISP_B <<<"$(vic_dims "${STEREO_WS}/disparity.img")"
@@ -404,7 +404,7 @@ if [ ${MESH_RC} -eq 0 ] && [ -s "${MESH_WS}/terrain.obj" ]; then
             gsub(/\r/, "")
             for (i = 2; i <= 4; i++) {
                 v = $i
-                if (v !~ /^-?[0-9]+\.?[0-9]*([eE][-+]?[0-9]+)?$/) { bad++; next }
+                if (v !~ /^-?[0-9]+\.?[0-9]*([eE][-+]?[0-9]+)?$/) { bad++; continue }
                 x = v + 0
                 if (x < -1e6 || x > 1e6) bad++
                 if (i == 4) { if (!n || x < zmin) zmin = x; if (!n || x > zmax) zmax = x; n++ }
