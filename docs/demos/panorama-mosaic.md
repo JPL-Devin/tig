@@ -62,6 +62,10 @@ On an 8-core VM, five 1280x960 NavCam frames take about 8 seconds end to end.
 - `panorama_brtcorr.xml` — per-frame brightness corrections from `marsbrt`
 - `panorama_stretched.img` — the display-stretched copy the PNG was written
   from, unless `--no-stretch`
+- `panorama_bbox.csv` — with `--bbox`, one CSV row per frame footprint: the
+  filename and a WKT polygon in mosaic (sample line) coordinates. This is
+  `marsmap`'s `BBOX` output, and it is how the wrap and pole handling below was
+  checked.
 
 ## Choosing frames
 
@@ -87,8 +91,8 @@ need to line up with the ring.
 Where the ring does not close, the mosaic still builds; the gap is left at the
 background DN. Elevations outside the frames' coverage are also background:
 that is why a 360-degree cylindrical panorama from one elevation tier has a dark
-band across the top, and why the polar projection has a hole where the nadir
-would be.
+band across the top, and why the polar projection has a hole in the middle unless
+the frames actually look at the nadir — a sequence that does is used below.
 
 ## Projections
 
@@ -122,6 +126,25 @@ cylindrical panorama's horizontal stretch near the bottom gets in the way.
 
 Extent: `--top-el` (elevation of the outer edge) and `--up-az` (azimuth placed
 at the top of the image). `--left-az`/`--right-az`/`--bottom-el` do not apply.
+
+`--up-az` rotates the mosaic. Run on the sol 10 nadir set with `--top-el -50`,
+once as `--projection polar` and once with `--up-az 180` added, the two outputs
+are both 1033 x 1033 x 3 — the parameter changes no dimension and clips nothing —
+and the second is the first turned through 180 degrees, so the rover hardware
+that sat at the top of the default mosaic sits at the bottom. The label records
+which way is up:
+
+```
+# default                    # --up-az 180
+MAP_PROJECTION_TYPE='POLAR'  MAP_PROJECTION_TYPE='POLAR'
+REFERENCE_AZIMUTH=0.0        REFERENCE_AZIMUTH=180.0
+TOPEL=-50.0                  TOPEL=-50.0
+                             UP_AZ=180.0
+```
+
+Without `--up-az` there is no `UP_AZ` keyword and `REFERENCE_AZIMUTH` is 0, i.e.
+north up. `marsmap`'s help says `UP_AZ` is polar-only; that it is ignored by the
+other projections was not tested here.
 
 ### Vertical
 
@@ -163,6 +186,75 @@ and both documented in its help:
   adds three points to the footprint, running vertically up or down to the edge
   of the mosaic, so the region closes correctly. Nothing needs to be passed for
   this.
+
+### Pole-reaching sequences, and what was observed
+
+Most sequences never reach a pole, so this path stays dormant. Two M2020 NavCam
+sets that do reach one, both used below:
+
+- **Nadir.** Sol 10, sequence `NCAM00130`, site/drive `N0030000`: six left-NavCam
+  FDR products with mast elevation about -89.5 degrees, i.e. pointed straight
+  down at the deck and the ground under the rover. With a 73.1-degree elevation
+  field of view, the nadir is inside every footprint.
+- **Zenith.** The fifth frame of the sol 300 `NCAM00501` ring used elsewhere in
+  this document points at elevation +80.2 degrees, so its footprint crosses the
+  zenith while the other four stay near +25.
+
+Run with `--bbox` and the footprint polygons show both behaviours directly. On
+the nadir set with the default extent (6 frames, 11 polygon rows, mosaic 4646 x
+334) five of the six frames produced **two** rows — the wrapped pair — and each
+row ends with a run of points pinned to the bottom line of the mosaic:
+
+```
+000_NLF_0010_0667835038_916FDR_...rad.img,"POLYGON((2207 -14,...,4585 59,4585 334,-61 334,-61 59,255 279,...))"
+000_NLF_0010_0667835038_916FDR_...rad.img,"POLYGON((6853 -14,...,9231 59,9231 334,4585 334,4585 59,4901 279,...))"
+```
+
+`334` is the last line of that mosaic: those are the extra points closing the
+polygon down to the mosaic edge, and the two rows are the same polygon translated
+by the full 4646-sample width. The zenith frame in the sol 300 set behaves the
+same way at the top edge (`line 1`), again in two rows:
+
+```
+004_NLF_0300_0693570083_989FDR_...rad.img,"POLYGON((2580 342,...,364 556,9483 683,9483 1,4837 1,4837 683,4613 481,...))"
+```
+
+One caveat from the same run: the sixth nadir frame (mast azimuth 130 degrees)
+came out as a **single** row whose sample coordinates jump across the wrap point
+(`...,4508 184,89 60,405 278,...`) with no pole-closing points, where the other
+five were split and closed. Why that frame is treated differently was not
+established; if you consume `panorama_bbox.csv`, do not assume every
+pole-crossing frame yields the split-and-closed pair.
+
+**The fitted extent does not include the pole.** `TOPEL`/`BOTTOMEL` default to
+the extreme elevation of a corner or edge centre of the inputs, and for a frame
+looking straight down the extreme point is in the middle of the frame, not on its
+edge. The nadir set therefore fitted to `MINIMUM_ELEVATION=-54.8968` — the nadir
+is in the footprints, in the bbox polygons, and off the picture. Ask for it:
+
+```bash
+# Nadir in the picture: bottom edge at -90
+./demo-panorama-mosaic.sh --bbox --bottom-el -90 --top-el -30 --grid \
+  /path/to/sol010/NLF_0010_*_0A0295J0[34].IMG
+
+# Zenith in the picture: top edge at +90
+./demo-panorama-mosaic.sh --bbox --top-el 90 --bottom-el 0 --grid \
+  /path/to/sol300/NLF_0300_*NCAM00501*.IMG
+```
+
+Those two runs gave 4646 x 774 and 4646 x 1161 mosaics. In the first, the last
+line of the PNG (elevation -90) has no background pixels at all across its 4646
+samples: the nadir is a single view direction smeared across the full width, and
+the bottom of the image is that smear. In the second, the top line (elevation
++90) is filled except for 12 samples, entirely from the one frame that sees the
+zenith. That is the picture-space counterpart of the closing points above.
+
+The same nadir set in the polar projection has no hole in the middle:
+
+```bash
+./demo-panorama-mosaic.sh --projection polar --top-el -50 \
+  /path/to/sol010/NLF_0010_*_0A0295J0[34].IMG   # 1033 x 1033 x 3
+```
 
 ## Brightness matching
 
@@ -291,6 +383,84 @@ The overlap pass found about 177 overlapping regions — repeated runs on the sa
 frames have also reported 176, with no effect on the solved gains or the mosaic
 — and `marsbrt` solved gains of 1.232, 1.079, 0.903, 1.015 and 0.771 for the
 five frames.
+
+## A second instrument: Mastcam-Z
+
+Everything above is NavCam. The demo was also run unchanged on **Mastcam-Z**
+(`MCZ_LEFT`), sol 15, sequence `ZCAM07000`, site/drive `N0030376` — 24 `ZLF_*FDR`
+products from
+`https://planetarydata.jpl.nasa.gov/img/data/mars2020/mars2020_mastcamz_ops_calibrated/data/sol/00015/ids/fdr/zcam/`:
+
+```bash
+./demo-panorama-mosaic.sh --auto-extent --bbox --zoom 0.5 \
+  /path/to/sol015_zcam/ZLF_0015_*ZCAM07000_110085J01.IMG
+```
+
+No script change and no calibration change were needed: the M2020 VISOR
+calibration covers `MCZ_LEFT`/`MCZ_RIGHT` as well as the NavCams, and `marsrad`,
+`marsmap` and `marsbrt` accepted the frames as they came. Twenty-four frames took
+27 seconds at full scale on an 8-core VM. What is genuinely different:
+
+- **Frame size and camera model.** 1648 x 1200 x 3 per frame against NavCam's
+  1280 x 960 x 3, and `MODEL_TYPE=CAHVOR` where the NavCam and Hazcam labels say
+  `CAHVORE`. Pig picks the model from the label; nothing has to be told which.
+- **Narrow field of view.** These frames are 6.36 x 4.63 degrees (the 110 mm zoom
+  position), so a mosaic needs many of them and comes out large: 24 frames
+  spanning 61 degrees of azimuth produced a 15869 x 2163 mosaic at the camera's
+  natural scale. `--zoom 0.5` halves that. NavCam's 96-degree frames make this
+  easy to forget.
+- **The label azimuth is not the footprint azimuth.** `INSTRUMENT_AZIMUTH` in
+  these labels runs 301.7 to 355.7 degrees, but the mosaic `marsmap` fits to the
+  footprints starts at `START_AZIMUTH=325.975` and stops at `STOP_AZIMUTH=26.072`
+  — about 24 degrees away. Choosing `--left-az`/`--right-az` from the labels
+  (`--left-az 298 --right-az 359`) left the left third of the mosaic empty. For a
+  narrow-field instrument, use `--auto-extent` and read the azimuth range back out
+  of the label rather than deriving it from the frame labels.
+- **Wrap for free.** Because the fitted extent runs 326 -> 26 degrees, the mosaic
+  straddles 0/360: the bbox file held 25 polygons for 24 frames, the extra row
+  being the wrapped copy of the one frame sitting on the seam.
+- **Two FDR variants per frame.** The PDS directory lists both
+  `ZLF_..._110085J01.IMG` (full 1648 x 1200) and `ZLF_..._1100LUJ02.IMG`, which is
+  a 206 x 150 thumbnail of the same acquisition. A careless glob mixes them.
+- **Colour.** These are `FILTER_NAME='ZCAM_L0_RGB'`, `FILTER_NUMBER=0`, three
+  bands — as are the M2020 NavCam FDRs, so `marsmap` had three bands in and three
+  bands out in both cases and nothing special was needed. Its documented handling
+  of mixed band counts, and of the narrowband Mastcam-Z filters (`ZL1`..`ZL6`,
+  which are single-band and would need `BAND`/filter bookkeeping), was not
+  exercised.
+
+## What is verified, and what is not
+
+Run end to end on this machine, on the real products named above, with the
+published image:
+
+- Cylindrical, polar and vertical projections on the sol 300 NavCam ring
+- Nadir coverage: sol 10 `NCAM00130`, cylindrical (fitted and `--bottom-el -90`)
+  and polar; pole-closing points and wrapped polygon pairs read out of
+  `panorama_bbox.csv`, and the pole line of the PNG checked for background pixels
+- Zenith coverage: the +80-degree frame of sol 300 `NCAM00501`, cylindrical with
+  `--top-el 90`
+- `--up-az 180` against the default polar orientation, image and label
+- A second instrument, Mastcam-Z `MCZ_LEFT`, 24 frames, with the gotchas above
+
+Not exercised, and therefore not described as working:
+
+- **Hazcam.** Products exist (e.g. sol 300 `FHAZ00206`, `FRONT_HAZCAM_LEFT_A`,
+  `CAHVORE`, 102-degree elevation field of view) and the M2020 calibration covers
+  them, but a sol with front *and* rear Hazcam frames from one site/drive was not
+  hunted down and none of it was run, so nothing here says how the fisheye models
+  mosaic.
+- **MSL and MER.** The MSL calibration bundle and MSL NavCam samples are
+  available, but no MSL or MER frames were mosaicked; the demo's mission handling
+  beyond M2020 is untested.
+- **Sinusoidal projection.** `marsmap` calls it not fully implemented or tested;
+  the script does not offer it and it was not run.
+- **`marsnav` navigation tables** (`navtable=`), which `marsmap` accepts to
+  improve pointing.
+- **Mixed colour and monochrome inputs**, and the narrowband Mastcam-Z filters.
+- **The one nadir frame that produced a single unclosed bbox row** (above): the
+  behaviour is recorded, its cause is not.
+- **Orbital cartographic reprojection**, which is out of scope by construction.
 
 ## Troubleshooting
 
