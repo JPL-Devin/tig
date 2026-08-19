@@ -271,8 +271,8 @@ run_logged() {
   local log="$1"
   shift
   if ! "$@" > "$log" 2>&1; then
-    echo "ERROR: command failed; see $WORKSPACE/$(basename "$log")"
-    tail -20 "$log" || true
+    echo "ERROR: command failed; see $WORKSPACE/$(basename "$log")" >&2
+    tail -20 "$log" >&2 || true
     exit 1
   fi
 }
@@ -337,8 +337,12 @@ echo ""
 echo "Step 3: Generating joint tiepoints (marsautotie)"
 run_logged marsautotie.log tig marsautotie inp=joint.lis \
   out=tiepoints.tpt density="$DENSITY" grid_spacing="$GRID_SPACING"
-TOTAL_TIEPOINTS=$(grep -c '<tie ' tiepoints.tpt)
+TOTAL_TIEPOINTS=$(grep -c '<tie ' tiepoints.tpt || true)
 echo "Tiepoints: $TOTAL_TIEPOINTS"
+[ "$TOTAL_TIEPOINTS" -gt 0 ] || {
+  echo "ERROR: marsautotie produced no tiepoints; see $WORKSPACE/marsautotie.log." >&2
+  exit 1
+}
 echo ""
 
 echo "Step 4: Solving corrected pointing (marsnav)"
@@ -347,7 +351,11 @@ run_logged marsnav.log tig marsnav inp=joint.lis out=pointing.nav \
   -remove max_residual="$MAX_RESIDUAL" max_remove=100
 RESIDUAL_BEFORE=$(grep -m1 "Commanded mean pixel error" marsnav.log | awk '{print $NF}')
 RESIDUAL_AFTER=$(grep "Final solution mean pixel error" marsnav.log | tail -1 | awk '{print $NF}')
-KEPT_TIEPOINTS=$(grep -c '<tie ' kept.tpt)
+KEPT_TIEPOINTS=$(grep -c '<tie ' kept.tpt || true)
+[ "$KEPT_TIEPOINTS" -gt 0 ] || {
+  echo "ERROR: marsnav kept no tiepoints; see $WORKSPACE/marsnav.log." >&2
+  exit 1
+}
 echo "Commanded mean pixel error: $RESIDUAL_BEFORE"
 echo "Final solution mean pixel error: $RESIDUAL_AFTER"
 echo "Kept tiepoints: $KEPT_TIEPOINTS / $TOTAL_TIEPOINTS"
@@ -571,6 +579,12 @@ STD2="${STAT_STD[epoch2]}"
 GAIN=$(awk -v a="$MEAN1" -v b="$MEAN2" 'BEGIN {printf "%.12g", a/b}')
 G2=$(awk -v a="$STD1" -v b="$STD2" 'BEGIN {printf "%.12g", a/b}')
 O2=$(awk -v a="$MEAN1" -v g="$G2" -v b="$MEAN2" 'BEGIN {printf "%.12g", a-g*b}')
+O2_ABS=$(awk -v offset="$O2" 'BEGIN {if (offset < 0) offset=-offset; printf "%.12g", offset}')
+if awk -v offset="$O2" 'BEGIN {exit !(offset < 0)}'; then
+  LINEAR_FUNC="in1-${G2}*in2+${O2_ABS}"
+else
+  LINEAR_FUNC="in1-${G2}*in2-${O2_ABS}"
+fi
 echo "Gain match: G=$GAIN"
 echo "Linear match: G2=$G2 O2=$O2"
 echo ""
@@ -587,7 +601,7 @@ run_f2() {
 echo "Step 10: Difference products"
 run_f2 diff_raw.img epoch1_raw.img epoch2_raw.img "in1-in2"
 run_f2 diff_gain.img epoch1_raw.img epoch2_raw.img "in1-${GAIN}*in2"
-run_f2 diff_lin.img epoch1_raw.img epoch2_raw.img "in1-${G2}*in2-${O2}"
+run_f2 diff_lin.img epoch1_raw.img epoch2_raw.img "$LINEAR_FUNC"
 measure_stats diff_raw diff_raw.img
 measure_stats diff_gain diff_gain.img
 measure_stats diff_lin diff_lin.img
@@ -605,12 +619,13 @@ DETERMINISM_COUNT=$(sed -n \
   's/.*NUMBER OF DIFFERENCES = *\([0-9][0-9]*\).*/\1/p' determinism.log | tail -1)
 echo "Determinism: ${DETERMINISM_COUNT:-unknown} differences"
 
-run_logged copy_a0.log tig copy epoch1_raw.img a0.img sl=1 ss=1 nl="$((NL - 1))" ns="$((NS - 1))"
+run_logged copy_a0.log tig copy epoch1_raw.img a0.img sl=1 ss=1 \
+  nl="$((NL - 1))" ns="$((NS - 4))"
 SHIFT_STDS=()
 for shift in 1 2 3; do
   sample_start=$((shift + 1))
   run_logged "copy_a${shift}.log" tig copy epoch1_raw.img "a${shift}.img" \
-    sl=1 ss="$sample_start" nl="$((NL - 1))" ns="$((NS - 1))"
+    sl=1 ss="$sample_start" nl="$((NL - 1))" ns="$((NS - 4))"
   run_f2 "diff_shift${shift}.img" a0.img "a${shift}.img" "in1-in2"
   measure_stats "shift${shift}" "diff_shift${shift}.img"
   SHIFT_STDS+=("${STAT_STD[shift${shift}]}")
