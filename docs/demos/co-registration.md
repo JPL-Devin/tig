@@ -234,9 +234,10 @@ programs with the same conventions.
 ```
 
 Stages: label/solar-geometry report → `marschkovl` → `marsautotie` → `marsnav` →
-`marsmap` geometry probe → `marsbrt` → one `marsmap` render per epoch with the
-*same* navigation table and *identical* projection parameters → statistics box
-validation → `f2` differences → controls → `f2`/`vicario` display products.
+`marsmap` geometry probe → `marsmap` overlap-statistics pass → `marsbrt` → one
+`marsmap` render per epoch with the *same* navigation table and *identical*
+projection parameters → statistics box validation → `f2` differences → controls
+→ `f2`/`vicario` display products.
 `--tie-extra` frames take part in the overlap, tiepoint and pointing solve but
 are not rendered or differenced: more frames tie the two epochs together, only
 the two primaries need to be pixel-comparable.
@@ -276,7 +277,7 @@ tig-cli 0.2.0, M20 VISOR calibration:
 | pointing deltas | ≤ 0.02° for five frames, 0.19°/0.21° for one |
 | `marsmap` probe (`zoom=0.25`) | natural scale 51.623641 px/degree; el −71.06…+9.53°, az 326.50…126.95° |
 | epoch renders | 2799 × 3720 HALF, `scale=40`, az 0…93°, el 0…−70°, one per epoch |
-| `marsbrt` | ran; solution **ill-conditioned on this set** (see below) |
+| `marsbrt do_what=DO_MULT` | well-conditioned gains (0.231…2.508), but not a cross-epoch normaliser (see below) |
 
 Statistics, all over the interior box `sl=100 ss=300 nl=2200 ns=3100` (excludes
 the projection's empty margins — `maxmin` in the script refuses a box containing
@@ -322,35 +323,59 @@ Read against those numbers:
   and sub-pixel, which is also why co-registration cannot be validated by
   "did the mosaic change".
 
-### `marsbrt` was ill-conditioned here — read the warning
+### `marsbrt` — conditioned, but still not the normaliser you want
 
-`marsbrt` computes per-frame multiplicative/additive corrections from the overlap
-statistics in `marsmap`'s `ovr_out=` file, and `marsmap brtcorr=` applies them.
-It ran (exit 0) but its solution on this six-frame, two-sol set is degenerate —
-near-zero multipliers for the two primaries:
+`marsbrt` computes per-frame corrections from the overlap statistics in
+`marsmap`'s `ovr_out=` file, and `marsmap brtcorr=` applies them. Two things
+about the invocation matter, and getting either wrong makes the solve look
+broken when it is not:
+
+- The overlap pass must cover **every frame in `marsbrt`'s input list** and use
+  **the same projection as the renders being corrected** (only `zoom` reduced).
+  An earlier version of this demo measured overlaps over the two primaries at
+  the probe's own extents and then solved over all six frames, so four frames
+  entered the solve with no measurements at all.
+- `do_what=DO_MULT` (one gain per frame). The default `DO_LINEAR` also solves an
+  offset, which — as [panorama-mosaic.md](panorama-mosaic.md) records for the
+  mosaic case — is only sometimes well conditioned.
+
+With both fixed, the six-frame solve is well behaved (this table and the BRTCORR
+numbers below come from the run that introduced the fix, not from the run quoted
+in [Measured results](#measured-results); nothing before `marsbrt` changed):
 
 ```
 Image   MultCorr        AddCorr
-      0    0.0008025605  398.8228988771
-      1    0.0010552859  398.8335266865
-      2    1.0754533796  138.6786923533
-      3    2.6174911459 -224.3749295958
-      4    0.7979243246 -152.6082524834
-      5    1.5072733034 -559.3519358378
+      0    0.2311796546    0.0000000000
+      1    0.2953049432    0.0000000000
+      2    0.2431132369    0.0000000000
+      3    2.4022321776    0.0000000000
+      4    0.3205904556    0.0000000000
+      5    2.5075795320    0.0000000000
 ```
 
-The quoted run's corrected renders collapse to near-constant DN (σ 0.485881 and
-0.866135, against 367.5 and 713.6 raw). Across the quoted and independent runs,
-the epoch-1 box min/max were 616/5058 and 615/5069 (roughly ±1/±11 DN), and the
-BRTCORR renders collapsed to σ 0.485881/0.866135, 0.486056/0.598729 and
-0.000000/0.000000 across three runs. The BRTCORR difference statistics
-(σ 0.789881) describe a flattened image, not normalised change. The script
-detects this — any multiplier below 0.01, including negative ones, or a BRTCORR
-render whose σ falls below 10% of the raw σ — and prints a warning rather than
-silently reporting the numbers. The multipliers themselves varied wildly between
-runs (0.0008 and 0.0011 here; 0.00055 and 0.00072, −0.264/−2.55, and
-−0.001/−0.0014 elsewhere), so treat the multi-epoch `marsbrt` solve as
-unreliable on sets like this and use the linear match. `--no-brtcorr` skips it.
+No near-zero or negative multipliers and no collapse: the corrected renders keep
+real structure (epoch 1 mean 659.0392 σ 84.96453, epoch 2 mean 764.5943
+σ 210.7401, same box), and the script's ill-conditioning warning does not fire.
+It is still **not** the normalisation this product differences, for two reasons
+visible in those numbers:
+
+- Gain-only cannot absorb an additive difference, and this illumination change is
+  partly additive: the BRTCORR difference keeps a mean bias of −105.555 DN,
+  where both the gain and linear matches sit at ~0.
+- It does not make the epochs comparable in contrast, which is the requirement.
+  The corrected σ are still a factor of 2.5 apart (84.96 vs 210.74, i.e. 23% and
+  30% of their raw σ), and the BRTCORR difference σ of 188.1616 is *larger* than
+  either corrected epoch's own σ. The linear mean/σ match reduces the spread
+  relative to the epochs it differences; BRTCORR does not.
+
+So `marsbrt` is verified as executing and as producing a sane multi-frame gain
+solution, and the linear match remains this product's normalisation.
+`--no-brtcorr` skips the overlap pass and the solve. The script still checks for
+any multiplier below 0.01 (including negative ones) and for a BRTCORR render
+whose σ falls below 10% of the raw σ, and warns rather than silently reporting
+numbers from a degenerate solve — the earlier mis-scoped `DO_LINEAR` runs
+produced exactly that (multipliers 0.0008/0.0011, renders flattened to σ < 1,
+varying run to run), which is what the check exists to catch.
 
 ### What the difference image actually shows
 
@@ -391,7 +416,7 @@ means nothing.
 
 ### Reproducibility
 
-The stage counts move between runs on identical inputs: four runs of the same
+The stage counts move between runs on identical inputs: five runs of the same
 command gave 994–1008 tiepoints, 748–796 kept, 7.56–7.86 px initial and
 1.47–1.58 px final residual, and σ 384.3–384.5 for the linear difference. The
 pixel-shift controls reproduce to four figures (133.68 / 220.01 / 270.25), but
@@ -683,10 +708,12 @@ Ran, but not usable as documented:
   `marsnav` keeps 1 of 135 / 0 of 109 of them. Verified as executing; not
   verified as a tiepoint source for a pointing solve. See
   [The other tiepoint sources](#the-other-tiepoint-sources--marstie-marsautotie2-marsfidfinder).
-- **`marsbrt` across epochs** — runs, but its solution was degenerate on this
-  two-sol set (near-zero and negative multipliers, flattened output) and varied
-  run to run. Verified as executing; not verified as a radiometric normaliser for
-  change monitoring.
+- **`marsbrt` across epochs** — with `do_what=DO_MULT` and a correctly scoped
+  overlap pass it solves a well-conditioned gain per frame, but gain-only leaves
+  a −105.6 DN mean bias and does not equalise the two epochs' contrast, so the
+  linear mean/σ match is what the demo differences. Verified as executing and as
+  producing a sane solution; not verified as a radiometric normaliser for change
+  monitoring.
 - **`marstie` interactive mode** — only `interact=BATCH` is verified. The manual
   editor is not present in the image (`sh: /tp: No such file or directory`).
 - **`marsrelabel navtable=`** — the program runs, but the output with a navigation
