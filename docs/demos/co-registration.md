@@ -391,8 +391,8 @@ enters the 14:33 epoch along the bottom edge of this framing and is absent from
 the 11:04 epoch, and (c) thin bright/dark outlines on the highest-contrast
 edges — the wheel tracks and the rover deck — which is the sub-pixel residual
 and resampling signature, not change. The terrain itself is unchanged between
-the two sols, and that is the honest verdict for this pair: **the product works; the scene did not change; almost all of the difference
-is illumination.**
+the two sols, and that is the honest verdict for this pair: **the product works;
+the scene did not change; almost all of the difference is illumination.**
 
 Confounders, in the order they bit on this data:
 
