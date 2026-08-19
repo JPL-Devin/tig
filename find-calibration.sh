@@ -85,16 +85,16 @@ verify_calibration() {
     fi
 }
 
-# Echo the first entry of the image's own MARS_CONFIG_PATH that really holds
-# camera_models/ and param_files/. Probing through tig picks the same image and
-# runtime a real invocation would.
+# Echo "<dir>|image" or "<dir>|mount" for the first entry of the container's own
+# MARS_CONFIG_PATH that really holds camera_models/ and param_files/. Probing
+# through tig picks the same image and runtime a real invocation would.
 find_image_calibration() {
     command -v tig > /dev/null 2>&1 || return 1
 
     # Say so first: on a cold cache this starts the container, and tig pulls
     # gigabytes of image before the probe itself runs.
-    echo "No calibration on this host; checking the container image" \
-         "(pulls it if it is not present yet)..." >&2
+    echo "No calibration in the usual host locations; checking what the" \
+         "container provides (pulls the image if it is not present yet)..." >&2
 
     local errfile found
     errfile=$(mktemp)
@@ -107,7 +107,14 @@ find_image_calibration() {
             [ -n "$dir" ] || continue
             [ -n "$(ls -A "$dir/camera_models" 2>/dev/null)" ] || continue
             [ -n "$(ls -A "$dir/param_files" 2>/dev/null)" ] || continue
-            echo "$dir"
+            # A mount point here is calibration tig supplied from its config,
+            # not calibration the image carries.
+            if cut -d" " -f5 /proc/self/mountinfo 2>/dev/null |
+                   grep -Fxq "$dir"; then
+                echo "$dir|mount"
+            else
+                echo "$dir|image"
+            fi
             exit 0
         done
         exit 1
@@ -125,11 +132,14 @@ find_image_calibration() {
 }
 
 # Resolve calibration for a demo, host first. On success exactly one of
-# CALIB_DIR (a host directory) or CALIB_IN_IMAGE (a path inside the image) is
-# set; returns 1 with both empty when neither is available.
+# CALIB_DIR (a host directory) or CALIB_IN_IMAGE (a path already visible inside
+# the container, described by CALIB_IN_IMAGE_DESC) is set; returns 1 with both
+# empty when neither is available.
+# shellcheck disable=SC2034  # CALIB_* are read by the sourcing demo script
 calibration_setup() {
     CALIB_DIR=""
     CALIB_IN_IMAGE=""
+    CALIB_IN_IMAGE_DESC=""
 
     local host_dir
     if host_dir=$(find_calibration); then
@@ -137,9 +147,14 @@ calibration_setup() {
         return 0
     fi
 
-    local image_dir
-    if image_dir=$(find_image_calibration) && [ -n "$image_dir" ]; then
-        CALIB_IN_IMAGE="$image_dir"
+    local probed
+    if probed=$(find_image_calibration) && [ -n "$probed" ]; then
+        CALIB_IN_IMAGE="${probed%|*}"
+        if [ "${probed##*|}" = mount ]; then
+            CALIB_IN_IMAGE_DESC="mounted into the container from tig's configured calibration path"
+        else
+            CALIB_IN_IMAGE_DESC="bundled in the container image"
+        fi
         return 0
     fi
 
