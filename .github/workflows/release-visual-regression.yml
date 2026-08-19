@@ -14,8 +14,10 @@ on:
         required: false
         default: 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource'
 
+# contents: write only for the release upload; packages: read for the GHCR pull.
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release-visual-regression:
@@ -56,9 +58,9 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h /
 
-      - name: Cache VISOR sample data and MSL calibration
+      - name: Restore cached VISOR sample data and MSL calibration
         id: visor-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/visor_data
           key: visor-msl-sample-20230623-calib-20230608
@@ -69,6 +71,15 @@ jobs:
             "${{ steps.image.outputs.tag }}" \
             --download \
             --out-dir "${GITHUB_WORKSPACE}/release-regression"
+
+      # Save only after a green run, so a cancelled or half-extracted download
+      # cannot occupy the key and fail every later run.
+      - name: Cache the VISOR data
+        if: success() && steps.visor-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/visor_data
+          key: visor-msl-sample-20230623-calib-20230608
 
       - name: Upload report and images
         if: always()

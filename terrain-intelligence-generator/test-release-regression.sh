@@ -172,10 +172,13 @@ vic_dims() {
 make_png() {
     local inp="$1" name="$2" lo="$3" hi="$4" band="${5:-1}"
     local dir; dir="$(dirname "$inp")"
+    # Per-output temp names: a shared one would let a failed step convert the
+    # previous stage's leftovers into this stage's PNG.
     ( cd "${dir}" || exit 1
-      tig copy "$(basename "${inp}")" "png_band.vic" sb="${band}" nb=1 >/dev/null 2>&1
-      tig cform png_band.vic png_byte.vic oform=byte irange=\("${lo}","${hi}"\) orange=\(0,255\) >/dev/null 2>&1
-      tig vicario png_byte.vic "${name}.png" >/dev/null 2>&1 )
+      rm -f "png_band_${name}.vic" "png_byte_${name}.vic" "${name}.png"
+      tig copy "$(basename "${inp}")" "png_band_${name}.vic" sb="${band}" nb=1 >/dev/null 2>&1
+      tig cform "png_band_${name}.vic" "png_byte_${name}.vic" oform=byte irange=\("${lo}","${hi}"\) orange=\(0,255\) >/dev/null 2>&1
+      tig vicario "png_byte_${name}.vic" "${name}.png" >/dev/null 2>&1 )
     [ -s "${dir}/${name}.png" ] && cp "${dir}/${name}.png" "${IMAGE_DIR}/${name}.png"
 }
 
@@ -229,8 +232,10 @@ mkdir -p "${IMAGE_DIR}" "${SCRATCH}" || hard_fail "cannot create ${OUT_DIR}"
 export MARS_CONFIG_PATH="${CALIB_DIR}"
 export CONTAINER_IMAGE="${IMAGE_TAG}"
 
-docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || \
-    docker pull "${IMAGE_TAG}" >/dev/null 2>&1 || \
+# Pull first: :opensource is a moving tag, so a stale local copy would be tested
+# under the released tag's name.  Fall back to a local image when offline.
+docker pull "${IMAGE_TAG}" >/dev/null 2>&1 || \
+    docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1 || \
     hard_fail "cannot pull ${IMAGE_TAG}"
 
 PANO_FRAMES=()
