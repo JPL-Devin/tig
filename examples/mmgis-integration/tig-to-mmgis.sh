@@ -139,14 +139,22 @@ if [ -n "$MOSAIC" ]; then
   # marsmap's VERTICAL projection is "North up and East to the right", so the
   # label's X/Y extents are the raster's north/south and west/east edges.
   echo "Step 3: Georeferencing (metres in the SITE frame -> degrees)..."
-  BOUNDS=$(python3 -c "
-import math
-lon, lat = $SITE_LON, $SITE_LAT
-m_per_deg_lat = math.pi * $RADIUS / 180.0
+  # Values reach python through the environment: interpolating them into the
+  # source would let an argument or a label field execute python.
+  BOUNDS=$(SITE_LON="$SITE_LON" SITE_LAT="$SITE_LAT" RADIUS="$RADIUS" \
+    MINX="$MINX" MAXX="$MAXX" MINY="$MINY" MAXY="$MAXY" python3 << 'PY'
+import math, os
+
+def num(key):
+    return float(os.environ[key])
+
+lon, lat = num('SITE_LON'), num('SITE_LAT')
+m_per_deg_lat = math.pi * num('RADIUS') / 180.0
 m_per_deg_lon = m_per_deg_lat * math.cos(math.radians(lat))
-print(lon + $MINY / m_per_deg_lon, lat + $MAXX / m_per_deg_lat,
-      lon + $MAXY / m_per_deg_lon, lat + $MINX / m_per_deg_lat)
-")
+print(lon + num('MINY') / m_per_deg_lon, lat + num('MAXX') / m_per_deg_lat,
+      lon + num('MAXY') / m_per_deg_lon, lat + num('MINX') / m_per_deg_lat)
+PY
+)
   read -r ULX ULY LRX LRY <<< "$BOUNDS"
   echo "  ullr $ULX $ULY $LRX $LRY"
   # The degrees above are computed with the body radius, but the GeoTIFF is
@@ -166,31 +174,42 @@ print(lon + $MINY / m_per_deg_lon, lat + $MAXX / m_per_deg_lat,
   echo "Step 4: Tiling (gdal2tiles.py, mercator profile)..."
   gdal2tiles.py -q -p mercator --no-kml \
     "$MOSAIC_OUT/$MOSAIC_SLUG.tif" "$MOSAIC_OUT" > /dev/null
-  ZOOMS=$(find "$MOSAIC_OUT" -mindepth 1 -maxdepth 1 -type d -regex '.*/[0-9]+' -printf '%f\n' | sort -n)
+  # A glob rather than find -regex/-printf, which are GNU-only.
+  ZOOMS=$(for d in "$MOSAIC_OUT"/*/; do
+    z=$(basename "$d")
+    case $z in ''|*[!0-9]*) ;; *) echo "$z" ;; esac
+  done | sort -n)
   [ -n "$ZOOMS" ] || { echo "ERROR: gdal2tiles wrote no tiles"; exit 1; }
   MIN_ZOOM=$(echo "$ZOOMS" | head -1)
   MAX_ZOOM=$(echo "$ZOOMS" | tail -1)
   TILES=$(find "$MOSAIC_OUT" -name '*.png' -path '*/*/*' | wc -l)
   echo "  ✓ $TILES tiles, zoom $MIN_ZOOM-$MAX_ZOOM, under Layers/$MOSAIC_SLUG/{z}/{x}/{y}.png"
 
-  python3 -c "
-import json
+  MOSAIC_LAYER="$MOSAIC_LAYER" MOSAIC_SLUG="$MOSAIC_SLUG" \
+  MIN_ZOOM="$MIN_ZOOM" MAX_ZOOM="$MAX_ZOOM" SCALE="$SCALE" \
+  ULX="$ULX" ULY="$ULY" LRX="$LRX" LRY="$LRY" \
+  SITE_LON="$SITE_LON" SITE_LAT="$SITE_LAT" python3 << 'PY' > "$MISSION_DIR/$MOSAIC_SLUG.layer.json"
+import json, os
+
+e = os.environ
 print(json.dumps({
-    'name': '''$MOSAIC_LAYER''',
+    'name': e['MOSAIC_LAYER'],
     'type': 'tile',
     'visibility': True,
     'sourceType': 'url',
-    'url': 'Layers/$MOSAIC_SLUG/{z}/{x}/{y}.png',
+    'url': 'Layers/%s/{z}/{x}/{y}.png' % e['MOSAIC_SLUG'],
     'tileformat': 'tms',
     'initialOpacity': 1,
-    'minZoom': $MIN_ZOOM,
-    'maxNativeZoom': $MAX_ZOOM,
-    'maxZoom': $MAX_ZOOM + 5,
-    'boundingBox': [str($ULX), str($LRY), str($LRX), str($ULY)],
+    'minZoom': int(e['MIN_ZOOM']),
+    'maxNativeZoom': int(e['MAX_ZOOM']),
+    'maxZoom': int(e['MAX_ZOOM']) + 5,
+    'boundingBox': [str(float(e[k])) for k in ('ULX', 'LRY', 'LRX', 'ULY')],
     'throughTileServer': False,
-    'description': 'TIG VERTICAL-projection mosaic, ${SCALE} m/pixel, placed at the SITE frame origin $SITE_LON, $SITE_LAT.',
+    'description': 'TIG VERTICAL-projection mosaic, %s m/pixel, placed at the '
+                   'SITE frame origin %s, %s.'
+                   % (e['SCALE'], e['SITE_LON'], e['SITE_LAT']),
 }, indent=2))
-" > "$MISSION_DIR/$MOSAIC_SLUG.layer.json"
+PY
   echo "  ✓ layer object: $MISSION/$MOSAIC_SLUG.layer.json"
 fi
 
@@ -215,9 +234,13 @@ if [ -n "$MESH" ]; then
   # The MTL names the texture, so both have to travel with the OBJ.
   if [ -f "$MESH_DIR/$MESH_BASE.mtl" ]; then
     cp "$MESH_DIR/$MESH_BASE.mtl" "$MESH_OUT/$MESH_BASE.mtl"
-    sed "s/^mtllib .*/mtllib $MESH_BASE.mtl/" -i "$MESH_OUT/$MESH_BASE-site-frame.obj"
+    # sed writes to a temp file and is moved back: sed -i is not portable.
+    edit_in_place() {
+      sed -E "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"
+    }
+    edit_in_place "s@^mtllib .*@mtllib $MESH_BASE.mtl@" "$MESH_OUT/$MESH_BASE-site-frame.obj"
     if [ -f "$TEXTURE" ]; then
-      sed -E "s@^[[:space:]]*map_Kd[[:space:]].*@map_Kd $TEXTURE_OUT@" -i "$MESH_OUT/$MESH_BASE.mtl"
+      edit_in_place "s@^[[:space:]]*map_Kd[[:space:]].*@map_Kd $TEXTURE_OUT@" "$MESH_OUT/$MESH_BASE.mtl"
     fi
   else
     echo "  ⚠ no $MESH_BASE.mtl beside the mesh: the model will be untextured"
@@ -228,12 +251,19 @@ if [ -n "$MESH" ]; then
     # sampling and never re-encoded: pre-encoding cancels that darkening.
     command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin), or pass --texture-gamma 1"; exit 1; }
     gdal_translate -q -of PNG -scale 0 255 0 255 \
-      -exponent "$(python3 -c "print(1.0 / $TEXTURE_GAMMA)")" \
+      -exponent "$(TEXTURE_GAMMA="$TEXTURE_GAMMA" python3 -c \
+        'import os; print(1.0 / float(os.environ["TEXTURE_GAMMA"]))')" \
       "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
     rm -f "$MESH_OUT/$TEXTURE_OUT.aux.xml"
     echo "  ✓ texture pre-encoded with gamma $TEXTURE_GAMMA as $TEXTURE_OUT"
-  elif [ -f "$TEXTURE" ]; then
+  elif [ -f "$TEXTURE" ] && [ "$TEXTURE" != "${TEXTURE%.png}" ]; then
     cp "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
+  elif [ -f "$TEXTURE" ]; then
+    # The exported name says .png, so anything else is transcoded, not copied.
+    command -v gdal_translate > /dev/null || { echo "ERROR: gdal_translate not found (apt install gdal-bin), needed to convert $TEXTURE to PNG"; exit 1; }
+    gdal_translate -q -of PNG "$TEXTURE" "$MESH_OUT/$TEXTURE_OUT"
+    rm -f "$MESH_OUT/$TEXTURE_OUT.aux.xml"
+    echo "  ✓ texture converted to $TEXTURE_OUT"
   else
     echo "  ⚠ no texture at $TEXTURE: the model will be untextured"
     echo "    marsmesh writes texture.img; convert it with: tig vicario texture.img texture.png"
@@ -313,26 +343,36 @@ PY
   echo "  ✓ material marked unlit and double sided"
 
   # The anchor is where the centroid actually is: the site origin plus the offset.
-  python3 -c "
-import json, math
-m_per_deg_lat = math.pi * $RADIUS / 180.0
-m_per_deg_lon = m_per_deg_lat * math.cos(math.radians($SITE_LAT))
+  MESH_LAYER="$MESH_LAYER" MESH_URL="$MESH_URL" RADIUS="$RADIUS" \
+  SITE_LON="$SITE_LON" SITE_LAT="$SITE_LAT" MESH_ELEV="$MESH_ELEV" \
+  CENTRE_EAST="$CENTRE_EAST" CENTRE_NORTH="$CENTRE_NORTH" \
+  python3 << 'PY' > "$MISSION_DIR/$MESH_SLUG.layer.json"
+import json, math, os
+
+e = os.environ
+
+def num(key):
+    return float(e[key])
+
+m_per_deg_lat = math.pi * num('RADIUS') / 180.0
+m_per_deg_lon = m_per_deg_lat * math.cos(math.radians(num('SITE_LAT')))
 print(json.dumps({
-    'name': '''$MESH_LAYER''',
+    'name': e['MESH_LAYER'],
     'type': 'model',
     'visibility': True,
-    'url': '$MESH_URL',
+    'url': e['MESH_URL'],
     'position': {
-        'longitude': $SITE_LON + $CENTRE_EAST / m_per_deg_lon,
-        'latitude': $SITE_LAT + $CENTRE_NORTH / m_per_deg_lat,
-        'elevation': $MESH_ELEV,
+        'longitude': num('SITE_LON') + num('CENTRE_EAST') / m_per_deg_lon,
+        'latitude': num('SITE_LAT') + num('CENTRE_NORTH') / m_per_deg_lat,
+        'elevation': num('MESH_ELEV'),
     },
     'scale': 1,
     'rotation': {'x': 0, 'y': 0, 'z': 0},
     'initialOpacity': 1,
-    'description': 'TIG marsmesh terrain, SITE frame rotated to +X east/+Y up/+Z south and centred on its centroid.',
+    'description': 'TIG marsmesh terrain, SITE frame rotated to +X east/+Y up/'
+                   '+Z south and centred on its centroid.',
 }, indent=2))
-" > "$MISSION_DIR/$MESH_SLUG.layer.json"
+PY
   echo "  ✓ layer object: $MISSION/$MESH_SLUG.layer.json"
 fi
 
