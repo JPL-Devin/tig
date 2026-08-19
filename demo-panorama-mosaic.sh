@@ -41,6 +41,7 @@ VERT_SCALE=""
 WRAP_AZ=""
 ZOOM=""
 GRID="nogrid"
+BBOX=0
 BRIGHTNESS_MATCH=1
 STRETCH=1
 FRAMES=()
@@ -71,6 +72,7 @@ Options:
   --wrap-az DEG        Azimuth at which a full 360 mosaic is cut
   --zoom FACTOR        Scale relative to the camera's natural scale
   --grid               Draw the az/el grid under the imagery
+  --bbox               Also write each frame's footprint polygon as CSV/WKT
   --no-brightness-match  Skip the marsmap-overlap/marsbrt seam matching
   --no-stretch         Write the PNG without the 2% display stretch
   --help, -h           This message
@@ -118,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --wrap-az)     require_value "$1" "$2"; WRAP_AZ="$2"; shift 2 ;;
     --zoom)        require_value "$1" "$2"; ZOOM="$2"; shift 2 ;;
     --grid)        GRID="grid"; shift ;;
+    --bbox)        BBOX=1; shift ;;
     --no-brightness-match) BRIGHTNESS_MATCH=0; shift ;;
     --no-stretch)  STRETCH=0; shift ;;
     --help|-h)     print_usage ;;
@@ -221,7 +224,8 @@ cd "$WORKSPACE"
 # outputs would make a failure look like success.
 rm -rf panorama_rad
 rm -f panorama_frames.txt panorama_overlaps.xml panorama_overlap_mosaic.img \
-      panorama_brtcorr.xml panorama.img panorama_stretched.img panorama.png
+      panorama_brtcorr.xml panorama.img panorama_stretched.img panorama.png \
+      panorama_bbox.csv
 
 # Step 1: Radiometric correction. marsmap would do this itself, but a separate
 # step keeps the corrected frames for marsbrt and for further mosaics.
@@ -302,6 +306,7 @@ echo "Step 4: Building the mosaic (marsmap)..."
 MAP_ARGS=(inp=panorama_frames.txt out=panorama.img -norad "-$GRID" "${PROJ_ARGS[@]}")
 [ -f panorama_brtcorr.xml ] && MAP_ARGS+=(brtcorr=panorama_brtcorr.xml)
 [ -n "$ZOOM" ] && MAP_ARGS+=(zoom="$ZOOM")
+[ "$BBOX" -eq 1 ] && MAP_ARGS+=(bbox=panorama_bbox.csv)
 
 tig marsmap "${MAP_ARGS[@]}" 2>&1 |
   grep -E "Projection|Pixel scale|azimuth of first sample|line of zero elevation|Output lines" || true
@@ -311,6 +316,15 @@ if [ ! -f panorama.img ]; then
   exit 1
 fi
 echo "  ✓ panorama.img"
+if [ "$BBOX" -eq 1 ]; then
+  if [ -f panorama_bbox.csv ]; then
+    # A frame gets two rows when its footprint straddles the wrap azimuth, and
+    # the polygon gains three points closing it to the edge over a pole.
+    echo "  ✓ panorama_bbox.csv ($(($(wc -l < panorama_bbox.csv) - 1)) polygons for ${#FRAMES[@]} frames)"
+  else
+    echo "  ⚠ WARNING: marsmap wrote no bounding-box file"
+  fi
+fi
 echo ""
 
 # Step 5: PNG. The mosaic holds scaled radiance and a Mars scene uses little of
