@@ -1,12 +1,9 @@
 name: Terrain Product Tests
 
-# The same product tests also run in build-publish-terrain-intelligence-generator.yml,
-# against the image that build produces. This workflow covers the other half:
-# a change to the test script itself does not touch the Dockerfile, so it must
-# not trigger the hour-long image rebuild to get tested. Here the tests run
-# against the published image instead of a freshly built one.
-#
-# Nothing here publishes anything, so it needs no registry credentials.
+# build-publish-terrain-intelligence-generator.yml runs these same tests against
+# the image it builds; this covers the other half - a change to the test script
+# alone does not touch the Dockerfile, so it is tested here against the
+# published image instead of triggering the hour-long rebuild. Publishes nothing.
 
 on:
   push:

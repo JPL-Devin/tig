@@ -140,9 +140,8 @@ jobs:
             EXTERNAL_FILE=${{ steps.build-args.outputs.external_file }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # A pull request build is not pushed, so it has to be loaded into the
-          # local daemon instead - otherwise the product tests below would have
-          # nothing to run.
+          # A pull request build is not pushed, so load it instead - otherwise
+          # the product tests below would have no image to run.
           load: ${{ github.event_name == 'pull_request' }}
       
       - name: Generate build summary
@@ -574,22 +573,16 @@ jobs:
           echo "✅ ALL TESTS PASSED"
           echo "============================================"
 
-      # The build cache is the largest thing on the runner and is already
-      # exported to the GitHub cache; on a pull request nothing has pruned it
-      # yet, and the loaded image still has to fit next to it.
+      # On a pull request nothing has pruned the build cache yet, and the
+      # loaded image has to fit next to it.
       - name: Reclaim disk before the product tests
         if: success() && github.event_name == 'pull_request'
         run: |
           docker builder prune -af
           df -h /
 
-      # The tests above prove the image is wired up; these prove it produces
-      # terrain products (stereo -> disparity -> XYZ -> mesh, and mosaics),
-      # asserting on product content.  Fixture is synthetic and built in-image,
-      # so no VISOR calibration or downloaded data is needed, and the whole
-      # thing takes ~9 seconds against an image that is already present.
-      # Runs on pull requests too: the image is loaded above, so a PR that
-      # breaks terrain product generation fails here rather than after merge.
+      # Asserts terrain product content from a synthetic in-image fixture (no
+      # calibration, ~9s).  Runs on pull requests too - the image is loaded above.
       - name: Run terrain product tests
         if: success()
         run: |
