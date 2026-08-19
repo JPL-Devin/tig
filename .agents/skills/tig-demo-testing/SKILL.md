@@ -113,5 +113,48 @@ can emit an all-black image.
   (`Property: RSM_ARTICULATION_STATE` → first `ARTICULATION_DEVICE_ANGLE` element, in radians).
   These two differ by roughly 180 degrees on M2020 — don't compare them to each other.
 
+## Verifying the CI test scripts in terrain-intelligence-generator/
+These are the scripts CI runs; all take an image tag and are quick enough to run repeatedly against
+`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`.
+- `test-product-pipeline.sh <image>` — 7 assertions, synthetic in-image fixture, no calibration,
+  no download. ~9 s wall on an 8-core VM. Expect `Passed: 7 / Failed: 0`, exit 0.
+- `test-marsirough-abend.sh <image> [--xyz FILE]` — **inverted exit convention**: exit 0 means the
+  upstream ZIX abend still reproduces, exit 1 means it stopped reproducing (image fixed → docs and
+  `demo-surface-characteristics.sh` need updating), exit 2 is a setup failure. Do not read exit 0
+  as "no bug". ~8 s synthetic, ~3 s with `--xyz` on a real product. Verify the printed
+  `marsirough.log` tail actually contains `Exception in XVREAD, processing file: zix.img` and
+  `** ABEND called **`, plus `uix.img: 3 bands` / `zix.img: 1 bands` — otherwise the script is
+  claiming a reproduction it did not show. The synthetic path prints
+  `Frame SITE expected 1 indices, got 0`; a real MSL XYZ instead prints
+  `Generating Roughness using the SITE_FRAME coordinate frame.` Both still abend.
+- `test-calibration-demo.sh [<image>] [--data-dir DIR] [--keep]` — downloads ~1.1 GB of VICAR 5.0
+  release assets into a `mktemp -d` (removed on exit) unless `--data-dir` is given. On a fast link
+  the whole run is ~35 s; only ~620 MB lands on disk because only two members are extracted from
+  the sample tarball. Expected products for the MSL `NCAM00353` XYZ: slope/heading/ntilt/roughness
+  each 4,214,784 bytes, `normals_*.uvw` and `tilt_heli.img` 12,603,392, `goodness_heli.img`
+  1,067,008, `slope.img` stddev ≈ 12.55 deg.
+
+### Proving the calibration really came from the host mount
+`✓ A calibration camera model was read` is a strong assertion only because
+`/usr/local/vicar/mars_calib` **does not exist inside the image** — confirm with
+`docker run --rm <image> ls /usr/local/vicar/mars_calib` (expect "No such file or directory").
+So a `Successfully read calibration camera model ... (path=/usr/local/vicar/mars_calib/...)` line can
+only come from the bind-mounted `MARS_CONFIG_PATH`.
+
+### Cleanup expectations after running the CI scripts
+`tig-marsirough-repro-$$` and `tig-product-test-$$` containers and their `mktemp -d` workspaces are
+removed by `trap ... EXIT`; `docker ps -a | grep -E 'tig-marsirough|tig-product-test'` and
+`ls -d /tmp/tmp.*` should both come back empty. The persistent `tig-vicar-<hash>` containers the
+`tig` CLI itself creates *do* survive (one per working directory) and are not a leak from these
+scripts — snapshot `docker ps -a` before testing so you do not misattribute them.
+
+### Lint expectations
+`bash -n` is clean on all of these. `shellcheck` flags one SC2086 (info) in
+`test-marsirough-abend.sh` on the deliberately unquoted `${PLATFORM_FLAG}` (quoting it would pass an
+empty argument to `docker run`), so treat that one as expected. `actionlint` is clean on
+`product-tests.yml` and `calibration-demo.yml`; the older `build-publish-*` workflows carry
+pre-existing SC2086/SC2129 notes and a "softprops/action-gh-release@v1 runner too old" note, so lint
+the new files by name rather than running bare `actionlint` and reading the whole repo's noise.
+
 ## Devin Secrets Needed
 None. Everything above runs from local data plus a public container image.
