@@ -400,7 +400,7 @@ if $USE_BRTCORR; then
   sed -n '/^Image   MultCorr/,/^$/p' marsbrt.log
   BRTCORR_BAD_MULTS=$(awk '
     /^Image[[:space:]]+MultCorr/ { table=1; next }
-    table && $1 ~ /^[0-9]+$/ && ($2 + 0) <= 0 {
+    table && $1 ~ /^[0-9]+$/ && (($2 + 0) <= 0 || ($2 + 0) < 0.01) {
       printf "image %s MultCorr=%s\n", $1, $2
     }
   ' marsbrt.log)
@@ -508,12 +508,12 @@ validate_maxmin() {
   local minimum
   minimum=$(parse_maxmin_value "$log" "Min. value:")
   [ -n "$minimum" ] || {
-    echo "ERROR: could not parse minimum from $log"
+    echo "ERROR: could not parse minimum from $log" >&2
     exit 1
   }
   if awk -v min="$minimum" 'BEGIN {exit !(min == 0)}'; then
-    echo "ERROR: statistics box contains 0 DN in $file."
-    echo "       Choose a smaller interior box with --box SL SS NL NS."
+    echo "ERROR: statistics box contains 0 DN in $file." >&2
+    echo "       Choose a smaller interior box with --box SL SS NL NS." >&2
     exit 1
   fi
   echo "$minimum"
@@ -558,7 +558,7 @@ if $USE_BRTCORR; then
   done
   if [ -n "$BRTCORR_BAD_MULTS" ] || [ -n "$BRTCORR_LOW_STDS" ]; then
     echo "WARNING: BRTCORR radiometric solution is ill-conditioned on this input set."
-    [ -n "$BRTCORR_BAD_MULTS" ] && echo "         Nonpositive multipliers: $BRTCORR_BAD_MULTS"
+    [ -n "$BRTCORR_BAD_MULTS" ] && echo "         Near-zero or nonpositive multipliers: $BRTCORR_BAD_MULTS"
     [ -n "$BRTCORR_LOW_STDS" ] && echo "         Flattened BRTCORR renders: $BRTCORR_LOW_STDS"
     echo "         Do not read BRTCORR difference statistics as normalized change."
     echo "         Use the linear mean/stdev match as the usable normalization."
