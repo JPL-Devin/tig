@@ -96,7 +96,9 @@ DATA_DIR="$(cd "${DATA_DIR}" && pwd)"
 print_header "Step 1: MSL VISOR calibration and sample data"
 
 CALIB_DIR="${DATA_DIR}/calibration/msl"
-if [ -d "${CALIB_DIR}/camera_models" ]; then
+# Both directories, because that is what find-calibration.sh demands: an
+# extraction interrupted between them would otherwise never be re-fetched.
+if [ -d "${CALIB_DIR}/camera_models" ] && [ -d "${CALIB_DIR}/param_files" ]; then
     echo "Reusing calibration in ${CALIB_DIR}"
 else
     echo "Downloading ${CALIB_ASSET} (380 MB)..."
@@ -104,8 +106,8 @@ else
     curl -fsSL "${RELEASE_URL}/${CALIB_ASSET}" | tar -xz -C "${DATA_DIR}" || {
         echo -e "${RED}✗ Could not download or extract ${CALIB_ASSET}${NC}"; exit 2; }
 fi
-[ -d "${CALIB_DIR}/camera_models" ] || {
-    echo -e "${RED}✗ ${CALIB_DIR}/camera_models is missing${NC}"; exit 2; }
+{ [ -d "${CALIB_DIR}/camera_models" ] && [ -d "${CALIB_DIR}/param_files" ]; } || {
+    echo -e "${RED}✗ ${CALIB_DIR} is missing camera_models/ or param_files/${NC}"; exit 2; }
 
 XYZ_FILE="${DATA_DIR}/${XYZ_MEMBER}"
 ILT_FILE="${DATA_DIR}/${ILT_MEMBER}"
@@ -166,7 +168,8 @@ fi
 
 # 1024x1024 REAL products are ~4 MB; a stub or an all-zero raster is not.
 for product in slope.img heading.img ntilt.img roughness.img; do
-    size=$(stat -c %s "${WS}/${product}" 2>/dev/null || echo 0)
+    size=$(wc -c < "${WS}/${product}" 2>/dev/null | tr -d ' ')
+    size=${size:-0}
     if [ "${size}" -gt 4000000 ]; then
         echo -e "${GREEN}✓ ${product} (${size} bytes)${NC}"
     else
@@ -176,7 +179,7 @@ done
 
 for product in normals_slope.uvw normals_arm.uvw tilt_heli.img goodness_heli.img; do
     if [ -s "${WS}/${product}" ]; then
-        echo -e "${GREEN}✓ ${product} ($(stat -c %s "${WS}/${product}") bytes)${NC}"
+        echo -e "${GREEN}✓ ${product} ($(wc -c < "${WS}/${product}" | tr -d ' ') bytes)${NC}"
     else
         echo -e "${RED}✗ ${product} is missing${NC}"; FAILED=1
     fi
