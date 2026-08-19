@@ -17,18 +17,10 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# Find calibration files using helper script
+# Source the helper here, but look up calibration after argument parsing so
+# --help is not delayed by the helper's container-image probe.
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"
-    # Guard the call: under 'set -e' a failed lookup would otherwise end the
-    # script before the help below is printed.
-    calibration_setup || true
-    if [ -z "$CALIB_DIR" ] && [ -z "$CALIB_IN_IMAGE" ]; then
-        echo "ERROR: MARS calibration not found."
-        echo ""
-        print_calibration_help
-        exit 1
-    fi
 else
     # Fallback to default location if helper not found
     CALIB_DIR="$(pwd)/terrain-intelligence-generator/docker/mars_calibration_m20"
@@ -113,6 +105,18 @@ if [ -n "$STEREO_RIGHT" ] && [ -z "$STEREO_LEFT" ]; then
 fi
 
 # Verify calibration exists
+if declare -f calibration_setup > /dev/null; then
+  # Guard the call: under 'set -e' a failed lookup would otherwise end the
+  # script before the help below is printed.
+  calibration_setup || true
+  if [ -z "$CALIB_DIR" ] && [ -z "$CALIB_IN_IMAGE" ]; then
+    echo "ERROR: MARS calibration not found."
+    echo ""
+    print_calibration_help
+    exit 1
+  fi
+fi
+
 if [ -n "${CALIB_IN_IMAGE:-}" ]; then
   # Bundled in the image: nothing to mount, and MARS_CONFIG_PATH must stay
   # unset, since tig reads it as a host path to mount.

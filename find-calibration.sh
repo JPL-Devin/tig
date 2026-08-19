@@ -86,13 +86,21 @@ verify_calibration() {
 }
 
 # Echo the first entry of the image's own MARS_CONFIG_PATH that really holds
-# camera_models/ and param_files/; 1 when the image carries no calibration.
-# Probing through tig picks the same image and runtime a real invocation does.
+# camera_models/ and param_files/. Probing through tig picks the same image and
+# runtime a real invocation would.
 find_image_calibration() {
     command -v tig > /dev/null 2>&1 || return 1
 
+    # Say so first: on a cold cache this starts the container, and tig pulls
+    # gigabytes of image before the probe itself runs.
+    echo "No calibration on this host; checking the container image" \
+         "(pulls it if it is not present yet)..." >&2
+
+    local errfile found
+    errfile=$(mktemp)
+
     # Unset: a host MARS_CONFIG_PATH makes tig mount over the bundled data.
-    env -u MARS_CONFIG_PATH tig sh -c '
+    found=$(env -u MARS_CONFIG_PATH tig sh -c '
         [ -n "$MARS_CONFIG_PATH" ] || exit 1
         IFS=:
         for dir in $MARS_CONFIG_PATH; do
@@ -103,7 +111,17 @@ find_image_calibration() {
             exit 0
         done
         exit 1
-    ' 2>/dev/null
+    ' 2> "$errfile") || true
+
+    # A runtime failure (no daemon, pull refused) is not "the image carries no
+    # calibration", so let the user see it rather than the calibration help.
+    if [ -z "$found" ] && [ -s "$errfile" ]; then
+        sed 's/^/  tig: /' "$errfile" >&2
+    fi
+    rm -f "$errfile"
+
+    [ -n "$found" ] || return 1
+    echo "$found"
 }
 
 # Resolve calibration for a demo, host first. On success exactly one of
