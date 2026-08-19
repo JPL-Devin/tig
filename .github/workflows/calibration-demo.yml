@@ -29,6 +29,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Before setup-python, and the tool cache is left alone: Python and the
+      # tig entry point live in it.
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker system prune -af --volumes
+          df -h /
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -38,13 +47,6 @@ jobs:
       # prerequisite, not an optional convenience.
       - name: Install tig-cli
         run: pip install ./tig-cli
-
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL "$AGENT_TOOLSDIRECTORY"
-          docker system prune -af --volumes
-          df -h /
 
       - name: Run the demo against real VISOR calibration
         run: ./terrain-intelligence-generator/test-calibration-demo.sh "${IMAGE_TAG}"
