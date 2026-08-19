@@ -255,6 +255,9 @@ if [ ${#MISSING[@]} -gt 0 ]; then
         "  curl -L '${SAMPLE_URL}' | tar -zxf - -C '${DATA_DIR}'"
 fi
 
+# Clear a reused output dir: a stale PNG or product would be reported as this
+# run's, and the report claims every image came from this run.
+rm -rf "${IMAGE_DIR}" "${SCRATCH}"
 mkdir -p "${IMAGE_DIR}" "${SCRATCH}" || hard_fail "cannot create ${OUT_DIR}"
 export MARS_CONFIG_PATH="${CALIB_DIR}"
 export CONTAINER_IMAGE="${IMAGE_TAG}"
