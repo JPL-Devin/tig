@@ -214,6 +214,18 @@ for spec in "${TIE_EXTRA_SPECS[@]}"; do append_spec "$spec" TIE_EXTRA; done
 [ "${#INPUTS1[@]}" -gt 0 ] || { echo "ERROR: epoch 1 contains no frames"; exit 1; }
 [ "${#INPUTS2[@]}" -gt 0 ] || { echo "ERROR: epoch 2 contains no frames"; exit 1; }
 
+check_workspace_input() {
+  local input="$1"
+  case "$input" in
+    "$WORKSPACE"|"$WORKSPACE"/*)
+      echo "ERROR: input lives in the workspace this run would overwrite:"
+      echo "       $input"
+      echo "       Use a different workspace, or move/copy the input out."
+      exit 1
+      ;;
+  esac
+}
+
 if [ -n "$CALIBRATION" ]; then
   CALIBRATION=$(abspath "$CALIBRATION")
   export MARS_CONFIG_PATH="$CALIBRATION"
@@ -247,6 +259,12 @@ fi
 CALIB_DIR=$(cd "$CALIB_DIR" && pwd)
 export MARS_CONFIG_PATH="$CALIB_DIR"
 WORKSPACE=$(abspath "$WORKSPACE")
+for input in "${INPUTS1[@]}" "${INPUTS2[@]}" "${TIE_EXTRA[@]}"; do
+  check_workspace_input "$input"
+done
+for spec in "${EPOCH1_SPECS[@]}" "${EPOCH2_SPECS[@]}" "${TIE_EXTRA_SPECS[@]}"; do
+  check_workspace_input "$(abspath "$spec")"
+done
 mkdir -p "$WORKSPACE"
 if [ -n "$(find "$WORKSPACE" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
   if [ ! -f "$WORKSPACE/.tig-change-monitoring" ]; then
@@ -271,6 +289,9 @@ echo "Epoch 1 frames: ${#INPUTS1[@]}"
 echo "Epoch 2 frames: ${#INPUTS2[@]}"
 echo "Tie-extra frames: ${#TIE_EXTRA[@]}"
 echo ""
+
+MAP_COMMON=(navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL
+  grid=NOGRID)
 
 write_list() {
   local output="$1"
@@ -329,9 +350,14 @@ for index in "${!ALL_INPUTS[@]}"; do
     "$((index + 1))" "$(basename "$input")" "$exposure" "$local_time" "$solar_az" "$solar_el"
 done
 if awk -v a="${EXPOSURES[0]}" -v b="${EXPOSURES[${#INPUTS1[@]}]}" \
-  'BEGIN { d=(a>b?a-b:b-a); m=(a>b?a:b); exit !(m > 0 && d/m > 0.20) }'; then
-  echo "WARNING: epoch exposure durations differ by more than 20%."
-  echo "         Exposure brackets should be matched before comparing epochs."
+  'BEGIN { exit !((a + 0) > 0 && (b + 0) > 0) }'; then
+  if awk -v a="${EXPOSURES[0]}" -v b="${EXPOSURES[${#INPUTS1[@]}]}" \
+    'BEGIN { d=(a>b?a-b:b-a); m=(a>b?a:b); exit !(d/m > 0.20) }'; then
+    echo "WARNING: epoch exposure durations differ by more than 20%."
+    echo "         Exposure brackets should be matched before comparing epochs."
+  fi
+else
+  echo "WARNING: unable to compare epoch exposure durations; one or both first-frame values are unreadable or nonpositive."
 fi
 echo ""
 
@@ -385,8 +411,7 @@ echo ""
 
 echo "Step 5: Probing common projection geometry"
 run_logged probe.log tig marsmap inp=epochs.lis out=probe.img \
-  navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL \
-  grid=NOGRID zoom=0.25
+  "${MAP_COMMON[@]}" zoom=0.25
 NATURAL_SCALE=$(grep -m1 "Pixel scale: .*pixels/degree" probe.log | \
   sed -E 's/.*or ([0-9.]+) pixels\/degree.*/\1/')
 PROBE_TOPEL=$(grep -m1 "Elevation minimum" probe.log | \
@@ -420,8 +445,7 @@ echo "Output scale: $OUTPUT_SCALE pixels/degree"
 echo "Output bounds: $LEFTAZ $RIGHTAZ $TOPEL $BOTTOMEL"
 echo ""
 
-MAP_COMMON=(navtable=pointing.nav match_method=TIGHT projection=CYLINDRICAL
-  leftaz="$LEFTAZ" rightaz="$RIGHTAZ" topel="$TOPEL" bottomel="$BOTTOMEL"
+MAP_COMMON+=(leftaz="$LEFTAZ" rightaz="$RIGHTAZ" topel="$TOPEL" bottomel="$BOTTOMEL"
   scale="$OUTPUT_SCALE" band="$BAND")
 
 if $USE_BRTCORR; then
@@ -689,9 +713,11 @@ for shift in 1 2 3; do
   measure_stats "shift${shift}" "diff_shift${shift}.img"
   SHIFT_STDS+=("${STAT_STD[shift${shift}]}")
 done
+MAP_NO_NAV=(projection=CYLINDRICAL grid=NOGRID
+  leftaz="$LEFTAZ" rightaz="$RIGHTAZ" topel="$TOPEL" bottomel="$BOTTOMEL"
+  scale="$OUTPUT_SCALE" band="$BAND")
 run_logged nonav.log tig marsmap inp=epoch1.lis out=epoch1_nonav.img \
-  projection=CYLINDRICAL grid=NOGRID leftaz="$LEFTAZ" rightaz="$RIGHTAZ" \
-  topel="$TOPEL" bottomel="$BOTTOMEL" scale="$OUTPUT_SCALE" band="$BAND"
+  "${MAP_NO_NAV[@]}"
 run_f2 diff_nav.img epoch1_raw.img epoch1_nonav.img "in1-in2"
 run_logged nav_effect_difpic.log tig difpic inp=\( epoch1_raw.img epoch1_nonav.img \)
 NAV_EFFECT_COUNT=$(sed -n \
