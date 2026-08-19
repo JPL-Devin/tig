@@ -293,6 +293,8 @@ echo "Step 6: Instrument placement roughness (marsirough -$INSTRUMENT)..."
 irough_log=$(tig marsirough inp="$XYZ_FILE" out="iroughness_$INSTRUMENT.img" \
   uix="uix_$INSTRUMENT.img" zix="zix_$INSTRUMENT.img" "-$INSTRUMENT" 2>&1) || true
 IROUGH_OK=false
+# Upstream defect, not our invocation: marsirough reads band 2 of the 1-band
+# ZIX. See terrain-intelligence-generator/test-marsirough-abend.sh.
 if echo "$irough_log" | grep -q "ABEND"; then
   echo "  ⚠ marsirough abended; continuing without it:"
   echo "$irough_log" | grep -E "VIC2-|Current line|ABEND" | sed 's/^/      /'
