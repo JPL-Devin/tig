@@ -96,28 +96,30 @@ DATA_DIR="$(cd "${DATA_DIR}" && pwd)"
 print_header "Step 1: MSL VISOR calibration and sample data"
 
 CALIB_DIR="${DATA_DIR}/calibration/msl"
-# Both directories, because that is what find-calibration.sh demands: an
-# extraction interrupted between them would otherwise never be re-fetched.
-if [ -d "${CALIB_DIR}/camera_models" ] && [ -d "${CALIB_DIR}/param_files" ]; then
+# A marker written only after the whole stream extracted: tar creates the
+# directories and truncated files as it goes, so their presence proves nothing.
+if [ -f "${DATA_DIR}/.${CALIB_ASSET}.complete" ]; then
     echo "Reusing calibration in ${CALIB_DIR}"
 else
     echo "Downloading ${CALIB_ASSET} (380 MB)..."
     mkdir -p "${DATA_DIR}"
     curl -fsSL "${RELEASE_URL}/${CALIB_ASSET}" | tar -xz -C "${DATA_DIR}" || {
         echo -e "${RED}✗ Could not download or extract ${CALIB_ASSET}${NC}"; exit 2; }
+    touch "${DATA_DIR}/.${CALIB_ASSET}.complete"
 fi
 { [ -d "${CALIB_DIR}/camera_models" ] && [ -d "${CALIB_DIR}/param_files" ]; } || {
     echo -e "${RED}✗ ${CALIB_DIR} is missing camera_models/ or param_files/${NC}"; exit 2; }
 
 XYZ_FILE="${DATA_DIR}/${XYZ_MEMBER}"
 ILT_FILE="${DATA_DIR}/${ILT_MEMBER}"
-if [ -f "${XYZ_FILE}" ] && [ -f "${ILT_FILE}" ]; then
+if [ -f "${DATA_DIR}/.${SAMPLE_ASSET}.complete" ]; then
     echo "Reusing sample products in ${DATA_DIR}/sample_data"
 else
     echo "Downloading ${SAMPLE_ASSET} (740 MB)..."
     curl -fsSL "${RELEASE_URL}/${SAMPLE_ASSET}" | \
         tar -xz -C "${DATA_DIR}" "${XYZ_MEMBER}" "${ILT_MEMBER}" || {
         echo -e "${RED}✗ Could not download or extract ${SAMPLE_ASSET}${NC}"; exit 2; }
+    touch "${DATA_DIR}/.${SAMPLE_ASSET}.complete"
 fi
 for f in "${XYZ_FILE}" "${ILT_FILE}"; do
     [ -s "$f" ] || { echo -e "${RED}✗ $f is missing${NC}"; exit 2; }
