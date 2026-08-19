@@ -342,17 +342,15 @@ Image   MultCorr        AddCorr
 The quoted run's corrected renders collapse to near-constant DN (σ 0.485881 and
 0.866135, against 367.5 and 713.6 raw). Across the quoted and independent runs,
 the epoch-1 box min/max were 616/5058 and 615/5069 (roughly ±1/±11 DN), and the
-BRTCORR sigmas were 0.485881/0.866135 and 0.486056/0.598729 (about 0.49–0.87
-depending on the solve). The BRTCORR difference statistics
+BRTCORR renders collapsed to σ 0.485881/0.866135, 0.486056/0.598729 and
+0.000000/0.000000 across three runs. The BRTCORR difference statistics
 (σ 0.789881) describe a flattened image, not normalised change. The script
-detects this — near-zero or non-positive multipliers (`|MultCorr| < 0.01` or
-`MultCorr <= 0`), or a BRTCORR render whose σ falls below 10% of the raw σ —
-and prints a warning rather than silently reporting the numbers. The independent
-run's primaries were near-zero positive multipliers, so the flattened-σ rule is
-the reliable catch in that case. Across runs the `marsbrt` table varied (an
-earlier run gave −0.264 and −2.55 multipliers), so treat the multi-epoch
-`marsbrt` solve as unreliable on sets like this and use the linear match.
-`--no-brtcorr` skips it.
+detects this — any multiplier below 0.01, including negative ones, or a BRTCORR
+render whose σ falls below 10% of the raw σ — and prints a warning rather than
+silently reporting the numbers. The multipliers themselves varied wildly between
+runs (0.0008 and 0.0011 here; 0.00055 and 0.00072, −0.264/−2.55, and
+−0.001/−0.0014 elsewhere), so treat the multi-epoch `marsbrt` solve as
+unreliable on sets like this and use the linear match. `--no-brtcorr` skips it.
 
 ### What the difference image actually shows
 
@@ -393,15 +391,14 @@ means nothing.
 
 ### Reproducibility
 
-The stage counts move between runs on identical inputs: three runs of the same
-command gave 1003/1004/1008 tiepoints, 748/779/796 kept, 7.69–7.86 px initial and
+The stage counts move between runs on identical inputs: four runs of the same
+command gave 994–1008 tiepoints, 748–796 kept, 7.56–7.86 px initial and
 1.47–1.58 px final residual, and σ 384.3–384.5 for the linear difference. The
 pixel-shift controls reproduce to four figures (133.68 / 220.01 / 270.25), but
 the nav-effect control varies by a few percent: 106.5743 / 10,179,460 differing
 pixels in the quoted run versus 102.1765 / 10,175,950 in the independent run.
 Both are below the one-pixel floor of 133.7, so the conclusion is unchanged.
-Treat the residuals, tiepoint counts, and nav-effect control as magnitudes. A
-statistics box rejected for containing 0 DN now reports the reason on stderr.
+Treat the residuals, tiepoint counts, and nav-effect control as magnitudes.
 
 ## Worked example — MSL NavCam, verified
 

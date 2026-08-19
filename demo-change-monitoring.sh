@@ -400,7 +400,7 @@ if $USE_BRTCORR; then
   sed -n '/^Image   MultCorr/,/^$/p' marsbrt.log
   BRTCORR_BAD_MULTS=$(awk '
     /^Image[[:space:]]+MultCorr/ { table=1; next }
-    table && $1 ~ /^[0-9]+$/ && (($2 + 0) <= 0 || ($2 + 0) < 0.01) {
+    table && $1 ~ /^[0-9]+$/ && ($2 + 0) < 0.01 {
       printf "image %s MultCorr=%s\n", $1, $2
     }
   ' marsbrt.log)
