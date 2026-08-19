@@ -124,14 +124,80 @@ can emit an all-black image.
   133.68 / 220.01 / 270.25, difpic re-render 0, no-navtable σ 102-107 with ~10.2 M pixels differing.
   Tiepoint counts, residuals and the *nav-effect* control move a few percent run to run (the
   nav-effect control depends on the nav solution); the pixel-shift controls are stable to 4 figures.
-- `marsbrt` is genuinely ill-conditioned on multi-sol sets: multipliers vary in *sign* between runs,
-  so a guard that only tests `MultCorr <= 0` can miss a run where the primaries get near-zero
-  *positive* multipliers. Check that the flattened-σ guard (BRTCORR σ < 10% of raw σ) is what fires.
+- `marsbrt` conditioning depends on the mode: a `DO_LINEAR` (gain+offset) solve on a multi-sol set is
+  ill-conditioned — multipliers vary in *sign* between runs and can be near-zero *positive*, which a
+  guard testing only `MultCorr <= 0` misses. Gain-only (`do_what=DO_MULT`) is well conditioned on the
+  same data (multipliers ~0.23-2.51, AddCorr exactly 0, BRTCORR renders keeping σ ~85 / ~210). If a
+  BRTCORR stage looks flattened (σ < 1, or < 10% of the raw σ), suspect the mode before the data.
+- When a demo scrapes a VICAR log table with awk, check the scan *terminates* at the blank line after
+  the table and requires the captured field to be numeric — otherwise trailing log lines (e.g.
+  `Solution 9 0.000005 written`) fake a near-zero entry and trip the guard. You can test that scan in
+  isolation on a hand-written fake log instead of re-running the pipeline.
+- Overlap coverage: `marsmap ovr_out=` only measures frames whose footprint lands inside the
+  `--bounds` window, but `marsbrt` still assigns every frame in `joint.lis` a multiplier — so an
+  out-of-bounds tie frame is silently normalised by an unconstrained value. To exercise that path you
+  need frames with genuinely different pointing: the six M20 sol-649/650 frames are all co-pointed
+  (`INSTRUMENT_AZIMUTH` 1.19-1.39°), so no `--bounds` can include the primaries and exclude a tie
+  frame. Use MSL `sample_data/CylindricalMosaic` ILT frames instead, which span all azimuths — e.g.
+  two `NCAM00293` frames as the epochs with an `NCAM00294` frame (~200° away) as `--tie-extra` and
+  `--bounds "150 200 5 -40"`. Verify per-frame coverage directly with
+  `grep '<img ' joint.ovr | grep -o 'key="[0-9]*"' | sort | uniq -c` against the `<images>` block.
 - Pitfall to check in any of these demos: a validation helper that `echo`s its result for capture
   (`MIN=$(validate ...)`) **swallows its own error messages**, because the `echo "ERROR: ..."` goes to
   the same captured stdout. With `set -e` the script exits with the right status but prints nothing,
   so a guardrail looks like a silent crash. When a demo aborts with no message, re-run the failing
   helper outside command substitution, or check whether stderr (`>&2`) was used.
+- Workspace reuse: the demo marks its workspace with a dotfile and refuses a non-empty directory that
+  lacks it (without deleting anything), but on an *accepted* reuse it deletes its own product types
+  (`*.img *.png *.log *.lis ...`) first. Copy any PNG/log evidence out of a workspace before re-running
+  into it, and note that killing a run mid-way leaves that workspace stripped.
+- Guardrail negative tests that abort before the first VICAR call are cheap and worth doing first:
+  a bogus `--calibration` must fail fast even when a valid `MARS_CONFIG_PATH` is exported (no silent
+  fallback), and a nested `<dir>/mars_calibration_m20` layout must resolve — you can fake the nested
+  layout with symlinks to the real `camera_models`/`param_files`.
+
+## Verifying the CI test scripts in terrain-intelligence-generator/
+These are the scripts CI runs; all take an image tag and are quick enough to run repeatedly against
+`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`.
+- `test-product-pipeline.sh <image>` — 7 assertions, synthetic in-image fixture, no calibration,
+  no download. ~9 s wall on an 8-core VM. Expect `Passed: 7 / Failed: 0`, exit 0.
+- `test-marsirough-abend.sh <image> [--xyz FILE]` — **inverted exit convention**: exit 0 means the
+  upstream ZIX abend still reproduces, exit 1 means it stopped reproducing (image fixed → docs and
+  `demo-surface-characteristics.sh` need updating), exit 2 is a setup failure. Do not read exit 0
+  as "no bug". ~8 s synthetic, ~3 s with `--xyz` on a real product. Verify the printed
+  `marsirough.log` tail actually contains `Exception in XVREAD, processing file: zix.img` and
+  `** ABEND called **`, plus `uix.img: 3 bands` / `zix.img: 1 bands` — otherwise the script is
+  claiming a reproduction it did not show. The synthetic path prints
+  `Frame SITE expected 1 indices, got 0`; a real MSL XYZ instead prints
+  `Generating Roughness using the SITE_FRAME coordinate frame.` Both still abend.
+- `test-calibration-demo.sh [<image>] [--data-dir DIR] [--keep]` — downloads ~1.1 GB of VICAR 5.0
+  release assets into a `mktemp -d` (removed on exit) unless `--data-dir` is given. On a fast link
+  the whole run is ~35 s; only ~620 MB lands on disk because only two members are extracted from
+  the sample tarball. Expected products for the MSL `NCAM00353` XYZ: slope/heading/ntilt/roughness
+  each 4,214,784 bytes, `normals_*.uvw` and `tilt_heli.img` 12,603,392, `goodness_heli.img`
+  1,067,008, `slope.img` stddev ≈ 12.55 deg.
+
+### Proving the calibration really came from the host mount
+`✓ A calibration camera model was read` is a strong assertion only because
+`/usr/local/vicar/mars_calib` **does not exist inside the image** — confirm with
+`docker run --rm <image> ls /usr/local/vicar/mars_calib` (expect "No such file or directory").
+So a `Successfully read calibration camera model ... (path=/usr/local/vicar/mars_calib/...)` line can
+only come from the bind-mounted `MARS_CONFIG_PATH`.
+
+### Cleanup expectations after running the CI scripts
+`tig-marsirough-repro-$$` and `tig-product-test-$$` containers and their `mktemp -d` workspaces are
+removed by `trap ... EXIT`; `docker ps -a | grep -E 'tig-marsirough|tig-product-test'` and
+`ls -d /tmp/tmp.*` should both come back empty. The persistent `tig-vicar-<hash>` containers the
+`tig` CLI itself creates *do* survive (one per working directory) and are not a leak from these
+scripts — snapshot `docker ps -a` before testing so you do not misattribute them.
+
+### Lint expectations
+`bash -n` is clean on all of these. `shellcheck` flags one SC2086 (info) in
+`test-marsirough-abend.sh` on the deliberately unquoted `${PLATFORM_FLAG}` (quoting it would pass an
+empty argument to `docker run`), so treat that one as expected. `actionlint` is clean on
+`product-tests.yml` and `calibration-demo.yml`; the older `build-publish-*` workflows carry
+pre-existing SC2086/SC2129 notes and a "softprops/action-gh-release@v1 runner too old" note, so lint
+the new files by name rather than running bare `actionlint` and reading the whole repo's noise.
 
 ## Devin Secrets Needed
 None. Everything above runs from local data plus a public container image.
