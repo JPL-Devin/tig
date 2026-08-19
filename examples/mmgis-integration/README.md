@@ -63,7 +63,7 @@ refuses anything whose label is not `MAP_PROJECTION_TYPE='VERTICAL'`.
 
 ```bash
 ./demo-panorama-mosaic.sh --projection vertical --min-x -30 --max-x 30 \
-    --min-y -30 --max-y 30 /path/to/frame_list.txt   # -> workspace/panorama.img
+    --min-y -30 --max-y 30 /path/to/NLB_*NCAM*.IMG   # -> workspace/panorama.img
 ./demo-mesh-generation-with-xyz.sh ...               # -> workspace/terrain.obj
 ```
 
