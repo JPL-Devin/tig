@@ -100,9 +100,11 @@ than omitted:
 - **M20 frames** — the suite is MSL-only, because M20 calibration is 2.7 GB
   across two release assets.
 
-CI runs it from
+CI runs
 [`release-visual-regression.yml`](../.github/workflows/release-visual-regression.yml)
-on published releases and on `workflow_dispatch` only — never on pull requests
+from the publish workflow's `create-release` job on a `v*` tag (a release cut
+with `GITHUB_TOKEN` raises no `release` event), on a published release, and on
+`workflow_dispatch` — never on pull requests
 or ordinary pushes — and uploads `report.md` and every PNG as an artifact. On a
 release it tests the image tagged with that release's version, warning and
 falling back to `:opensource` when the release published no image.

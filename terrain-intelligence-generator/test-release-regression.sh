@@ -535,14 +535,27 @@ fi
 # --- two-epoch change product (only if the demo ships) ----------------------
 
 banner "Stage: two-epoch change monitoring"
-if [ -x "${REPO_ROOT}/demo-change-monitoring.sh" ]; then
+CHANGE_DEMO="${REPO_ROOT}/demo-change-monitoring.sh"
+# Only drive the demo through the interface this stage was written against; a
+# different one is a suite gap to close, not a broken image.
+CHANGE_IFACE=0
+[ -x "${CHANGE_DEMO}" ] && "${CHANGE_DEMO}" --help 2>&1 | grep -q -- '--epoch1' && CHANGE_IFACE=1
+if [ ! -x "${CHANGE_DEMO}" ]; then
+    record UNVERIFIED "change-monitoring" \
+        "demo-change-monitoring.sh is not in this tree (PR #29 not merged); the stage runs automatically once it is"
+elif [ ${CHANGE_IFACE} -eq 0 ]; then
+    record UNVERIFIED "change-monitoring" \
+        "demo-change-monitoring.sh does not advertise --epoch1/--epoch2; update this stage to its current interface"
+else
     CHANGE_WS="${SCRATCH}/change/workspace-change"
     mkdir -p "${SCRATCH}/change"
     ( cd "${SCRATCH}/change" && "${REPO_ROOT}/demo-change-monitoring.sh" \
         --epoch1 "${PANO_FRAMES[0]}" --epoch2 "${PANO_FRAMES[1]}" ) \
         > "${SCRATCH}/change/demo.log" 2>&1
     CHANGE_RC=$?
-    CHANGE_DIFF=$(find "${CHANGE_WS}" -name 'difference*.img' 2>/dev/null | head -1)
+    # diff_lin.img is the mean/stdev-matched difference raster the demo reports on.
+    CHANGE_DIFF=$(find "${CHANGE_WS}" -name 'diff_lin.img' 2>/dev/null | head -1)
+    [ -n "${CHANGE_DIFF}" ] || CHANGE_DIFF=$(find "${CHANGE_WS}" -name 'diff*.img' 2>/dev/null | head -1)
     if [ ${CHANGE_RC} -eq 0 ] && [ -n "${CHANGE_DIFF}" ]; then
         read -r CH_MEAN CH_STD CH_MIN CH_MAX <<<"$(vic_stat "${CHANGE_DIFF}")"
         make_png "${CHANGE_DIFF}" "change_difference" "${CH_MIN}" "${CH_MAX}"
@@ -554,12 +567,12 @@ if [ -x "${REPO_ROOT}/demo-change-monitoring.sh" ]; then
             record FAIL "change-monitoring" "difference raster is uniform (std ${CH_STD})" \
                 "images/change_difference.png"
         fi
+    elif [ ${CHANGE_RC} -eq 0 ]; then
+        record UNVERIFIED "change-monitoring" \
+            "demo-change-monitoring.sh ran but wrote no diff*.img in ${CHANGE_WS}; update this stage to its current product names"
     else
         record FAIL "change-monitoring" "demo-change-monitoring.sh failed (rc=${CHANGE_RC}), see scratch/change/demo.log"
     fi
-else
-    record UNVERIFIED "change-monitoring" \
-        "demo-change-monitoring.sh is not in this tree (PR #29 not merged); the stage runs automatically once it is"
 fi
 
 banner "Stage: demo built-in stereo path"
