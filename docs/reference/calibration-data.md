@@ -49,7 +49,10 @@ mars_calibration/
 ```
 
 `find-calibration.sh` in the repository root locates such a directory in the
-common places and validates its contents.
+common places and validates its contents. When no host directory is found it
+probes the image `tig` would run for bundled calibration, so the demos also work
+on a clean host against a calibration-bundled image (see
+[Images with calibration already in them](#images-with-calibration-already-in-them)).
 
 ## Mount behaviour
 
