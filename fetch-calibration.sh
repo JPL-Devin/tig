@@ -315,33 +315,30 @@ install_mission() {
     # Quoted so a destination path with odd characters is not re-parsed when the
     # trap fires; STAGING is global because the trap runs after the function.
     trap 'rm -rf "$STAGING"' EXIT
-    # An unpinned archive is not trusted, so its member paths are checked for
-    # escapes that not every tar refuses on its own.
-    if $ALLOW_UNVERIFIED; then
-        local names verbose escaping links
-        # The listings are taken first and their status checked: a truncated
-        # archive must not read as one with nothing to complain about.
-        # shellcheck disable=SC2086 # parts is a deliberately word-split name list
-        if ! names="$( ( cd "$CACHE" && cat $parts ) | tar -tz )" \
-           || ! verbose="$( ( cd "$CACHE" && cat $parts ) | tar -tvz )"; then
-            echo "ERROR: could not list $parts; $DEST/$mission is unchanged." >&2
-            rm -rf "$STAGING"
-            trap - EXIT
-            return 1
-        fi
-        escaping="$(printf '%s\n' "$names" \
-            | grep -E '^/|(^|/)\.\.(/|$)' || true)"
-        # Link members are checked too: a symlink out of the staging tree would
-        # otherwise be a second way to write anywhere.
-        links="$(printf '%s\n' "$verbose" \
-            | grep -E '(->|link to) (/|([^ ]*/)?\.\.(/|$))' || true)"
-        if [ -n "$escaping$links" ]; then
-            echo "ERROR: $parts holds absolute or parent-relative paths;" \
-                 "refusing to extract it." >&2
-            rm -rf "$STAGING"
-            trap - EXIT
-            return 1
-        fi
+    # Member paths are audited before extraction, whether or not a digest
+    # vouched for the bytes, since not every tar refuses an escape on its own.
+    local names verbose escaping links
+    # The listings are taken first and their status checked: a truncated archive
+    # must not read as one with nothing to complain about.
+    # shellcheck disable=SC2086 # parts is a deliberately word-split name list
+    if ! names="$( ( cd "$CACHE" && cat $parts ) | tar -tz )" \
+       || ! verbose="$( ( cd "$CACHE" && cat $parts ) | tar -tvz )"; then
+        echo "ERROR: could not list $parts; $DEST/$mission is unchanged." >&2
+        rm -rf "$STAGING"
+        trap - EXIT
+        return 1
+    fi
+    escaping="$(printf '%s\n' "$names" | grep -E '^/|(^|/)\.\.(/|$)' || true)"
+    # Link members are checked too: a symlink out of the staging tree would
+    # otherwise be a second way to write anywhere.
+    links="$(printf '%s\n' "$verbose" \
+        | grep -E '(->|link to) (/|([^ ]*/)?\.\.(/|$))' || true)"
+    if [ -n "$escaping$links" ]; then
+        echo "ERROR: $parts holds absolute or parent-relative paths;" \
+             "refusing to extract it." >&2
+        rm -rf "$STAGING"
+        trap - EXIT
+        return 1
     fi
 
     echo "  extracting"
