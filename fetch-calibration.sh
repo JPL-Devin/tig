@@ -262,8 +262,10 @@ install_mission() {
     local mission="$1" parts="$2" staging part
 
     mkdir -p "$CACHE" "$DEST"
+    # Checked explicitly: the caller runs this in a '||' list, where 'set -e'
+    # does not apply, so a failed part would otherwise extract nothing.
     for part in $parts; do
-        download_part "$part"
+        download_part "$part" || return 1
     done
 
     # Staged next to the destination so the move is a rename, not a copy of
@@ -273,7 +275,12 @@ install_mission() {
     trap "rm -rf '$staging'" EXIT
     echo "  extracting"
     # shellcheck disable=SC2086 # parts is a deliberately word-split name list
-    ( cd "$CACHE" && cat $parts ) | tar -xz -C "$staging"
+    if ! ( cd "$CACHE" && cat $parts ) | tar -xz -C "$staging"; then
+        echo "ERROR: could not extract $parts; $DEST/$mission is unchanged." >&2
+        rm -rf "$staging"
+        trap - EXIT
+        return 1
+    fi
 
     # The archives hold calibration/<mission>/..., but a future layout that
     # extracts the mission directly is installed as it is.
@@ -281,7 +288,9 @@ install_mission() {
     if [ -d "$staging/calibration/$mission" ]; then
         extracted="$staging/calibration/$mission"
     fi
-    if [ -n "$(ls -A "$DEST/$mission" 2>/dev/null)" ]; then
+    # Moved aside rather than moved into: mv into an existing directory, even an
+    # empty one, would nest the mission a level deeper.
+    if [ -e "$DEST/$mission" ]; then
         rm -rf "$DEST/$mission.previous"
         mv "$DEST/$mission" "$DEST/$mission.previous"
     fi

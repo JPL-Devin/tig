@@ -44,6 +44,36 @@ the panorama and co-registration demos fine with
 MSL NavCam is 1024x1024, not M20's 1280x960, and covers ~110 deg of azimuth rather than 360, so
 expect a mostly-black 360 deg canvas — judge the imagery, not the frame coverage.
 
+## Fastest way to get calibration: `./fetch-calibration.sh`
+`./fetch-calibration.sh --list` probes the VICAR 5.0 release with `HEAD` per asset (~5 s, no auth)
+and prints real download sizes; `VICAR_VERSION=4.9 --list` should show every row `not published`,
+which is a cheap way to prove the sizes are probed rather than hardcoded. Install with
+`TIG_CALIBRATION_DEST=<dir> TIG_CALIBRATION_CACHE=<dir> ./fetch-calibration.sh -y <mission>`.
+
+When testing, prefer `nsyt` (111 MB download / 159 MB installed) — it installs in seconds and is
+enough for `tig --calibration-path <dest>/nsyt ...` to see `camera_models/`. `msam` (349 MB / 516 MB)
+is a good second mission; **never** pull `m20` (2.5 GB / 5.3 GB) just to exercise the code path.
+Always point `TIG_CALIBRATION_DEST`/`TIG_CALIBRATION_CACHE` (or a fake `HOME`) at `/tmp` so the real
+`~/.mars_calib` stays empty — otherwise later "calibration missing" negative tests silently pass.
+
+Hazards seen while testing this script:
+- On a fast network a 350 MB asset finishes in ~5 s, so a mid-download SIGINT test needs a throttled
+  curl: put `#!/bin/bash\nexec /usr/bin/curl --limit-rate 3M "$@"` in a dir at the front of `PATH`.
+  `kill -INT` the *script's own* pgid (`ps -eo pid,pgid,cmd | grep fetch-calibration`); `pgrep -f`
+  tends to match the outer `bash -c` wrapper instead.
+- `fetch_mission` is called as `fetch_mission "$m" || failed+=(...)`, which disables `set -e` inside
+  the whole call chain, so every download and extraction step has to check its own status. Force a
+  failure (corrupt a cached archive, or `VISOR_CHECKSUMS=/dev/null` without `--allow-unverified`)
+  and assert on the destination tree, not just the exit code: an existing `<dest>/<mission>` must
+  survive untouched.
+- Cover a pre-existing *empty* `<dest>/<mission>` directory too: a plain `mv "$extracted"
+  "$DEST/$mission"` would nest the tree at `<dest>/<mission>/<mission>` instead of replacing it.
+- Integration tests of `calibration_setup` need `find_image_calibration` stubbed out (source
+  `find-calibration.sh`, then redefine it to `return 1`) plus `env -i HOME=<fakehome>` — otherwise
+  the local `:opensource` image probe answers first and the fetch path is never reached.
+  `CALIB_MISSION=<m>` picks the mission, `TIG_FETCH_CALIBRATION=1` accepts without asking, and
+  with neither a tty nor that env var the helper prints the command instead of hanging.
+
 ## Running the demos
 - The demo scripts write into `./workspace` relative to the *current* directory, so run every case
   in its own fresh empty scratch dir; otherwise outputs from a previous case are mistaken for the
