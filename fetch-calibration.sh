@@ -151,10 +151,13 @@ pinned_sha() {
     awk -v n="$1" '$2 == n { print $1 }' "$CHECKSUMS"
 }
 
+valid_calibration() {
+    [ -n "$(ls -A "$1/camera_models" 2>/dev/null)" ] || return 1
+    [ -n "$(ls -A "$1/param_files" 2>/dev/null)" ] || return 1
+}
+
 installed_mission() {
-    local dir="$DEST/$1"
-    [ -n "$(ls -A "$dir/camera_models" 2>/dev/null)" ] || return 1
-    [ -n "$(ls -A "$dir/param_files" 2>/dev/null)" ] || return 1
+    valid_calibration "$DEST/$1"
 }
 
 list_missions() {
@@ -245,7 +248,10 @@ download_part() {
     fi
 
     echo "  fetching $name"
-    curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}"
+    curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}" || {
+        echo "ERROR: download of $name failed." >&2
+        return 1
+    }
     if [ -n "$expected" ]; then
         # A resumed transfer that had appended to a stale or truncated file
         # fails here, so drop it and let the next run start clean.
@@ -256,6 +262,7 @@ download_part() {
         }
         echo "  $name verified"
     fi
+    return 0
 }
 
 install_mission() {
@@ -275,7 +282,7 @@ install_mission() {
     trap "rm -rf '$staging'" EXIT
     echo "  extracting"
     # shellcheck disable=SC2086 # parts is a deliberately word-split name list
-    if ! ( cd "$CACHE" && cat $parts ) | tar -xz -C "$staging"; then
+    if ! ( cd "$CACHE" && cat $parts ) | tar -xz --no-same-owner -C "$staging"; then
         echo "ERROR: could not extract $parts; $DEST/$mission is unchanged." >&2
         rm -rf "$staging"
         trap - EXIT
@@ -288,24 +295,37 @@ install_mission() {
     if [ -d "$staging/calibration/$mission" ]; then
         extracted="$staging/calibration/$mission"
     fi
+    # Checked before anything is replaced, so a surprising archive layout leaves
+    # an existing installation and the cached archives alone.
+    if ! valid_calibration "$extracted"; then
+        echo "ERROR: the archive has no camera_models/ and param_files/;" \
+             "$DEST/$mission is unchanged." >&2
+        rm -rf "$staging"
+        trap - EXIT
+        return 1
+    fi
+
     # Moved aside rather than moved into: mv into an existing directory, even an
     # empty one, would nest the mission a level deeper.
+    local backup=""
     if [ -e "$DEST/$mission" ]; then
-        rm -rf "$DEST/$mission.previous"
-        mv "$DEST/$mission" "$DEST/$mission.previous"
+        backup="$DEST/$mission.previous"
+        rm -rf "$backup"
+        mv "$DEST/$mission" "$backup"
     fi
-    mv "$extracted" "$DEST/$mission"
-    rm -rf "$staging" "$DEST/$mission.previous"
+    if ! mv "$extracted" "$DEST/$mission"; then
+        echo "ERROR: could not move the calibration into $DEST/$mission." >&2
+        [ -z "$backup" ] || mv "$backup" "$DEST/$mission"
+        rm -rf "$staging"
+        trap - EXIT
+        return 1
+    fi
+    rm -rf "$staging"
+    [ -z "$backup" ] || rm -rf "$backup"
     trap - EXIT
 
     if ! $KEEP_ARCHIVES; then
         for part in $parts; do rm -f "$CACHE/$part"; done
-    fi
-
-    if ! installed_mission "$mission"; then
-        echo "ERROR: $DEST/$mission has no camera_models/ and param_files/;" \
-             "the archive layout is not what was expected." >&2
-        return 1
     fi
     echo "  installed $DEST/$mission ($(du -sh "$DEST/$mission" | cut -f1))"
 }

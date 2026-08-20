@@ -52,6 +52,7 @@ find_calibration() {
         "$MARS_CONFIG_PATH" \
         "$MARS_CALIB_PATH" \
         "$script_dir/calibration" \
+        "${TIG_CALIBRATION_DEST:-}" \
         "$HOME/.mars_calib" \
         "/opt/mars_calib" \
         "./mars_calibration_m20" \
