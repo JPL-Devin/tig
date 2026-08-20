@@ -51,8 +51,8 @@ extracted_kb() {
     esac
 }
 
-DEST="${TIG_CALIBRATION_DEST:-$HOME/.mars_calib}"
-CACHE="${TIG_CALIBRATION_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/tig/visor-calibration}"
+DEST="${TIG_CALIBRATION_DEST:-${HOME:-}/.mars_calib}"
+CACHE="${TIG_CALIBRATION_CACHE:-${XDG_CACHE_HOME:-${HOME:-}/.cache}/tig/visor-calibration}"
 ASSUME_YES=false
 KEEP_ARCHIVES=false
 DO_LIST=false
@@ -304,9 +304,8 @@ install_mission() {
     # trap fires; STAGING is global because the trap runs after the function.
     trap 'rm -rf "$STAGING"' EXIT
     # An unpinned archive is not trusted, so its member paths are checked for
-    # escapes that not every tar refuses on its own. Not grep -q: it would exit
-    # on the first match, and the SIGPIPE'd tar would fail the check under
-    # pipefail.
+    # escapes that not every tar refuses on its own. Not grep -q: an early exit
+    # would SIGPIPE tar, which pipefail reports as a failed check.
     if $ALLOW_UNVERIFIED; then
         local escaping links
         # shellcheck disable=SC2086 # parts is a deliberately word-split name list
@@ -443,6 +442,6 @@ echo ""
 echo "Point the tools at it with one of:"
 echo "  export MARS_CONFIG_PATH=$DEST/${REQUESTED[0]}"
 echo "  tig --calibration-path $DEST/${REQUESTED[0]} <tool> ..."
-if [ "$DEST" = "$HOME/.mars_calib" ]; then
+if [ "$DEST" = "${HOME:-}/.mars_calib" ]; then
     echo "The demos and find-calibration.sh find $DEST themselves."
 fi
