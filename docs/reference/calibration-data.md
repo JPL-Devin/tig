@@ -53,6 +53,8 @@ common places and validates its contents. When no host directory is found it
 probes the image `tig` would run for bundled calibration, so the demos also work
 on a clean host against a calibration-bundled image (see
 [Images with calibration already in them](#images-with-calibration-already-in-them)).
+When neither turns anything up it offers to download the mission's calibration
+from the open-source VISOR release (see [Downloading it automatically](#downloading-it-automatically)).
 
 ## Mount behaviour
 
@@ -118,3 +120,36 @@ bundled mission via its own.
 
 VISOR publishes calibration for M20, MSL, MER and other missions; see
 [Downloading VISOR data](../demos/downloading-visor-data.md).
+
+### Downloading it automatically
+
+`fetch-calibration.sh` in the repository root asks what is published, then
+downloads, verifies and installs it - no accounts, no manual `curl` and `tar`:
+
+```bash
+./fetch-calibration.sh --list      # missions, download size, installed size
+./fetch-calibration.sh msl         # asks first, installs ~/.mars_calib/msl
+./fetch-calibration.sh --yes m20   # no questions asked
+```
+
+Each part is checked against the SHA-256 pinned in
+`terrain-intelligence-generator/visor/calibration.sha256` - the same digests the
+calibration-bundled images are built from - and an asset with no pinned digest is
+refused unless `--allow-unverified` is given. M20's two-part asset is
+concatenated automatically. Interrupted downloads resume from the cache in
+`~/.cache/tig/visor-calibration`, and the archives are deleted after extraction
+unless `--keep-archives` is passed.
+
+The demos call this themselves: when `find-calibration.sh` finds no calibration
+on the host and none in the image, it offers the download and continues with it
+once installed. `TIG_FETCH_CALIBRATION=1` accepts without asking (for CI or a
+non-interactive shell), and `CALIB_MISSION` picks the mission to offer, `m20` by
+default.
+
+Installed missions land in `<dest>/<mission>`, the layout the bundled images use,
+and `find-calibration.sh` looks inside `~/.mars_calib` for them. Point the tools
+at one mission directly:
+
+```bash
+export MARS_CONFIG_PATH=~/.mars_calib/msl
+```
