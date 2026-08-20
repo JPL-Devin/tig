@@ -269,11 +269,23 @@ download_part() {
         return 0
     fi
 
+    local resuming=false ok=true
+    [ ! -f "$CACHE/$name" ] || resuming=true
     echo "  fetching $name"
-    curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}" || {
-        echo "ERROR: download of $name failed." >&2
+    if ! curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}"; then
+        ok=false
+        # A cached file already at the remote length answers a resume with 416,
+        # so a failed resume starts over instead of failing on every run.
+        if $resuming; then
+            echo "  could not resume $name; starting over"
+            rm -f "$CACHE/$name"
+            curl -fL --progress-bar -o "$CACHE/$name" "${BASE_URL}/${name}" && ok=true
+        fi
+    fi
+    if ! $ok; then
+        echo "ERROR: download of $name failed; its cache is $CACHE." >&2
         return 1
-    }
+    fi
     if [ -n "$expected" ]; then
         # A resumed transfer that had appended to a stale or truncated file
         # fails here, so drop it and let the next run start clean.
