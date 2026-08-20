@@ -308,11 +308,16 @@ install_mission() {
     # on the first match, and the SIGPIPE'd tar would fail the check under
     # pipefail.
     if $ALLOW_UNVERIFIED; then
-        local escaping
+        local escaping links
         # shellcheck disable=SC2086 # parts is a deliberately word-split name list
         escaping="$( ( cd "$CACHE" && cat $parts ) | tar -tz \
             | grep -E '^/|(^|/)\.\.(/|$)' || true )"
-        if [ -n "$escaping" ]; then
+        # Link members are checked too: a symlink out of the staging tree would
+        # otherwise be a second way to write anywhere.
+        # shellcheck disable=SC2086 # parts is a deliberately word-split name list
+        links="$( ( cd "$CACHE" && cat $parts ) | tar -tvz \
+            | grep -E '(->|link to) (/|([^ ]*/)?\.\.(/|$))' || true )"
+        if [ -n "$escaping$links" ]; then
             echo "ERROR: $parts holds absolute or parent-relative paths;" \
                  "refusing to extract it." >&2
             rm -rf "$STAGING"
