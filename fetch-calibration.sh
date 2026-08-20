@@ -57,6 +57,7 @@ ASSUME_YES=false
 KEEP_ARCHIVES=false
 DO_LIST=false
 ALLOW_UNVERIFIED=false
+STAGING=""
 REQUESTED=()
 
 print_usage() {
@@ -105,6 +106,27 @@ if [ "${TIG_FETCH_CALIBRATION:-}" = 1 ]; then
 fi
 
 command -v curl > /dev/null || { echo "ERROR: curl is required." >&2; exit 1; }
+
+# macOS ships shasum rather than coreutils' sha256sum, and a minimal image may
+# have only openssl.
+if command -v sha256sum > /dev/null; then
+    SHA256_CMD="sha256sum"
+elif command -v shasum > /dev/null; then
+    SHA256_CMD="shasum"
+elif command -v openssl > /dev/null; then
+    SHA256_CMD="openssl"
+else
+    echo "ERROR: one of sha256sum, shasum or openssl is required." >&2
+    exit 1
+fi
+
+sha256_of() {
+    case "$SHA256_CMD" in
+        sha256sum) sha256sum "$1" | awk '{ print $1 }';;
+        shasum)    shasum -a 256 "$1" | awk '{ print $1 }';;
+        openssl)   openssl dgst -sha256 "$1" | awk '{ print $NF }';;
+    esac
+}
 
 asset_name() {
     echo "visor_calibration_${VISOR_CALIBRATION_DATE}_$1.tar.gz"
@@ -242,7 +264,7 @@ download_part() {
     # A cached part that already matches is not downloaded again, so an
     # interrupted run of several missions resumes at the part it died on.
     if [ -n "$expected" ] && [ -f "$CACHE/$name" ] \
-       && echo "$expected  $CACHE/$name" | sha256sum -c - > /dev/null 2>&1; then
+       && [ "$(sha256_of "$CACHE/$name")" = "$expected" ]; then
         echo "  $name already downloaded"
         return 0
     fi
@@ -255,18 +277,18 @@ download_part() {
     if [ -n "$expected" ]; then
         # A resumed transfer that had appended to a stale or truncated file
         # fails here, so drop it and let the next run start clean.
-        echo "$expected  $CACHE/$name" | sha256sum -c - > /dev/null || {
+        if [ "$(sha256_of "$CACHE/$name")" != "$expected" ]; then
             echo "ERROR: SHA-256 mismatch for $name; removing it." >&2
             rm -f "$CACHE/$name"
             return 1
-        }
+        fi
         echo "  $name verified"
     fi
     return 0
 }
 
 install_mission() {
-    local mission="$1" parts="$2" staging part
+    local mission="$1" parts="$2" part
 
     mkdir -p "$CACHE" "$DEST"
     # Checked explicitly: the caller runs this in a '||' list, where 'set -e'
@@ -277,30 +299,31 @@ install_mission() {
 
     # Staged next to the destination so the move is a rename, not a copy of
     # gigabytes, and a failed extraction never leaves a half-populated mission.
-    staging="$(mktemp -d "$DEST/.staging-$mission.XXXXXX")"
-    # shellcheck disable=SC2064 # expand the path now, while it is known
-    trap "rm -rf '$staging'" EXIT
+    STAGING="$(mktemp -d "$DEST/.staging-$mission.XXXXXX")"
+    # Quoted so a destination path with odd characters is not re-parsed when the
+    # trap fires; STAGING is global because the trap runs after the function.
+    trap 'rm -rf "$STAGING"' EXIT
     echo "  extracting"
     # shellcheck disable=SC2086 # parts is a deliberately word-split name list
-    if ! ( cd "$CACHE" && cat $parts ) | tar -xz --no-same-owner -C "$staging"; then
+    if ! ( cd "$CACHE" && cat $parts ) | tar -xz --no-same-owner -C "$STAGING"; then
         echo "ERROR: could not extract $parts; $DEST/$mission is unchanged." >&2
-        rm -rf "$staging"
+        rm -rf "$STAGING"
         trap - EXIT
         return 1
     fi
 
     # The archives hold calibration/<mission>/..., but a future layout that
     # extracts the mission directly is installed as it is.
-    local extracted="$staging"
-    if [ -d "$staging/calibration/$mission" ]; then
-        extracted="$staging/calibration/$mission"
+    local extracted="$STAGING"
+    if [ -d "$STAGING/calibration/$mission" ]; then
+        extracted="$STAGING/calibration/$mission"
     fi
     # Checked before anything is replaced, so a surprising archive layout leaves
     # an existing installation and the cached archives alone.
     if ! valid_calibration "$extracted"; then
         echo "ERROR: the archive has no camera_models/ and param_files/;" \
              "$DEST/$mission is unchanged." >&2
-        rm -rf "$staging"
+        rm -rf "$STAGING"
         trap - EXIT
         return 1
     fi
@@ -316,11 +339,11 @@ install_mission() {
     if ! mv "$extracted" "$DEST/$mission"; then
         echo "ERROR: could not move the calibration into $DEST/$mission." >&2
         [ -z "$backup" ] || mv "$backup" "$DEST/$mission"
-        rm -rf "$staging"
+        rm -rf "$STAGING"
         trap - EXIT
         return 1
     fi
-    rm -rf "$staging"
+    rm -rf "$STAGING"
     [ -z "$backup" ] || rm -rf "$backup"
     trap - EXIT
 
