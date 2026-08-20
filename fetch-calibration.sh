@@ -304,15 +304,21 @@ install_mission() {
     # trap fires; STAGING is global because the trap runs after the function.
     trap 'rm -rf "$STAGING"' EXIT
     # An unpinned archive is not trusted, so its member paths are checked for
-    # escapes that not every tar refuses on its own.
-    # shellcheck disable=SC2086 # parts is a deliberately word-split name list
-    if $ALLOW_UNVERIFIED && ( cd "$CACHE" && cat $parts ) | tar -tz \
-       | grep -Eq '^/|(^|/)\.\.(/|$)'; then
-        echo "ERROR: $parts holds absolute or parent-relative paths;" \
-             "refusing to extract it." >&2
-        rm -rf "$STAGING"
-        trap - EXIT
-        return 1
+    # escapes that not every tar refuses on its own. Not grep -q: it would exit
+    # on the first match, and the SIGPIPE'd tar would fail the check under
+    # pipefail.
+    if $ALLOW_UNVERIFIED; then
+        local escaping
+        # shellcheck disable=SC2086 # parts is a deliberately word-split name list
+        escaping="$( ( cd "$CACHE" && cat $parts ) | tar -tz \
+            | grep -E '^/|(^|/)\.\.(/|$)' || true )"
+        if [ -n "$escaping" ]; then
+            echo "ERROR: $parts holds absolute or parent-relative paths;" \
+                 "refusing to extract it." >&2
+            rm -rf "$STAGING"
+            trap - EXIT
+            return 1
+        fi
     fi
 
     echo "  extracting"
