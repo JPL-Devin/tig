@@ -293,6 +293,9 @@ raw code.
 - 8GB RAM minimum (16GB recommended for high-res meshes)
 - Linux, macOS (including Apple Silicon, via emulation), or Windows with WSL2
 
+On macOS, see [Installing on macOS](docs/install-macos.md) for the Podman and
+XQuartz setup the GUI tools need.
+
 ## Project Structure
 
 ```

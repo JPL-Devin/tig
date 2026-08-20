@@ -11,6 +11,9 @@ pip install tig-cli
 You need Python 3.9+ and a container runtime — Docker, Podman, nerdctl or
 Finch. The VICAR image is pulled on first use.
 
+On macOS, start from [Installing on macOS](docs/install-macos.md): the runtime
+runs in a virtual machine and the GUI tools need XQuartz.
+
 ```bash
 tig gen test.vic 64 64      # writes test.vic in the current directory
 tig vicario test.vic test.png
