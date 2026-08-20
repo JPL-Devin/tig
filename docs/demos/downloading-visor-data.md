@@ -9,6 +9,20 @@ Sample data is not in those variants, so download it here.
 
 ## Quick Download
 
+Calibration has a script for this, which lists what the release publishes and
+installs a mission where the demos look for it, verifying the pinned SHA-256 and
+concatenating M20's two parts:
+
+```bash
+./fetch-calibration.sh --list      # missions, download size, installed size
+./fetch-calibration.sh msl         # asks first, installs ~/.mars_calib/msl
+```
+
+The demos offer it themselves when they find no calibration; see
+[Downloading it automatically](../reference/calibration-data.md#downloading-it-automatically).
+Sample data is not covered by the script - download it, or a mission by hand,
+like this:
+
 ```bash
 mkdir -p visor_data
 

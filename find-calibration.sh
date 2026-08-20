@@ -10,6 +10,7 @@
 # 5. Current directory
 # 6. Calibration bundled inside the container image tig will use (the
 #    :fullfeatured and :visor-<mission> variants), which needs no host copy
+# 7. Offer to download it from the open-source VISOR release (fetch-calibration.sh)
 
 # Given a candidate directory, echo the first path that is a VALID calib dir:
 # either the candidate itself, or a nested mars_calibration_m20/ inside it.
@@ -28,6 +29,16 @@ resolve_calib_dir() {
         echo "$candidate/mars_calibration_m20"
         return 0
     fi
+
+    # Per-mission layout, as fetch-calibration.sh and the calibration-bundled
+    # images use it. The wanted mission first, then whatever is there.
+    local mission
+    for mission in "${CALIB_MISSION:-m20}" m20 mer msl msam phx nsyt; do
+        if verify_calibration "$candidate/$mission"; then
+            echo "$candidate/$mission"
+            return 0
+        fi
+    done
 
     return 1
 }
@@ -131,6 +142,33 @@ find_image_calibration() {
     echo "$found"
 }
 
+# Offer to download the mission's calibration from the open-source VISOR
+# release, and echo the installed directory on success. Asks first unless
+# TIG_FETCH_CALIBRATION=1, and asks nothing when there is no terminal.
+fetch_calibration_interactively() {
+    local script_dir="$1" mission="${CALIB_MISSION:-m20}"
+    local fetcher="$script_dir/fetch-calibration.sh"
+
+    [ -x "$fetcher" ] || return 1
+    if [ "${TIG_FETCH_CALIBRATION:-}" != 1 ] && [ ! -t 0 ]; then
+        echo "No calibration found. $fetcher $mission downloads it from the" \
+             "open-source VISOR release; TIG_FETCH_CALIBRATION=1 does it" \
+             "without asking." >&2
+        return 1
+    fi
+
+    echo "" >&2
+    echo "No calibration found on this host or in the container image, but" \
+         "VISOR publishes $mission calibration open source." >&2
+    # The fetcher does the asking, so the size and the URL in its prompt are
+    # the ones actually used.
+    "$fetcher" "$mission" >&2 || return 1
+
+    local installed
+    installed=$(find_calibration) || return 1
+    echo "$installed"
+}
+
 # Resolve calibration for a demo, host first. On success exactly one of
 # CALIB_DIR (a host directory) or CALIB_IN_IMAGE (a path already visible inside
 # the container, described by CALIB_IN_IMAGE_DESC) is set; returns 1 with both
@@ -167,6 +205,14 @@ calibration_setup() {
         return 0
     fi
 
+    local fetched
+    if fetched=$(fetch_calibration_interactively \
+            "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)") \
+       && [ -n "$fetched" ]; then
+        CALIB_DIR="$fetched"
+        return 0
+    fi
+
     return 1
 }
 
@@ -198,15 +244,22 @@ To specify calibration location, use one of:
 5. An image that already carries the calibration, downloading nothing:
    export CONTAINER_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:fullfeatured
 
+6. Download it from the open-source VISOR release, which needs no accounts:
+   ./fetch-calibration.sh --list      # missions and sizes
+   ./fetch-calibration.sh m20         # asks, then installs in ~/.mars_calib/m20
+   The demos offer this themselves when they find nothing; set
+   TIG_FETCH_CALIBRATION=1 to accept without being asked.
+
 The script will check these locations in order:
   1. $MARS_CONFIG_PATH
   2. $MARS_CALIB_PATH
   3. ./calibration (repo structure)
-  4. ~/.mars_calib
+  4. ~/.mars_calib (also ~/.mars_calib/<mission>)
   5. /opt/mars_calib
   6. ./mars_calibration_m20
   7. ./mars_calib
   8. inside $CONTAINER_IMAGE (:fullfeatured, :visor-<mission>)
+  9. downloaded by ./fetch-calibration.sh, after asking
 
 For TIG repository users:
   Calibration is already in: ./calibration/

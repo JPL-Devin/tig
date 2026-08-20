@@ -99,7 +99,10 @@ export MARS_CONFIG_PATH=/path/to/mars_calibration
 tig bash -c 'ls $MARS_CONFIG_PATH/camera_models | head'
 ```
 
-`find-calibration.sh` searches the usual locations. See
+`find-calibration.sh` searches the usual locations. Have none at all?
+`./fetch-calibration.sh --list` shows what VISOR publishes open source and
+`./fetch-calibration.sh m20` installs it in `~/.mars_calib/m20`; the demos offer
+this themselves when they find nothing. See
 [Calibration Data](docs/reference/calibration-data.md).
 
 ### "Stereo images don't match"

@@ -200,6 +200,10 @@ M20, MSL, MER and other missions. Not bundled in the base image; mount it at
 runtime, or use a `:visor-<mission>` or `:fullfeatured` image variant that
 bundles it.
 
+`./fetch-calibration.sh --list` shows what the VICAR release publishes and
+`./fetch-calibration.sh m20` downloads, verifies and installs it; the demos offer
+this themselves when they find no calibration.
+
 📖 [Downloading VISOR Data](docs/demos/downloading-visor-data.md) · [Calibration Data](docs/reference/calibration-data.md)
 
 ### Fullfeatured image variant
@@ -296,6 +300,7 @@ tig/
 ├── demo-mesh-generation-with-xyz.sh    # Mesh demo (stereo pair or pre-computed XYZ)
 ├── demo-surface-characteristics.sh     # Slope, roughness, normals and goodness from XYZ
 ├── find-calibration.sh                 # Calibration helper
+├── fetch-calibration.sh                # Download open-source VISOR calibration
 ├── tig-cli/                            # The tig command-line client (PyPI: tig-cli)
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
 ├── QUICKSTART.md                       # Common workflows end to end
