@@ -303,6 +303,18 @@ install_mission() {
     # Quoted so a destination path with odd characters is not re-parsed when the
     # trap fires; STAGING is global because the trap runs after the function.
     trap 'rm -rf "$STAGING"' EXIT
+    # An unpinned archive is not trusted, so its member paths are checked for
+    # escapes that not every tar refuses on its own.
+    # shellcheck disable=SC2086 # parts is a deliberately word-split name list
+    if $ALLOW_UNVERIFIED && ( cd "$CACHE" && cat $parts ) | tar -tz \
+       | grep -Eq '^/|(^|/)\.\.(/|$)'; then
+        echo "ERROR: $parts holds absolute or parent-relative paths;" \
+             "refusing to extract it." >&2
+        rm -rf "$STAGING"
+        trap - EXIT
+        return 1
+    fi
+
     echo "  extracting"
     # shellcheck disable=SC2086 # parts is a deliberately word-split name list
     if ! ( cd "$CACHE" && cat $parts ) | tar -xz --no-same-owner -C "$STAGING"; then
@@ -334,7 +346,13 @@ install_mission() {
     if [ -e "$DEST/$mission" ]; then
         backup="$DEST/$mission.previous"
         rm -rf "$backup"
-        mv "$DEST/$mission" "$backup"
+        if ! mv "$DEST/$mission" "$backup"; then
+            echo "ERROR: could not move $DEST/$mission aside;" \
+                 "it is unchanged." >&2
+            rm -rf "$STAGING"
+            trap - EXIT
+            return 1
+        fi
     fi
     if ! mv "$extracted" "$DEST/$mission"; then
         echo "ERROR: could not move the calibration into $DEST/$mission." >&2
