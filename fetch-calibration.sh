@@ -269,14 +269,22 @@ download_part() {
         return 0
     fi
 
-    local resuming=false ok=true
-    [ ! -f "$CACHE/$name" ] || resuming=true
+    local resuming=false ok=true status=0
+    # Without a digest there is nothing to validate a mixed old-and-new file
+    # against, so an unverified part is always fetched whole.
+    if [ -z "$expected" ]; then
+        rm -f "$CACHE/$name"
+    elif [ -f "$CACHE/$name" ]; then
+        resuming=true
+    fi
     echo "  fetching $name"
-    if ! curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}"; then
+    curl -fL --progress-bar -C - -o "$CACHE/$name" "${BASE_URL}/${name}" || status=$?
+    if [ "$status" -ne 0 ]; then
         ok=false
-        # A cached file already at the remote length answers a resume with 416,
-        # so a failed resume starts over instead of failing on every run.
-        if $resuming; then
+        # 22 (the 416 a file already at the remote length answers a resume with)
+        # and 33 (no range support) mean the resume itself cannot work; any other
+        # failure keeps the partial file for the next run to carry on from.
+        if $resuming && { [ "$status" -eq 22 ] || [ "$status" -eq 33 ]; }; then
             echo "  could not resume $name; starting over"
             rm -f "$CACHE/$name"
             curl -fL --progress-bar -o "$CACHE/$name" "${BASE_URL}/${name}" && ok=true
