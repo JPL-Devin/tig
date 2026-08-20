@@ -94,9 +94,12 @@ chmod +x "$T/bin/curl"; rm -rf "$D/nsyt/param_files"/*
 PATH=$T/bin:$PATH "$F" -y --keep-archives --dest "$D" --cache "$C" nsyt  # names the cache; file still 40 MB
 ```
 Tar-escape guard (runs for *every* download, not only `--allow-unverified`): build a small tar.gz
-holding `calibration/nsyt/evil -> /etc` plus dummy `camera_models`/`param_files` entries, pin its
-real digest in a `VISOR_CHECKSUMS` file, and confirm the script refuses with "holds absolute or
-parent-relative paths" and leaves `$D` untouched.
+holding `calibration/nsyt/evil -> /etc` plus dummy `camera_models`/`param_files` entries, write it to
+`$C/visor_calibration_20230608_nsyt.tar.gz` under that exact name so the cached copy is used instead
+of a fresh download, pin its real digest in a `VISOR_CHECKSUMS` file, empty `$D/nsyt/param_files`
+again, and confirm the script refuses with "holds absolute or parent-relative paths" and leaves `$D`
+untouched. Get the name or the digest wrong and you get a "SHA-256 mismatch" from the genuine asset
+instead, which does not test the guard at all.
 
 Finally the demo-facing path, which is what a new user actually hits. The entry point is
 `calibration_setup` (not `find_calibration`, which only probes host paths and never fetches), and the
@@ -105,7 +108,8 @@ image probe has to be stubbed so the local `:opensource` image does not answer f
 env -i HOME=$T/fakehome CALIB_MISSION=nsyt TIG_FETCH_CALIBRATION=1 PATH=$PATH bash -c \
   'source find-calibration.sh; find_image_calibration() { return 1; }; calibration_setup && echo "$CALIB_DIR"'
 ```
-That installs into `$HOME/.mars_calib/nsyt` and echoes it as `CALIB_DIR`. Repeat it without
+That installs into `$HOME/.mars_calib/nsyt` and echoes it as `CALIB_DIR`. Repeat it with a *second,
+empty* `HOME` (the first run's install would otherwise be found and no fetch attempted), without
 `TIG_FETCH_CALIBRATION` and with stdin redirected from `/dev/null`: it must print
 `No calibration found. <repo>/fetch-calibration.sh nsyt downloads it ...` and return 1 rather than
 hang. Keep `HOME` pointed at a scratch dir for both — this path deliberately writes to the real
