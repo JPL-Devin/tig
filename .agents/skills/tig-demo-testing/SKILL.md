@@ -56,6 +56,65 @@ is a good second mission; **never** pull `m20` (2.5 GB / 5.3 GB) just to exercis
 Always point `TIG_CALIBRATION_DEST`/`TIG_CALIBRATION_CACHE` (or a fake `HOME`) at `/tmp` so the real
 `~/.mars_calib` stays empty — otherwise later "calibration missing" negative tests silently pass.
 
+### Exercising the auto-download end to end (~2 min, run it before the demos)
+Every step below is cheap and self-contained; run them in order in a throwaway tree, and expect the
+quoted output. `$F` is the repo's `fetch-calibration.sh`.
+```bash
+F=$PWD/fetch-calibration.sh; T=$(mktemp -d); D=$T/dest; C=$T/cache
+"$F" --list                                              # nsyt row: 111 MB / 159 MB, "available"
+VICAR_VERSION=4.9 "$F" --list                            # every row "not published"
+"$F" --dest "$D" --cache "$C" nsyt < /dev/null           # refuses: "re-run with --yes"
+"$F" -y --keep-archives --dest "$D" --cache "$C" nsyt     # "verified" then "installed .../nsyt (159M)"
+"$F" --list --dest "$D"                                   # nsyt row now "installed in $D/nsyt"
+"$F" -y --dest "$D" --cache "$C" nsyt                     # "nsyt: already installed in ..."
+rm -rf "$D/nsyt"
+"$F" -y --keep-archives --dest "$D" --cache "$C" nsyt   # "already downloaded" — no second transfer
+```
+Keep `--keep-archives` on every step: without it a successful install deletes the cached archive, and
+the next case re-downloads 111 MB instead of exercising the cache.
+
+A mission that is already installed is skipped before anything is downloaded, so **every failure
+case below needs the install to look incomplete first** — emptying `param_files/` is the cheapest way
+(`installed_mission` wants a non-empty `camera_models/` *and* `param_files/`), and it leaves the rest
+of the tree in place as the thing that must survive. Assert on that tree, not just the exit code:
+```bash
+rm -rf "$D/nsyt/param_files"/*
+VISOR_CHECKSUMS=/dev/null "$F" -y --keep-archives --dest "$D" --cache "$C" nsyt  # "no pinned SHA-256", exit 1
+ls "$D/nsyt/camera_models" | wc -l                               # still 12 — untouched
+printf 'X' | dd of="$C/visor_calibration_20230608_nsyt.tar.gz" bs=1 seek=999 conv=notrunc
+"$F" -y --keep-archives --dest "$D" --cache "$C" nsyt   # "could not resume ...; starting over", verified
+```
+A full-length corrupted cache is the case that used to wedge forever (HTTP 416 on every resume), so
+keep it in the rotation. To prove a *transient* failure keeps its partial file instead, shim curl to
+fail only the resume attempt and check the partial survives:
+```bash
+mkdir -p "$T/bin"; truncate -s 40000000 "$C/visor_calibration_20230608_nsyt.tar.gz"
+printf '#!/bin/bash\nfor a in "$@"; do [ "$a" = "-C" ] && exit 28; done\nexec /usr/bin/curl "$@"\n' > "$T/bin/curl"
+chmod +x "$T/bin/curl"; rm -rf "$D/nsyt/param_files"/*
+PATH=$T/bin:$PATH "$F" -y --keep-archives --dest "$D" --cache "$C" nsyt  # names the cache; file still 40 MB
+```
+Tar-escape guard (runs for *every* download, not only `--allow-unverified`): build a small tar.gz
+holding `calibration/nsyt/evil -> /etc` plus dummy `camera_models`/`param_files` entries, write it to
+`$C/visor_calibration_20230608_nsyt.tar.gz` under that exact name so the cached copy is used instead
+of a fresh download, pin its real digest in a `VISOR_CHECKSUMS` file, empty `$D/nsyt/param_files`
+again, and confirm the script refuses with "holds absolute or parent-relative paths" and leaves `$D`
+untouched. Get the name or the digest wrong and you get a "SHA-256 mismatch" from the genuine asset
+instead, which does not test the guard at all.
+
+Finally the demo-facing path, which is what a new user actually hits. The entry point is
+`calibration_setup` (not `find_calibration`, which only probes host paths and never fetches), and the
+image probe has to be stubbed so the local `:opensource` image does not answer first:
+```bash
+env -i HOME=$T/fakehome CALIB_MISSION=nsyt TIG_FETCH_CALIBRATION=1 PATH=$PATH bash -c \
+  'source find-calibration.sh; find_image_calibration() { return 1; }; calibration_setup && echo "$CALIB_DIR"'
+```
+That installs into `$HOME/.mars_calib/nsyt` and echoes it as `CALIB_DIR`. Repeat it with a *second,
+empty* `HOME` (the first run's install would otherwise be found and no fetch attempted), without
+`TIG_FETCH_CALIBRATION` and with stdin redirected from `/dev/null`: it must print
+`No calibration found. <repo>/fetch-calibration.sh nsyt downloads it ...` and return 1 rather than
+hang. Keep `HOME` pointed at a scratch dir for both — this path deliberately writes to the real
+`~/.mars_calib` otherwise.
+
 Hazards seen while testing this script:
 - On a fast network a 350 MB asset finishes in ~5 s, so a mid-download SIGINT test needs a throttled
   curl: put `#!/bin/bash\nexec /usr/bin/curl --limit-rate 3M "$@"` in a dir at the front of `PATH`.
