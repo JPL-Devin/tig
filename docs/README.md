@@ -8,6 +8,7 @@ New here? Start with **[Getting Started](getting-started.md)**.
 
 ### Getting Started
 - **[Getting Started](getting-started.md)** — Prerequisites, installation, and your first demo.
+- **[Installing on macOS](install-macos.md)** — Step-by-step Podman and XQuartz setup, including Apple Silicon emulation.
 
 ### Demos
 - **[Mesh Generation](demos/mesh-generation.md)** — Mars 2020 NavCam stereo terrain reconstruction walkthrough (flagship capability).
