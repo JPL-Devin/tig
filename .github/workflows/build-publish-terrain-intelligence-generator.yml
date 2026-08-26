@@ -635,7 +635,8 @@ jobs:
           
           **Test VICAR commands:**
           ```bash
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} label --help
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
+            bash -c 'cd /tmp && gen out=test.img nl=10 ns=10 && label -list inp=test.img'
           ```
           
           **Convert VICAR images:**

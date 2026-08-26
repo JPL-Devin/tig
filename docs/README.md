@@ -1,6 +1,6 @@
 # TIG Documentation
 
-Documentation for the **Terrain Intelligence Generator (TIG)** — a containerized VICAR image processing environment with ~550 commands for planetary image analysis, enhancement, transformation, and stereo terrain reconstruction.
+Documentation for the **Terrain Intelligence Generator (TIG)** — a containerized VICAR image processing environment with 546 commands for planetary image analysis, enhancement, transformation, and stereo terrain reconstruction.
 
 New here? Start with **[Getting Started](getting-started.md)**.
 
@@ -32,5 +32,5 @@ New here? Start with **[Getting Started](getting-started.md)**.
 ## Related
 
 - **[Project README](../README.md)** — Top-level project overview.
-- **[tig-cli](../tig-cli/README.md)** — The command-line client that runs all ~550 VICAR tools.
+- **[tig-cli](../tig-cli/README.md)** — The command-line client that runs all 546 VICAR tools.
 - **[TIG VICAR image](../terrain-intelligence-generator/README.md)** — Building and testing the container image, including the release visual regression suite.

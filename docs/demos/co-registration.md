@@ -10,7 +10,7 @@ product: joint solve → common projection → difference raster → registratio
 controls.
 
 > **There is still no change-detection program in this image.** Nothing in the
-> ~74 `mars*` programs takes two epochs and returns a difference product. Change
+> 74 `mars*` programs takes two epochs and returns a difference product. Change
 > monitoring is a workflow you compose, and `demo-change-monitoring.sh` is that
 > composition, run end to end on two sols of M20 NavCam repeat coverage:
 > `marschkovl` → `marsautotie` → `marsnav` → `marsmap` per epoch with one shared

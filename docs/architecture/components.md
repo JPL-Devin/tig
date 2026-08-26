@@ -10,16 +10,16 @@ Overview of the Terrain Intelligence Generator system components and VICAR image
 ├─────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │   VICAR     │  │  MARS Tools  │  │   Vicario    │  │
-│  │  Commands   │  │   (~74)      │  │  (Java JAR)  │  │
-│  │  (~550)     │  │              │  │              │  │
+│  │  Commands   │  │    (74)      │  │  (Java JAR)  │  │
+│  │   (546)     │  │              │  │              │  │
 │  │             │  │  marscorr    │  │  Image       │  │
 │  │  gen        │  │  marscor3    │  │  Converter   │  │
 │  │  label      │  │  marsxyz     │  │              │  │
 │  │  stretch    │  │  marsmesh    │  │  VICAR→PNG   │  │
 │  │  filter     │  │  marsmap     │  │  PNG→VICAR   │  │
-│  │  geom       │  │  marsmos     │  │              │  │
+│  │  lgeom      │  │  marsmos     │  │              │  │
 │  │  hist       │  │  + 68 more   │  │              │  │
-│  │  + ~540     │  │              │  │              │  │
+│  │  + 539 more │  │              │  │              │  │
 │  └─────────────┘  └──────────────┘  └──────────────┘  │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐  │
@@ -81,19 +81,19 @@ host user, with host paths translated so files resolve the same inside and out.
 
 ## Core Tools
 
-### VICAR Commands (~546 Available)
+### VICAR Commands (546 Available)
 - **Base**: Full VICAR image processing suite for planetary science
 - **Categories**:
   - **Image Generation**: gen, copy
   - **Enhancement**: stretch, filter, histogram equalization
-  - **Geometric**: geom, rotate, size, registration
+  - **Geometric**: size, lgeom, mgeom, polygeom, rotate2 (transform for lgeom), registration
   - **Analysis**: hist, list, label, statistics
   - **Mathematical**: f2 (image arithmetic), band operations
   - **Multispectral**: band manipulation, transformations
 - **Location**: `/usr/local/bin/` (wrappers) → `/usr/local/vicar/dev/`
 - **Runtime**: TAE (Terminal Application Executive)
 
-### MARS Terrain Tools (~74 Commands)
+### MARS Terrain Tools (74 Commands)
 Specialized Mars terrain processing suite:
 
 | Tool | Function | Input | Output |
@@ -192,9 +192,9 @@ Base Layer: Oracle Linux 8
     ↓
 Builder Stage: downloads pre-built VICAR + external library releases
     ↓
-Runtime Layer: VICAR binaries (~546 commands) + MARS tools (~74) + Java + vicario.jar
+Runtime Layer: VICAR binaries (546 commands) + MARS tools (74) + Java + vicario.jar
     ↓
-Command Wrappers: ~546 CLI wrappers generated under /usr/local/bin
+Command Wrappers: 546 CLI wrappers generated under /usr/local/bin
     ↓
 Entry Point: Shell with VICAR environment
 ```
