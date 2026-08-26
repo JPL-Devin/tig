@@ -154,10 +154,12 @@ be in the `docker` group.
 
 ## Example Workflows
 
-### Process Real Mars 2020 Data
+### Process the public VISOR sample data (MSL NavCam)
+
+This is the one dataset anyone can download, and it is what the release
+regression suite runs on:
 
 ```bash
-# 1. Get frames and calibration (VICAR 5.0 VISOR sample data + MSL calibration)
 cd /path/to/tig
 mkdir -p visor_data
 curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_data_20230623.tar.gz" | \
@@ -165,13 +167,38 @@ curl -L "https://github.com/NASA-AMMOS/VICAR/releases/download/5.0/visor_sample_
 ./fetch-calibration.sh msl
 export MARS_CONFIG_PATH=~/.mars_calib/msl
 
-# 2. Generate the mesh from a stereo pair (left/right must share the SCLK)
-./demo-mesh-generation-with-xyz.sh \
-  --stereo-left visor_data/.../<left>.IMG \
-  --stereo-right visor_data/.../<right>.IMG
+# A panorama from frames taken at one rover position
+./demo-panorama-mosaic.sh visor_data/<one-site>/*.IMG
 
-# 3. View it
-# Import workspace/terrain.obj into Blender/MeshLab
+# Slope, roughness, normals and placement goodness from a NavCam XYZ cloud
+./demo-surface-characteristics.sh --xyz visor_data/<...>XYZ<...>.IMG --solar-angle 60
+```
+
+Meshing is the one thing these MSL samples are awkward for: the demo's built-in
+stereo path reports `No valid seed points found` on these frames (see
+[the image README](terrain-intelligence-generator/README.md#release-visual-regression)),
+and `--xyz` quick mode needs the stereo baseline in the cloud's label, which
+MSL NavCam XYZ products do not carry.
+
+### Generate a mesh from Mars 2020 data
+
+Meshing wants M2020 frames and M2020 calibration; the frames come from the
+mission archives (see [Where to Get Data](#where-to-get-data)):
+
+```bash
+cd /path/to/tig
+./fetch-calibration.sh m20
+export MARS_CONFIG_PATH=~/.mars_calib/m20
+
+# From a stereo pair (left/right must share the SCLK), ~10 minutes
+./demo-mesh-generation-with-xyz.sh \
+  --stereo-left /path/to/NLM_*_FDR_*.VIC \
+  --stereo-right /path/to/NRM_*_FDR_*.VIC
+
+# Or straight from an M2020 XYZ product, ~90 seconds
+./demo-mesh-generation-with-xyz.sh --xyz /path/to/*xyz*.img --texture /path/to/*fdr*.vic
+
+# Then import workspace/terrain.obj into Blender/MeshLab
 ```
 
 ### Interactive Exploration
