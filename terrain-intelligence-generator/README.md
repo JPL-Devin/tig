@@ -53,6 +53,28 @@ Build time is 5-10 minutes, mostly download.
 ./test-docker-image.sh terrain-intelligence-generator:opensource
 ```
 
+This is a smoke test of the container, not of terrain processing. Its 15 tests
+check that:
+
+- the container starts, the image layout and the VICAR environment variables are
+  as expected, and the wrappers under `/usr/local/bin` have the expected form;
+- seven command names are present and executable — `gen`, `list`, `copy`,
+  `stretch`, `vicario`, `marsmap`, `marsmos` — plus `marsautotie` and
+  `marscor3`, i.e. four of the 74 `mars*` tools;
+- `gen`, `list`, `copy` and `stretch` actually run;
+- `vicario` converts a VICAR image to PNG and to JPEG;
+- VISOR calibration data is *not* bundled in the base image;
+- the `docker exec` pattern works, files persist in the container, and
+  directories are flattened as the wrappers expect;
+- the wrapper and `mars*` counts are printed for the record (546 entries, 74 of
+  them `mars*`) without being asserted;
+- MPI-linked MARS programs (`marsmap`, `marscor2`, `marsint`, `marsremos`)
+  start far enough to reach TAE argument checking instead of dying on a signal.
+
+No MARS terrain program is ever executed on data: nothing here produces a
+disparity map, point cloud, mesh or mosaic. Those paths are covered by the
+release visual regression below.
+
 These are the same checks CI runs in
 [`build-publish-terrain-intelligence-generator.yml`](../.github/workflows/build-publish-terrain-intelligence-generator.yml),
 which builds, tests and publishes to GHCR on pushes to `main`/`develop` and on
@@ -116,7 +138,7 @@ falling back to `:opensource` when the release published no image.
 ## What is in the image
 
 - VICAR core (p2 programs), TAE, MARS terrain tools and supporting libraries
-- ~540 command wrappers in `/usr/local/bin`
+- 546 command wrappers in `/usr/local/bin` (74 of them `mars*`)
 - Oracle Linux 8, Python 3.9, Java 8 runtime, X11 libraries, libtiff/libpng/libjpeg
 
 Environment set by the image:

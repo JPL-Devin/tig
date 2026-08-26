@@ -80,7 +80,7 @@ Then pull the image and run a tool that needs no GUI:
 
 ```bash
 tig gen test.vic 64 64        # pulls the image on first use — 3.12 GB, several minutes
-tig label test.vic
+tig label -list inp=test.vic
 ```
 
 If `tig gen` writes `test.vic` in the current directory, the container, the
@@ -152,16 +152,14 @@ fails immediately with `exec format error`; recreate the machine
 
 Expect the first commands to be slow. Under QEMU in particular, memory-heavy
 work such as mesh generation runs several times slower than native and has
-been reported to crash with `SIGSEGV`
-([containers/podman#28181](https://github.com/containers/podman/issues/28181));
-that is an emulation bug, not a TIG one. `podman machine inspect` reporting
+been reported to crash with `SIGSEGV`; that is an emulation bug, not a TIG one. `podman machine inspect` reporting
 `Rosetta: true` is not sufficient — trust the `binfmt_misc` listing above.
 
 ## 6. Verify the install
 
 ```bash
 tig gen check.vic 128 128            # container + mounts
-tig label check.vic                  # VICAR runs and reads the file
+tig label -list inp=check.vic        # VICAR runs and reads the file
 tig vicario check.vic check.png      # Java tooling and file output
 tig xvd check.vic                    # X11, if you installed XQuartz
 tig --status                         # what containers TIG has running

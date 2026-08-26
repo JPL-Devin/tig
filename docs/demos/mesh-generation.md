@@ -83,12 +83,31 @@ Skips stereo correlation, ~90 seconds total.
 
 ### Data source
 
-Uses pre-computed NavCam XYZ from VISOR samples:
+Uses pre-computed M2020 NavCam XYZ from VISOR samples (M2020 products satisfy
+the baseline precondition above):
 - **XYZ:** `nlf_1835_0829848458_777xyz_n0874924ncam00230_0a02llj08.img`
 - **Texture:** `nlm_1835_0829848458_777fdr_n0874924ncam00230_0a02llj01.vic`
 
 VISOR (VICAR Institutional Stereo Observation Repository) provides processed M2020
 data products; see [Downloading VISOR Data](downloading-visor-data.md).
+
+### Precondition: the cloud's label must carry the stereo baseline
+
+`marsmesh` reads the stereo baseline out of the XYZ product's VICAR label; it
+does not derive it and this demo does not pass one. A cloud whose label lacks it
+abends with:
+
+```
+Stereo baseline not found in label, must be provided in parameter
+```
+
+**M2020 VISOR XYZ products carry it. MSL NavCam XYZ products from the VISOR
+sample data do not**, so quick mode does not run on files such as
+`NLB_712299404XYZLF0961766NCAM00353M1.IMG`. For MSL clouds, either run the full
+stereo pipeline above (which produces a cloud with the baseline in its label) or
+use [`demo-surface-characteristics.sh`](surface-characteristics.md), whose
+programs do not need the baseline and which does run on those same MSL clouds.
+The two demos' prerequisites are not interchangeable.
 
 ## Running the steps by hand
 

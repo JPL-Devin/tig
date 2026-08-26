@@ -44,7 +44,7 @@ so avoid chaining them with `&&` in scripts.
 ```bash
 tig copy test.vic test_copy.vic
 tig stretch test.vic stretched.vic
-tig label test.vic
+tig label -list inp=test.vic
 tig hist test.vic
 ```
 
@@ -88,7 +88,7 @@ run, see [Mesh Generation](mesh-generation.md).
 ## Step 5: Browse everything available
 
 ```bash
-tig bash -c 'ls /usr/local/bin | wc -l'      # ~545 commands
+tig bash -c 'ls /usr/local/bin | wc -l'      # 546 commands
 tig bash -c 'ls /usr/local/bin | head -20'
 ```
 

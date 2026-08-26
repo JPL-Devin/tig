@@ -48,7 +48,7 @@ tig marsmap input.vic output.vic
 tig marsmap INP=/data/input.vic OUT=output.vic SIZE=(1,1,500,500)
 
 # Absolute paths outside your home directory are translated automatically
-tig label /data/scenes/image.vic
+tig label -list inp=/data/scenes/image.vic
 ```
 
 ### Options
