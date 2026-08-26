@@ -19,7 +19,7 @@ Overview of the Terrain Intelligence Generator system components and VICAR image
 │  │  filter     │  │  marsmap     │  │  PNG→VICAR   │  │
 │  │  lgeom      │  │  marsmos     │  │              │  │
 │  │  hist       │  │  + 68 more   │  │              │  │
-│  │  + 539 more │  │              │  │              │  │
+│  │  + 540 more │  │              │  │              │  │
 │  └─────────────┘  └──────────────┘  └──────────────┘  │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐  │
