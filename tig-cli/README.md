@@ -343,14 +343,15 @@ authorizes the display for you, so you do not have to:
   uses `DISPLAY=host.docker.internal:0` (`host.containers.internal` under
   Podman, `host.lima.internal` under Finch).
 
-An `xhost` authorization belongs to the X server, which restarts far more often
-than the container it serves — an XQuartz update, a logout, quitting it — so
-authorizing only at container creation left users running `xhost` by hand. tig
-instead records which X server it authorized and repeats the authorization when
-that server is no longer the one it has to reach; while the server stays the
-same a command costs one `pgrep` and no `xhost`. Setting `TIG_NO_X11=1` leaves
-the host display alone entirely. Everything here is skipped silently when there
-is no `DISPLAY` or no `xhost` (a headless host has no display to authorize).
+This happens before every command. An `xhost` authorization is the X server's
+own state, and the container outlives the server — an XQuartz update, a logout,
+an `xhost -` — so authorizing only at container creation left users running
+`xhost` by hand afterwards. `xhost` is idempotent and costs milliseconds, so it
+is simply repeated; the slower macOS work (starting XQuartz, reading its
+preferences) is skipped while the X server is the one tig last saw, which it
+remembers in `~/.cache/tig/x11-authorized`. Setting `TIG_NO_X11=1` leaves the
+host display alone entirely. Everything here is skipped silently when there is
+no `DISPLAY` or no `xhost` (a headless host has no display to authorize).
 
 XQuartz reads `nolisten_tcp` only when it starts. If it is already running with
 TCP turned off — how it comes out of an update that reset the preference — tig

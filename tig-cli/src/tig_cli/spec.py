@@ -319,10 +319,9 @@ def _x_socket(display: str) -> str | None:
 def x_server_identity() -> str | None:
     """Something that differs whenever the X server is a different one.
 
-    An ``xhost`` authorization is the server's own state, so it goes when the
-    server restarts - an XQuartz update, a logout, quitting it - while the
-    container lives on. ``None`` means no server was recognized, and the
-    caller should authorize again rather than assume anything.
+    Recognizing the server is what lets the expensive XQuartz checks be
+    skipped while it stays the same. ``None`` means no server was
+    recognized, and the caller should do the work rather than assume.
     """
     display = os.environ.get("DISPLAY", "")
     if sys.platform == "darwin":
@@ -369,10 +368,12 @@ def ensure_x11_ready() -> None:
     """Authorize the host X server so GUI tools (xvd, marsmap) can connect.
 
     Done before every command rather than only when a container is created:
-    the authorization belongs to the X server, which the container outlives,
-    so a restarted server has nobody authorized - the reason users end up
-    running ``xhost`` by hand. While the server stays the same this costs
-    one ``pgrep`` and no ``xhost``.
+    the authorization is the X server's own state, which the container
+    outlives, so anything that drops it - a restart after an XQuartz update,
+    a logout, an ``xhost -`` - leaves the container unable to connect. That
+    is what has users running ``xhost`` by hand. ``xhost`` is idempotent and
+    costs milliseconds, so it is simply repeated; only the pricier XQuartz
+    checks are skipped while the server is the one already seen.
 
     Silently does nothing when there is no display or no ``xhost``; those
     hosts simply have no GUI to authorize.
@@ -385,25 +386,22 @@ def ensure_x11_ready() -> None:
         return
 
     identity = x_server_identity()
-    if identity is not None and identity == _authorized_server():
-        return
-
     if sys.platform == "darwin":
-        # The container reaches XQuartz over TCP via the host gateway name.
-        _ensure_xquartz()
+        if identity is None or identity != _authorized_server():
+            # The container reaches XQuartz over TCP via the host gateway
+            # name, so XQuartz has to be up and listening on it.
+            _ensure_xquartz()
+            # Asked again, since XQuartz may have only just been started.
+            identity = x_server_identity()
         # The address explicitly as well as the name: the connection arrives
         # from the runtime's gateway on IPv4 loopback however localhost
         # happens to resolve.
         authorized = _run_quietly(["xhost", "+localhost", "+inet:127.0.0.1"])
-        # Asked again, since XQuartz may have only just been started.
-        identity = x_server_identity()
     else:
         # The broad form is deliberate: with 'label=disable' the container
         # connects as the LOCAL: family, which '+local:docker' misses.
         authorized = _run_quietly(["xhost", "+local:"])
 
-    # Only a successful xhost is worth remembering; otherwise the next
-    # command has to try again rather than trust a skip.
     if authorized and identity is not None:
         _record_authorized_server(identity)
 

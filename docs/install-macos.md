@@ -119,10 +119,9 @@ the container is given `DISPLAY=host.containers.internal:0`, which routes back
 out of the VM to XQuartz on your Mac.
 
 An XQuartz update or a logout restarts the X server, which drops every `xhost`
-authorization it was holding. TIG notices that the server is no longer the one
-it authorized and authorizes the new one, so running `xhost + 127.0.0.1` by
-hand is not part of using `xvd`. Set `TIG_NO_X11=1` if you would rather manage
-the display yourself.
+authorization it was holding. TIG reauthorizes before every command, so running
+`xhost + 127.0.0.1` by hand is not part of using `xvd`. Set `TIG_NO_X11=1` if
+you would rather manage the display yourself.
 
 Check a window actually opens:
 

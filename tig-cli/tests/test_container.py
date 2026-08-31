@@ -1122,37 +1122,42 @@ def test_x11_setup_authorizes_local_connections_on_linux(host_display):
     assert run.call_args[0][0] == ["xhost", "+local:"]
 
 
-def test_x11_setup_skipped_for_a_server_already_authorized(host_display):
-    """The steady state costs no xhost: the same server is still authorized."""
+def test_x11_setup_authorizes_again_for_every_command(host_display):
+    """Whatever dropped the authorization - a restart, a bare 'xhost -' -
+    the next command puts it back rather than trusting what it saw before."""
     with patch('sys.platform', 'linux'), \
          patch('shutil.which', return_value="/usr/bin/xhost"), \
          patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
          patch('subprocess.run') as run:
         run.return_value = subprocess.CompletedProcess([], 0)
         ensure_x11_ready()
-        first = run.call_count
         ensure_x11_ready()
 
-        assert first == 1
-        assert run.call_count == 1
+    assert [call[0][0] for call in run.call_args_list] == [
+        ["xhost", "+local:"], ["xhost", "+local:"]
+    ]
 
 
-def test_x11_setup_repeated_for_a_restarted_server(host_display):
-    """An X server that restarted authorized nobody; this is the bug."""
-    with patch('sys.platform', 'linux'), \
-         patch('shutil.which', return_value="/usr/bin/xhost"), \
+def test_xquartz_is_only_checked_for_a_server_not_seen_before(host_display):
+    """Starting XQuartz and reading its preferences is the slow part."""
+    with patch('sys.platform', 'darwin'), \
+         patch('shutil.which', return_value="/opt/X11/bin/xhost"), \
          patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
-         patch('subprocess.run') as authorized:
-        authorized.return_value = subprocess.CompletedProcess([], 0)
+         patch('tig_cli.spec._run_quietly', return_value=True), \
+         patch('tig_cli.spec._ensure_xquartz') as xquartz:
+        ensure_x11_ready()
         ensure_x11_ready()
 
-    with patch('sys.platform', 'linux'), \
-         patch('shutil.which', return_value="/usr/bin/xhost"), \
+        assert xquartz.call_count == 1
+
+    with patch('sys.platform', 'darwin'), \
+         patch('shutil.which', return_value="/opt/X11/bin/xhost"), \
          patch('tig_cli.spec.x_server_identity', return_value="server-2"), \
-         patch('subprocess.run') as run:
+         patch('tig_cli.spec._run_quietly', return_value=True), \
+         patch('tig_cli.spec._ensure_xquartz') as restarted:
         ensure_x11_ready()
 
-    assert run.call_args[0][0] == ["xhost", "+local:"]
+        restarted.assert_called_once()
 
 
 def test_x11_setup_can_be_turned_off(host_display, monkeypatch):
