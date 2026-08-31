@@ -1128,6 +1128,7 @@ def test_x11_setup_skipped_for_a_server_already_authorized(host_display):
          patch('shutil.which', return_value="/usr/bin/xhost"), \
          patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
          patch('subprocess.run') as run:
+        run.return_value = subprocess.CompletedProcess([], 0)
         ensure_x11_ready()
         first = run.call_count
         ensure_x11_ready()
@@ -1141,7 +1142,8 @@ def test_x11_setup_repeated_for_a_restarted_server(host_display):
     with patch('sys.platform', 'linux'), \
          patch('shutil.which', return_value="/usr/bin/xhost"), \
          patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
-         patch('subprocess.run'):
+         patch('subprocess.run') as authorized:
+        authorized.return_value = subprocess.CompletedProcess([], 0)
         ensure_x11_ready()
 
     with patch('sys.platform', 'linux'), \
@@ -1174,9 +1176,32 @@ def test_x_server_identity_follows_the_linux_socket(monkeypatch, tmp_path):
         before = spec.x_server_identity()
         socket.unlink()
         socket.write_text("")
+        # A recreated socket can land on the same inode within the same
+        # second, which a restarted server minutes later would not.
+        replaced = os.stat(socket).st_mtime + 60
+        os.utime(socket, (replaced, replaced))
         after = spec.x_server_identity()
 
     assert before is not None and before != after
+
+
+def test_a_network_display_is_never_taken_as_authorized(monkeypatch):
+    """Nothing local says whether a remote server is the one authorized."""
+    monkeypatch.setenv("DISPLAY", "192.168.1.5:0")
+
+    with patch('sys.platform', 'linux'):
+        assert spec.x_server_identity() is None
+
+
+def test_failed_authorization_is_not_remembered(host_display):
+    """A skipped xhost is only safe after one that worked."""
+    with patch('sys.platform', 'linux'), \
+         patch('shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
+         patch('tig_cli.spec._run_quietly', return_value=False):
+        ensure_x11_ready()
+
+        assert spec._authorized_server() is None
 
 
 def test_x_server_identity_follows_the_xquartz_process(monkeypatch):

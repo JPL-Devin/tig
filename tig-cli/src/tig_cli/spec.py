@@ -334,8 +334,9 @@ def x_server_identity() -> str | None:
 
     socket = _x_socket(display)
     if socket is None:
-        # A display reached over the network: nothing local identifies it.
-        return f"{display} remote"
+        # A display reached over the network: nothing local says whether it
+        # is still the server that was authorized.
+        return None
     try:
         info = os.stat(socket)
     except OSError:
@@ -393,15 +394,17 @@ def ensure_x11_ready() -> None:
         # The address explicitly as well as the name: the connection arrives
         # from the runtime's gateway on IPv4 loopback however localhost
         # happens to resolve.
-        _run_quietly(["xhost", "+localhost", "+inet:127.0.0.1"])
+        authorized = _run_quietly(["xhost", "+localhost", "+inet:127.0.0.1"])
         # Asked again, since XQuartz may have only just been started.
         identity = x_server_identity()
     else:
         # The broad form is deliberate: with 'label=disable' the container
         # connects as the LOCAL: family, which '+local:docker' misses.
-        _run_quietly(["xhost", "+local:"])
+        authorized = _run_quietly(["xhost", "+local:"])
 
-    if identity is not None:
+    # Only a successful xhost is worth remembering; otherwise the next
+    # command has to try again rather than trust a skip.
+    if authorized and identity is not None:
         _record_authorized_server(identity)
 
 
