@@ -31,6 +31,7 @@ from .spec import (
     build_run_spec,
     container_carries_builds,
     container_display,
+    ensure_x11_ready,
     forwarded_signals,
     get_calibration_path,
     get_container_image,
@@ -79,6 +80,10 @@ def run(argv: list[str]) -> int | None:
     # program; the full path installs the recorded build into it first.
     if not container_carries_builds(plan.name):
         return None
+
+    # The container is long-lived and the X server is not, so the display is
+    # authorized per command rather than when the container was created.
+    ensure_x11_ready()
 
     claim = Claim()
     claim.acquire(plan.name)

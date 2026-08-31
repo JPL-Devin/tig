@@ -330,8 +330,8 @@ same reason.
 
 ## GUI tools and X11
 
-GUI tools such as `xvd` and `marsmap` render on your host display. When tig
-creates a container it first authorizes the display, so you do not have to:
+GUI tools such as `xvd` and `marsmap` render on your host display. tig
+authorizes the display for you, so you do not have to:
 
 - **Linux** — runs `xhost +local:`. The broad form is deliberate: with
   `label=disable` the container connects as the `LOCAL:` family, which
@@ -339,13 +339,24 @@ creates a container it first authorizes the display, so you do not have to:
   and `/tmp/.X11-unix`, and `DISPLAY` is passed through per command.
 - **macOS** — makes XQuartz listen on TCP
   (`defaults write org.xquartz.X11 nolisten_tcp -bool false`), starts it if it
-  is not running, and runs `xhost +localhost`; the container uses
-  `DISPLAY=host.docker.internal:0` (`host.containers.internal` under Podman,
-  `host.lima.internal` under Finch).
+  is not running, and runs `xhost +localhost +inet:127.0.0.1`; the container
+  uses `DISPLAY=host.docker.internal:0` (`host.containers.internal` under
+  Podman, `host.lima.internal` under Finch).
 
-This happens only when a container is created, not on every command, and is
-skipped silently when there is no `DISPLAY` or no `xhost` (a headless host has
-no display to authorize).
+This happens before every command. An `xhost` authorization is the X server's
+own state, and the container outlives the server — an XQuartz update, a logout,
+an `xhost -` — so authorizing only at container creation left users running
+`xhost` by hand afterwards. `xhost` is idempotent and costs milliseconds, so it
+is simply repeated; the slower macOS work (starting XQuartz, reading its
+preferences) is skipped while the X server is the one tig last saw, which it
+remembers in `~/.cache/tig/x11-authorized`. Setting `TIG_NO_X11=1` leaves the
+host display alone entirely. Everything here is skipped silently when there is
+no `DISPLAY` or no `xhost` (a headless host has no display to authorize).
+
+XQuartz reads `nolisten_tcp` only when it starts. If it is already running with
+TCP turned off — how it comes out of an update that reset the preference — tig
+says so and asks you to quit XQuartz, rather than quitting it under your other
+X clients.
 
 ## SELinux (RHEL, Fedora, CentOS)
 
