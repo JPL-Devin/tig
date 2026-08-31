@@ -113,10 +113,16 @@ which xhost                       # /usr/X11/bin/xhost or /opt/X11/bin/xhost
 
 With XQuartz installed, TIG does the rest of the X11 setup itself on each run:
 it sets `nolisten_tcp` to `false` so XQuartz accepts TCP connections, starts
-XQuartz if it is not already running, and runs `xhost +localhost` to authorize
-the connection. Under Podman the container is given
-`DISPLAY=host.containers.internal:0`, which routes back out of the VM to
-XQuartz on your Mac.
+XQuartz if it is not already running, and runs
+`xhost +localhost +inet:127.0.0.1` to authorize the connection. Under Podman
+the container is given `DISPLAY=host.containers.internal:0`, which routes back
+out of the VM to XQuartz on your Mac.
+
+An XQuartz update or a logout restarts the X server, which drops every `xhost`
+authorization it was holding. TIG notices that the server is no longer the one
+it authorized and authorizes the new one, so running `xhost + 127.0.0.1` by
+hand is not part of using `xvd`. Set `TIG_NO_X11=1` if you would rather manage
+the display yourself.
 
 Check a window actually opens:
 
@@ -128,7 +134,9 @@ XQuartz appears in the Dock and displays the 64×64 test image. Quit the window
 to return to the shell.
 
 > If you changed XQuartz's `Allow connections from network clients` setting by
-> hand, restart XQuartz afterwards — the preference is read at startup.
+> hand, restart XQuartz afterwards — the preference is read at startup. When
+> TIG finds XQuartz already running with TCP off, it says so and asks you to
+> quit it, rather than quitting it under your other X clients.
 
 ## 5. Apple Silicon: x86-64 emulation
 
@@ -176,6 +184,7 @@ prefix, see `tig --shim` in the [tig-cli README](../tig-cli/README.md).
 | `Error: no container runtime found` | The machine is not running, or Podman is not on `PATH`. Run `podman machine start`, then `podman info`. |
 | GUI tool prints `Can't open display` or `Error: Can't open display: ` | XQuartz is missing, or you have not logged out and back in since installing it. Check `echo $DISPLAY` and `which xhost` (step 4). |
 | `xhost: unable to open display` | XQuartz is installed but `DISPLAY` points at a stale socket. Quit XQuartz, open a new terminal, and retry. |
+| GUI tools stopped opening after an XQuartz update | XQuartz came back with TCP connections turned off. TIG rewrites the preference, but it is only read at startup: quit XQuartz and run the command again. |
 | A window opens but is blank or freezes | XQuartz was running before its `nolisten_tcp` setting changed. Quit XQuartz entirely and rerun the command; TIG restarts it. |
 | `exec format error`, `no matching manifest` | No x86-64 emulation in the VM on Apple Silicon (step 5). |
 | VICAR says a file does not exist, though it exists on your Mac | The path is outside your home directory and therefore not shared with the VM. Move the data under `$HOME` or recreate the machine with `-v` (step 2). |

@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime, timezone
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from tig_cli import spec
 from tig_cli.config import Config
 from tig_cli.container import (
     CALIBRATION_MOUNT,
@@ -1100,9 +1101,18 @@ def test_host_root_mount_is_never_relabeled(home_dir, tmp_path):
 
 # --- X11 host setup ---
 
-def test_x11_setup_authorizes_local_connections_on_linux(monkeypatch):
+@pytest.fixture
+def host_display(monkeypatch, tmp_path):
+    """A host with a display and no record of an authorized X server."""
+    home = tmp_path / "x11-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("TIG_NO_X11", raising=False)
+    return home
 
+
+def test_x11_setup_authorizes_local_connections_on_linux(host_display):
     with patch('sys.platform', 'linux'), \
          patch('shutil.which', return_value="/usr/bin/xhost"), \
          patch('subprocess.run') as run:
@@ -1112,7 +1122,78 @@ def test_x11_setup_authorizes_local_connections_on_linux(monkeypatch):
     assert run.call_args[0][0] == ["xhost", "+local:"]
 
 
-def test_x11_setup_skipped_without_a_display(monkeypatch):
+def test_x11_setup_skipped_for_a_server_already_authorized(host_display):
+    """The steady state costs no xhost: the same server is still authorized."""
+    with patch('sys.platform', 'linux'), \
+         patch('shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
+         patch('subprocess.run') as run:
+        ensure_x11_ready()
+        first = run.call_count
+        ensure_x11_ready()
+
+        assert first == 1
+        assert run.call_count == 1
+
+
+def test_x11_setup_repeated_for_a_restarted_server(host_display):
+    """An X server that restarted authorized nobody; this is the bug."""
+    with patch('sys.platform', 'linux'), \
+         patch('shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.spec.x_server_identity', return_value="server-1"), \
+         patch('subprocess.run'):
+        ensure_x11_ready()
+
+    with patch('sys.platform', 'linux'), \
+         patch('shutil.which', return_value="/usr/bin/xhost"), \
+         patch('tig_cli.spec.x_server_identity', return_value="server-2"), \
+         patch('subprocess.run') as run:
+        ensure_x11_ready()
+
+    assert run.call_args[0][0] == ["xhost", "+local:"]
+
+
+def test_x11_setup_can_be_turned_off(host_display, monkeypatch):
+    monkeypatch.setenv("TIG_NO_X11", "1")
+
+    with patch('shutil.which', return_value="/usr/bin/xhost"), \
+         patch('subprocess.run') as run:
+        ensure_x11_ready()
+
+    run.assert_not_called()
+
+
+def test_x_server_identity_follows_the_linux_socket(monkeypatch, tmp_path):
+    """A restarted server leaves a different socket behind."""
+    monkeypatch.setenv("DISPLAY", ":0")
+    socket = tmp_path / "X0"
+    socket.write_text("")
+
+    with patch('sys.platform', 'linux'), \
+         patch('tig_cli.spec._x_socket', return_value=str(socket)):
+        before = spec.x_server_identity()
+        socket.unlink()
+        socket.write_text("")
+        after = spec.x_server_identity()
+
+    assert before is not None and before != after
+
+
+def test_x_server_identity_follows_the_xquartz_process(monkeypatch):
+    monkeypatch.setenv("DISPLAY", "/private/tmp/com.apple.launchd.x/org.xquartz:0")
+
+    with patch('sys.platform', 'darwin'), \
+         patch('tig_cli.spec._output_of', side_effect=["501\n", "777\n", None]):
+        first = spec.x_server_identity()
+        second = spec.x_server_identity()
+        stopped = spec.x_server_identity()
+
+    assert first != second
+    # No server running is no server to recognize, so nothing is skipped.
+    assert stopped is None
+
+
+def test_x11_setup_skipped_without_a_display(host_display, monkeypatch):
     monkeypatch.delenv("DISPLAY", raising=False)
 
     with patch('subprocess.run') as run:
@@ -1121,9 +1202,7 @@ def test_x11_setup_skipped_without_a_display(monkeypatch):
     run.assert_not_called()
 
 
-def test_x11_setup_skipped_without_xhost(monkeypatch):
-    monkeypatch.setenv("DISPLAY", ":0")
-
+def test_x11_setup_skipped_without_xhost(host_display):
     with patch('shutil.which', return_value=None), \
          patch('subprocess.run') as run:
         ensure_x11_ready()
@@ -1131,28 +1210,44 @@ def test_x11_setup_skipped_without_xhost(monkeypatch):
     run.assert_not_called()
 
 
-def test_x11_setup_failure_is_not_fatal(monkeypatch):
-    monkeypatch.setenv("DISPLAY", ":0")
-
+def test_x11_setup_failure_is_not_fatal(host_display):
     with patch('sys.platform', 'linux'), \
          patch('shutil.which', return_value="/usr/bin/xhost"), \
          patch('subprocess.run', side_effect=OSError):
         ensure_x11_ready()  # should not raise
 
 
-def test_x11_setup_prepares_xquartz_on_macos(monkeypatch):
+def test_x11_setup_prepares_xquartz_on_macos(host_display, monkeypatch):
     monkeypatch.setenv("DISPLAY", "/private/tmp/com.apple.launchd.x/org.xquartz:0")
 
     with patch('sys.platform', 'darwin'), \
          patch('shutil.which', return_value="/opt/X11/bin/xhost"), \
          patch('subprocess.run') as run:
-        run.return_value = subprocess.CompletedProcess([], 0)
+        run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="", stderr=""
+        )
         ensure_x11_ready()
 
     commands = [call[0][0] for call in run.call_args_list]
     assert ["defaults", "write", "org.xquartz.X11",
             "nolisten_tcp", "-bool", "false"] in commands
-    assert ["xhost", "+localhost"] in commands
+    # Both families: the container's connection arrives on the loopback
+    # address, whichever way the name resolves.
+    assert ["xhost", "+localhost", "+inet:127.0.0.1"] in commands
+
+
+def test_xquartz_left_refusing_tcp_says_so(host_display, capsys):
+    """An update resets the preference, and it is only read at startup."""
+    with patch('sys.platform', 'darwin'), \
+         patch('tig_cli.spec._tcp_refused', return_value=True), \
+         patch('tig_cli.spec._run_quietly', return_value=True) as run:
+        spec._allow_tcp_connections()
+
+    assert ["defaults", "write", "org.xquartz.X11",
+            "nolisten_tcp", "-bool", "false"] in [
+        call[0][0] for call in run.call_args_list
+    ]
+    assert "Quit XQuartz" in capsys.readouterr().err
 
 
 def test_x11_setup_runs_when_a_container_is_created(home_dir):
@@ -1163,16 +1258,16 @@ def test_x11_setup_runs_when_a_container_is_created(home_dir):
     ready.assert_called_once()
 
 
-def test_x11_setup_skipped_when_a_container_is_reused(home_dir):
-    """Authorizing the display is container setup, not per-command work."""
-    runtime = FakeRuntime()
-    manager = make_manager(home_dir, runtime=runtime)
-    runtime.containers[manager._run_spec([]).container_name()] = described()
+@patch('tig_cli.container.subprocess.Popen')
+def test_x11_setup_runs_for_every_command(mock_popen, home_dir):
+    """The container outlives the X server, so reusing one authorizes nobody."""
+    mock_popen.return_value = Mock(wait=Mock(return_value=0))
+    manager = make_manager(home_dir)
 
     with patch('tig_cli.container.ensure_x11_ready') as ready:
-        manager.ensure_container([])
+        manager.execute_vicar_command("xvd", [])
 
-    ready.assert_not_called()
+    ready.assert_called_once()
 
 
 # --- execute_vicar_command ---
@@ -1211,7 +1306,8 @@ def test_execute_vicar_command_passes_display(mock_popen, home_dir):
     """DISPLAY is passed per exec, so it is not part of container identity."""
     mock_popen.return_value = Mock(wait=Mock(return_value=0))
 
-    with patch.dict(os.environ, {"HOME": home_dir, "DISPLAY": ":7"}):
+    with patch.dict(os.environ, {"HOME": home_dir, "DISPLAY": ":7"}), \
+         patch('tig_cli.container.ensure_x11_ready'):
         manager = make_manager(home_dir)
         with patch('sys.platform', 'linux'):
             manager.execute_vicar_command("xvd", [])

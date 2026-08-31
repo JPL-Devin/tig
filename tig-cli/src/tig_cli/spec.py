@@ -101,6 +101,13 @@ CLAIM_DIR_NAME = "tig-claims"
 # How long to wait for XQuartz to come up on macOS before giving up.
 XQUARTZ_START_TIMEOUT = 5.0
 
+# Names the X server that was authorized last, so a command pays for xhost
+# only when the server it has to reach is not that one any more.
+X11_MARKER = "x11-authorized"
+
+# Set to leave the host display alone entirely.
+DISABLE_X11_ENV = "TIG_NO_X11"
+
 # Where calibration files (VISOR / mars_calibration_*) are mounted, matching
 # the layout VICAR's MARS programs expect.
 CALIBRATION_MOUNT = "/usr/local/vicar/mars_calib"
@@ -214,6 +221,21 @@ def _run_quietly(command: list[str], timeout: float = 10.0) -> bool:
     return completed.returncode == 0
 
 
+def _output_of(command: list[str], timeout: float = 10.0) -> str | None:
+    """Run a host helper command; its output, or None if it failed."""
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
 def selinux_enforcing() -> bool:
     """Whether this host is Linux with SELinux in Enforcing mode.
 
@@ -243,13 +265,38 @@ def selinux_enforcing() -> bool:
     return completed.returncode == 0 and completed.stdout.strip() == "Enforcing"
 
 
+def _tcp_refused() -> bool:
+    """Whether XQuartz is set to refuse the TCP connections tig needs."""
+    value = _output_of(["defaults", "read", "org.xquartz.X11", "nolisten_tcp"])
+    return value is None or value.strip().lower() not in ("0", "false", "no")
+
+
+def _allow_tcp_connections() -> None:
+    """Have XQuartz listen on TCP, which the container's DISPLAY needs.
+
+    The preference is only read at startup, so a running XQuartz that still
+    refuses TCP - how it comes out of an update that reset the preference -
+    is reported rather than quit out from under the user's other clients.
+    """
+    if not _tcp_refused():
+        return
+    _run_quietly(
+        ["defaults", "write", "org.xquartz.X11", "nolisten_tcp", "-bool", "false"]
+    )
+    if _run_quietly(["pgrep", "-x", "Xquartz"]):
+        print(
+            "tig: XQuartz is running with TCP connections turned off, which "
+            "GUI tools in the container need. Quit XQuartz and run the "
+            "command again.",
+            file=sys.stderr,
+        )
+
+
 def _ensure_xquartz() -> None:
     """Make XQuartz running and listening on TCP, as the container needs."""
     import time
 
-    _run_quietly(
-        ["defaults", "write", "org.xquartz.X11", "nolisten_tcp", "-bool", "false"]
-    )
+    _allow_tcp_connections()
     if _run_quietly(["pgrep", "-x", "Xquartz"]):
         return
     if not _run_quietly(["open", "-a", "XQuartz"]):
@@ -261,26 +308,101 @@ def _ensure_xquartz() -> None:
         time.sleep(0.5)
 
 
+def _x_socket(display: str) -> str | None:
+    """The socket file a local ``display`` names, if it is a local one."""
+    host, separator, number = display.rpartition(":")
+    if not separator or host not in ("", "unix") or not number:
+        return None
+    return f"/tmp/.X11-unix/X{number.split('.')[0]}"
+
+
+def x_server_identity() -> str | None:
+    """Something that differs whenever the X server is a different one.
+
+    An ``xhost`` authorization is the server's own state, so it goes when the
+    server restarts - an XQuartz update, a logout, quitting it - while the
+    container lives on. ``None`` means no server was recognized, and the
+    caller should authorize again rather than assume anything.
+    """
+    display = os.environ.get("DISPLAY", "")
+    if sys.platform == "darwin":
+        # The process, since the socket DISPLAY names belongs to launchd and
+        # outlives any one XQuartz.
+        running = _output_of(["pgrep", "-x", "Xquartz"]) or ""
+        pids = running.split()
+        return f"{display} xquartz={pids[0]}" if pids else None
+
+    socket = _x_socket(display)
+    if socket is None:
+        # A display reached over the network: nothing local identifies it.
+        return f"{display} remote"
+    try:
+        info = os.stat(socket)
+    except OSError:
+        return None
+    return f"{display} socket={info.st_ino}:{int(info.st_mtime)}"
+
+
+def _x11_marker() -> Path:
+    return Path(home_directory()) / ".cache" / "tig" / X11_MARKER
+
+
+def _authorized_server() -> str | None:
+    """The server the last authorization was for, if it is still recorded."""
+    try:
+        return _x11_marker().read_text()
+    except OSError:
+        return None
+
+
+def _record_authorized_server(identity: str) -> None:
+    marker = _x11_marker()
+    try:
+        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        marker.write_text(identity)
+    except OSError:
+        pass
+
 
 def ensure_x11_ready() -> None:
     """Authorize the host X server so GUI tools (xvd, marsmap) can connect.
+
+    Done before every command rather than only when a container is created:
+    the authorization belongs to the X server, which the container outlives,
+    so a restarted server has nobody authorized - the reason users end up
+    running ``xhost`` by hand. While the server stays the same this costs
+    one ``pgrep`` and no ``xhost``.
 
     Silently does nothing when there is no display or no ``xhost``; those
     hosts simply have no GUI to authorize.
     """
     import shutil
 
+    if os.environ.get(DISABLE_X11_ENV):
+        return
     if not os.environ.get("DISPLAY") or shutil.which("xhost") is None:
+        return
+
+    identity = x_server_identity()
+    if identity is not None and identity == _authorized_server():
         return
 
     if sys.platform == "darwin":
         # The container reaches XQuartz over TCP via the host gateway name.
         _ensure_xquartz()
-        _run_quietly(["xhost", "+localhost"])
+        # The address explicitly as well as the name: the connection arrives
+        # from the runtime's gateway on IPv4 loopback however localhost
+        # happens to resolve.
+        _run_quietly(["xhost", "+localhost", "+inet:127.0.0.1"])
+        # Asked again, since XQuartz may have only just been started.
+        identity = x_server_identity()
     else:
         # The broad form is deliberate: with 'label=disable' the container
         # connects as the LOCAL: family, which '+local:docker' misses.
         _run_quietly(["xhost", "+local:"])
+
+    if identity is not None:
+        _record_authorized_server(identity)
 
 
 def container_display(runtime: str = "docker") -> str:

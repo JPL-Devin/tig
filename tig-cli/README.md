@@ -330,8 +330,8 @@ same reason.
 
 ## GUI tools and X11
 
-GUI tools such as `xvd` and `marsmap` render on your host display. When tig
-creates a container it first authorizes the display, so you do not have to:
+GUI tools such as `xvd` and `marsmap` render on your host display. tig
+authorizes the display for you, so you do not have to:
 
 - **Linux** — runs `xhost +local:`. The broad form is deliberate: with
   `label=disable` the container connects as the `LOCAL:` family, which
@@ -339,13 +339,23 @@ creates a container it first authorizes the display, so you do not have to:
   and `/tmp/.X11-unix`, and `DISPLAY` is passed through per command.
 - **macOS** — makes XQuartz listen on TCP
   (`defaults write org.xquartz.X11 nolisten_tcp -bool false`), starts it if it
-  is not running, and runs `xhost +localhost`; the container uses
-  `DISPLAY=host.docker.internal:0` (`host.containers.internal` under Podman,
-  `host.lima.internal` under Finch).
+  is not running, and runs `xhost +localhost +inet:127.0.0.1`; the container
+  uses `DISPLAY=host.docker.internal:0` (`host.containers.internal` under
+  Podman, `host.lima.internal` under Finch).
 
-This happens only when a container is created, not on every command, and is
-skipped silently when there is no `DISPLAY` or no `xhost` (a headless host has
-no display to authorize).
+An `xhost` authorization belongs to the X server, which restarts far more often
+than the container it serves — an XQuartz update, a logout, quitting it — so
+authorizing only at container creation left users running `xhost` by hand. tig
+instead records which X server it authorized and repeats the authorization when
+that server is no longer the one it has to reach; while the server stays the
+same a command costs one `pgrep` and no `xhost`. Setting `TIG_NO_X11=1` leaves
+the host display alone entirely. Everything here is skipped silently when there
+is no `DISPLAY` or no `xhost` (a headless host has no display to authorize).
+
+XQuartz reads `nolisten_tcp` only when it starts. If it is already running with
+TCP turned off — how it comes out of an update that reset the preference — tig
+says so and asks you to quit XQuartz, rather than quitting it under your other
+X clients.
 
 ## SELinux (RHEL, Fedora, CentOS)
 
