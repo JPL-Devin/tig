@@ -17,22 +17,10 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# Find calibration files using helper script
+# Source the helper here, but look up calibration after argument parsing so
+# --help is not delayed by the helper's container-image probe.
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"
-    # Guard the assignment: under 'set -e' a failed lookup would otherwise end
-    # the script before the help below is printed.
-    CALIB_DIR=$(find_calibration) || true
-    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
-        echo "ERROR: MARS calibration not found."
-        echo ""
-        echo "A panorama needs it twice over: marsrad reads flat fields and"
-        echo "responsivity from it, and marsmap needs the camera model to know"
-        echo "where each frame points."
-        echo ""
-        print_calibration_help
-        exit 1
-    fi
 else
     # Fallback to default location if helper not found
     CALIB_DIR="$(pwd)/terrain-intelligence-generator/docker/mars_calibration_m20"
@@ -53,6 +41,7 @@ VERT_SCALE=""
 WRAP_AZ=""
 ZOOM=""
 GRID="nogrid"
+BBOX=0
 BRIGHTNESS_MATCH=1
 STRETCH=1
 FRAMES=()
@@ -83,6 +72,7 @@ Options:
   --wrap-az DEG        Azimuth at which a full 360 mosaic is cut
   --zoom FACTOR        Scale relative to the camera's natural scale
   --grid               Draw the az/el grid under the imagery
+  --bbox               Also write each frame's footprint polygon as CSV/WKT
   --no-brightness-match  Skip the marsmap-overlap/marsbrt seam matching
   --no-stretch         Write the PNG without the 2% display stretch
   --help, -h           This message
@@ -102,7 +92,8 @@ Examples:
 
 Requirements:
   - tig-cli installed (pip install tig-cli) and a running Docker daemon
-  - Mission calibration for the instrument (MARS_CONFIG_PATH)
+  - Mission calibration for the instrument: MARS_CONFIG_PATH, or an image
+    that bundles it (CONTAINER_IMAGE=...:fullfeatured)
   - Frames from a single site/drive, overlapping in azimuth
 EOF
   exit 1
@@ -129,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --wrap-az)     require_value "$1" "$2"; WRAP_AZ="$2"; shift 2 ;;
     --zoom)        require_value "$1" "$2"; ZOOM="$2"; shift 2 ;;
     --grid)        GRID="grid"; shift ;;
+    --bbox)        BBOX=1; shift ;;
     --no-brightness-match) BRIGHTNESS_MATCH=0; shift ;;
     --no-stretch)  STRETCH=0; shift ;;
     --help|-h)     print_usage ;;
@@ -159,15 +151,38 @@ if [ "$PROJECTION" = "cylindrical" ]; then
   [ -z "$RIGHTAZ" ] && RIGHTAZ=360
 fi
 
-echo "Using calibration from: $CALIB_DIR"
-if [ ! -d "$CALIB_DIR" ]; then
-  echo "ERROR: Calibration directory not accessible"
-  exit 1
+if declare -f calibration_setup > /dev/null; then
+  # Guard the call: under 'set -e' a failed lookup would otherwise end the
+  # script before the help below is printed.
+  calibration_setup || true
+  if [ -z "$CALIB_DIR" ] && [ -z "$CALIB_IN_IMAGE" ]; then
+    echo "ERROR: MARS calibration not found."
+    echo ""
+    echo "A panorama needs it twice over: marsrad reads flat fields and"
+    echo "responsivity from it, and marsmap needs the camera model to know"
+    echo "where each frame points."
+    echo ""
+    print_calibration_help
+    exit 1
+  fi
 fi
 
-# Resolve before the cd below, where a relative calibration path would not.
-CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
-export MARS_CONFIG_PATH="$CALIB_DIR"
+if [ -n "${CALIB_IN_IMAGE:-}" ]; then
+  # Bundled in the image: nothing to mount, and MARS_CONFIG_PATH must stay
+  # unset, since it is read as a host path to mount.
+  echo "Using calibration ${CALIB_IN_IMAGE_DESC:-already in the container}: $CALIB_IN_IMAGE"
+  unset MARS_CONFIG_PATH
+else
+  echo "Using calibration from: $CALIB_DIR"
+  if [ ! -d "$CALIB_DIR" ]; then
+    echo "ERROR: Calibration directory not accessible"
+    exit 1
+  fi
+
+  # Resolve before the cd below, where a relative calibration path would not.
+  CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
+  export MARS_CONFIG_PATH="$CALIB_DIR"
+fi
 
 # Resolve inputs before changing directory, so relative paths keep working
 abspath() {
@@ -209,7 +224,8 @@ cd "$WORKSPACE"
 # outputs would make a failure look like success.
 rm -rf panorama_rad
 rm -f panorama_frames.txt panorama_overlaps.xml panorama_overlap_mosaic.img \
-      panorama_brtcorr.xml panorama.img panorama_stretched.img panorama.png
+      panorama_brtcorr.xml panorama.img panorama_stretched.img panorama.png \
+      panorama_bbox.csv
 
 # Step 1: Radiometric correction. marsmap would do this itself, but a separate
 # step keeps the corrected frames for marsbrt and for further mosaics.
@@ -290,6 +306,7 @@ echo "Step 4: Building the mosaic (marsmap)..."
 MAP_ARGS=(inp=panorama_frames.txt out=panorama.img -norad "-$GRID" "${PROJ_ARGS[@]}")
 [ -f panorama_brtcorr.xml ] && MAP_ARGS+=(brtcorr=panorama_brtcorr.xml)
 [ -n "$ZOOM" ] && MAP_ARGS+=(zoom="$ZOOM")
+[ "$BBOX" -eq 1 ] && MAP_ARGS+=(bbox=panorama_bbox.csv)
 
 tig marsmap "${MAP_ARGS[@]}" 2>&1 |
   grep -E "Projection|Pixel scale|azimuth of first sample|line of zero elevation|Output lines" || true
@@ -299,6 +316,15 @@ if [ ! -f panorama.img ]; then
   exit 1
 fi
 echo "  ✓ panorama.img"
+if [ "$BBOX" -eq 1 ]; then
+  if [ -f panorama_bbox.csv ]; then
+    # A frame gets two rows when its footprint straddles the wrap azimuth, and
+    # the polygon gains three points closing it to the edge over a pole.
+    echo "  ✓ panorama_bbox.csv ($(($(wc -l < panorama_bbox.csv) - 1)) polygons for ${#FRAMES[@]} frames)"
+  else
+    echo "  ⚠ WARNING: marsmap wrote no bounding-box file"
+  fi
+fi
 echo ""
 
 # Step 5: PNG. The mosaic holds scaled radiance and a Mars scene uses little of

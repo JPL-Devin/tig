@@ -1,0 +1,70 @@
+name: Terrain Product Tests
+
+# build-publish-terrain-intelligence-generator.yml runs these same tests against
+# the image it builds; this covers the other half - a change to the test script
+# alone does not touch the Dockerfile, so it is tested here against the
+# published image instead of triggering the hour-long rebuild. Publishes nothing.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'terrain-intelligence-generator/test-product-pipeline.sh'
+      - 'terrain-intelligence-generator/test-marsirough-abend.sh'
+      - '.github/workflows/product-tests.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - 'terrain-intelligence-generator/test-product-pipeline.sh'
+      - 'terrain-intelligence-generator/test-marsirough-abend.sh'
+      - '.github/workflows/product-tests.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image to test'
+        required: false
+        default: 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource'
+
+jobs:
+  product-tests:
+    name: Terrain products from a synthetic stereo pair
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run terrain product tests
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource' }}
+        run: |
+          docker pull "${IMAGE_TAG}"
+          time ./terrain-intelligence-generator/test-product-pipeline.sh "${IMAGE_TAG}"
+
+      # Exits 0 while the abend reproduces and 1 once it stops, so a fixed
+      # image is what turns this red - see docs/demos/surface-characteristics.md.
+      - name: Check the marsirough abend still reproduces
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource' }}
+        run: ./terrain-intelligence-generator/test-marsirough-abend.sh "${IMAGE_TAG}"
+
+      - name: Summary
+        if: always()
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || 'ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource' }}
+        run: |
+          {
+            echo "## Terrain product tests"
+            echo ""
+            echo "- Image: \`${IMAGE_TAG}\`"
+            echo "- Fixture: synthetic stereo pair built in-image, no calibration"
+            echo "- Calibration is not exercised here; see the Real Calibration Demo workflow"
+          } >> "$GITHUB_STEP_SUMMARY"

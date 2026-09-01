@@ -19,7 +19,7 @@ workflows are supplied. Every tool is an ordinary command, so terrain
 generation can be automated as ordinary scripts or workflow tasks.
 
 It packages VICAR — NASA JPL's general-purpose image processing system, used on
-planetary missions since the 1960s — as a container image with ~546 commands
+planetary missions since the 1960s — as a container image with 546 commands
 (74 of them the mission-specific `mars*` terrain programs), plus
 [`tig`](tig-cli/README.md), a CLI that runs any of them from your own shell as
 if they were installed locally. Products come out in interchange formats
@@ -49,11 +49,13 @@ The [mesh generation demo](docs/demos/mesh-generation.md) runs the stereo →
 disparity → XYZ → mesh path end to end on Mars 2020 NavCam pairs, and the
 [Airflow example](examples/airflow-k8s-pipeline/README.md) runs the same path as
 scheduled tasks. The [surface characteristics demo](docs/demos/surface-characteristics.md)
-takes that XYZ and derives slope, roughness, surface normals and placement
-goodness. `marsgreach`, which collapses arm reachability into the goodness
-raster used for traversability assessment, is in the image but its 6-band
-reachability input is produced by a mission program that is not, so it stays
-an available program rather than a demonstrated workflow.
+takes that XYZ and derives slope, roughness, surface normals and the placement
+goodness raster that `marsigood` builds from tilt and roughness (step 7 of that
+demo). The separate reachability goodness raster comes from `marsgreach`, which
+is in the image but only runs when the demo is given `--reach` with a 6-band arm
+reachability product; that product is produced by a mission program that is not
+in the image, so `marsgreach` stays an available program rather than a
+demonstrated workflow.
 
 ### Orbital Mapping and Monitoring
 
@@ -109,8 +111,9 @@ in the image; metadata retention here means VICAR-label retention.
 
 ### General image processing
 
-~546 commands for enhancement (`stretch`, `filter`), geometry (`geom`, `rotate`,
-`size`), analysis (`hist`, `list`, `label`) and arithmetic (`f2`).
+546 commands for enhancement (`stretch`, `filter`), geometry (`size`, `lgeom`,
+`mgeom`, `polygeom`, `rotate2`), analysis (`hist`, `list`, `label`) and
+arithmetic (`f2`).
 
 ### Automation
 
@@ -126,17 +129,21 @@ tens of milliseconds rather than a container start.
 So the scope is unambiguous:
 
 - No telemetry ingest or depacketization; inputs are instrument image products.
-- No MMGIS, ASTTRO or Astria adapter, exporter or tiling recipe. TIG writes
-  interchange formats those tools can consume; connecting them is up to you.
+- No ASTTRO or Astria adapter, exporter or tiling recipe. TIG writes interchange
+  formats those tools can consume; connecting them is up to you. MMGIS is the
+  exception: [`examples/mmgis-integration/`](examples/mmgis-integration/README.md)
+  is a worked export and tiling recipe that was run end to end.
 - No PDS4 reader or writer.
 - No change-detection program; change monitoring is a composed workflow.
 - No calibration data in the base image (the `:visor-<mission>` variants bundle
   it per mission).
 - No worked example for `marsgreach` reachability, whose input-producing program
-  is not in the image — the program is present, the demo is not. Automated checks
-  cover the CLI, format conversion, and the presence of the MARS commands; the
-  end-to-end product paths that are demonstrated are the mesh, panorama mosaic,
-  surface characteristics and co-registration demos, and the Airflow example.
+  is not in the image — the program is present, the demo is not. The image
+  smoke test (`terrain-intelligence-generator/test-docker-image.sh`) covers the
+  CLI, container layout, format conversion and the presence of a handful of
+  command names; it runs no MARS terrain program. The end-to-end product paths
+  that are demonstrated are the mesh, panorama mosaic, surface characteristics,
+  co-registration and change-monitoring demos, and the Airflow example.
 
 ## Quick Start
 
@@ -185,7 +192,9 @@ so GUI tools such as `xvd` display on your desktop.
 The container image: VICAR built from the
 [NASA-AMMOS/VICAR](https://github.com/NASA-AMMOS/VICAR) open-source releases,
 plus the Java `vicario` converter. Published as
-`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`.
+`ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`. Release
+sign-off runs `terrain-intelligence-generator/test-release-regression.sh`, which
+replays the demos on real VISOR frames and reports every product with an image.
 
 📁 `terrain-intelligence-generator/` · 📖 [README](terrain-intelligence-generator/README.md)
 
@@ -193,15 +202,34 @@ plus the Java `vicario` converter. Published as
 
 VICAR Institutional Stereo Observation Repository — camera calibration files for
 M20, MSL, MER and other missions. Not bundled in the base image; mount it at
-runtime, or use a `:visor-<mission>` image variant that bundles it.
+runtime, or use a `:visor-<mission>` or `:fullfeatured` image variant that
+bundles it.
+
+`./fetch-calibration.sh --list` shows what the VICAR release publishes and
+`./fetch-calibration.sh m20` downloads, verifies and installs it; the demos offer
+this themselves when they find no calibration.
 
 📖 [Downloading VISOR Data](docs/demos/downloading-visor-data.md) · [Calibration Data](docs/reference/calibration-data.md)
+
+### Fullfeatured image variant
+
+The base image plus M20 VISOR calibration, so MARS calibration-dependent
+programs run with nothing downloaded and nothing mounted. Opt-in via
+`CONTAINER_IMAGE`; the tig default image is unchanged.
+
+📁 `terrain-intelligence-generator/fullfeatured/` · 📖 [README](terrain-intelligence-generator/README.md#fullfeatured-variant)
 
 ### Demos
 
 📁 `demo-mesh-generation-with-xyz.sh` · 📖 [Mesh Generation](docs/demos/mesh-generation.md) · [Command Reference](docs/demos/commands.md)
 
 📁 `demo-surface-characteristics.sh` · 📖 [Surface Characteristics](docs/demos/surface-characteristics.md)
+
+📁 `demo-panorama-mosaic.sh` · 📖 [Panorama Mosaic](docs/demos/panorama-mosaic.md)
+
+📁 `demo-co-registration.sh` · 📖 [Co-registration](docs/demos/co-registration.md)
+
+📁 `demo-change-monitoring.sh` · 📖 [Change Monitoring](docs/demos/co-registration.md#change-monitoring) (documented with co-registration, whose pointing solution it consumes)
 
 ## Documentation
 
@@ -210,12 +238,13 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 - **[Mesh Generation Demo](docs/demos/mesh-generation.md)** - Step-by-step mesh creation
 - **[Panorama Mosaic Demo](docs/demos/panorama-mosaic.md)** - 360-degree in-situ NavCam panorama
 - **[Surface Characteristics Demo](docs/demos/surface-characteristics.md)** - Slope, roughness, normals and goodness from an XYZ cloud
-- **[Co-registration Demo](docs/demos/co-registration.md)** - Tiepoints, pointing correction, and composing change monitoring
+- **[Co-registration Demo](docs/demos/co-registration.md)** - Tiepoints, pointing correction, and the two-epoch change product composed from them
 - **[Command Reference](docs/demos/commands.md)** - Tour of the VICAR toolset
 - **[Vicario Reference](docs/reference/vicario.md)** - Image format conversion
 - **[Calibration Data](docs/reference/calibration-data.md)** - Mounting MARS/VISOR files
 - **[Architecture](docs/architecture/components.md)** - How the pieces fit together
 - **[Airflow + Kubernetes Pipeline](examples/airflow-k8s-pipeline/README.md)** - Event-driven terrain mesh generation example
+- **[MMGIS Integration](examples/mmgis-integration/README.md)** - Getting a TIG mosaic and mesh onto a map in NASA-AMMOS MMGIS
 
 ## Key Tools
 
@@ -241,12 +270,13 @@ runtime, or use a `:visor-<mission>` image variant that bundles it.
 | `gen` | Generate test images | Development |
 | `stretch` | Contrast adjustment | Enhancement |
 | `filter` | Spatial filtering | Enhancement |
-| `geom` | Geometric transformation | Geometric |
+| `size` | Resample / zoom | Geometric |
+| `rotate2` + `lgeom` | Rotation: `rotate2` writes the transform, `lgeom` applies it | Geometric |
 | `hist` | Histogram analysis | Analysis |
-| `label` | VICAR metadata viewer | Metadata |
+| `label -list inp=<file>` | VICAR metadata viewer (TAE proc: the subcommand is a flag) | Metadata |
 | `f2` | Image arithmetic | Mathematical |
 
-*Representative examples out of ~546 commands; `tig bash -c 'ls /usr/local/bin'`
+*Representative examples out of 546 commands; `tig bash -c 'ls /usr/local/bin'`
 lists them all.*
 
 ### Exit Codes
@@ -275,18 +305,26 @@ raw code.
 - 8GB RAM minimum (16GB recommended for high-res meshes)
 - Linux, macOS (including Apple Silicon, via emulation), or Windows with WSL2
 
+On macOS, see [Installing on macOS](docs/install-macos.md) for the Podman and
+XQuartz setup the GUI tools need.
+
 ## Project Structure
 
 ```
 tig/
 ├── demo-mesh-generation-with-xyz.sh    # Mesh demo (stereo pair or pre-computed XYZ)
 ├── demo-surface-characteristics.sh     # Slope, roughness, normals and goodness from XYZ
+├── demo-panorama-mosaic.sh             # 360-degree in-situ NavCam panorama mosaic
+├── demo-co-registration.sh             # Tiepoints and pointing correction
+├── demo-change-monitoring.sh           # Two-epoch change product from registered frames
 ├── find-calibration.sh                 # Calibration helper
+├── fetch-calibration.sh                # Download open-source VISOR calibration
 ├── tig-cli/                            # The tig command-line client (PyPI: tig-cli)
 ├── terrain-intelligence-generator/     # Container image: Dockerfile, vicario, build/test
 ├── QUICKSTART.md                       # Common workflows end to end
 ├── examples/
-│   └── airflow-k8s-pipeline/           # Airflow + Kubernetes terrain pipeline example
+│   ├── airflow-k8s-pipeline/           # Airflow + Kubernetes terrain pipeline example
+│   └── mmgis-integration/              # TIG products as MMGIS layers
 └── docs/
     ├── demos/                          # Demo guides
     ├── architecture/                   # System design

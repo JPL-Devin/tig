@@ -52,72 +52,11 @@ ENV MARS_CONFIG_PATH=/usr/local/vicar/mars_calib:/usr/local/vicar/mars_calib/m20
 
 ENV VISOR_MISSIONS=${VISOR_MISSIONS}
 
-# Pinned digests of the release assets, kept in the image as provenance.
+# Pinned digests of the release assets, kept in the image as provenance, and
+# the installer, shared with fullfeatured/Dockerfile.
 COPY calibration.sha256 /usr/local/share/visor-calibration.sha256
+COPY install-visor-calibration.sh /usr/local/libexec/install-visor-calibration.sh
 
-# Download, verify, extract and delete the archives in a single layer:
-# compressed calibration is the same order of magnitude as extracted
-# calibration, so leaving the downloads in an earlier layer would nearly
-# double the image. Every part is checked against its pinned digest before
-# anything is extracted, and an asset with no pinned digest fails the build.
-RUN set -eu; \
-    base_url="https://github.com/NASA-AMMOS/VICAR/releases/download/${VICAR_VERSION}"; \
-    checksums=/usr/local/share/visor-calibration.sha256; \
-    staging=/tmp/visor-staging; \
-    downloads=/tmp/visor-downloads; \
-    mkdir -p "${VISOR_CALIB}"; \
-    for mission in ${VISOR_MISSIONS}; do \
-        asset="visor_calibration_${VISOR_CALIBRATION_DATE}_${mission}.tar.gz"; \
-        url="${base_url}/${asset}"; \
-        if curl -fsIL -o /dev/null "${url}"; then \
-            names="${asset}"; \
-        else \
-            names=""; \
-            for suffix in ${VISOR_SPLIT_SUFFIXES}; do \
-                curl -fsIL -o /dev/null "${url}${suffix}" || break; \
-                names="${names} ${asset}${suffix}"; \
-            done; \
-        fi; \
-        if [ -z "${names}" ]; then \
-            echo "No release asset ${asset}, whole or split, in VICAR ${VICAR_VERSION}" >&2; \
-            exit 1; \
-        fi; \
-        rm -rf "${staging}" "${downloads}"; mkdir -p "${staging}" "${downloads}"; \
-        parts=""; \
-        for name in ${names}; do \
-            expected=$(awk -v n="${name}" '$2 == n { print $1 }' "${checksums}"); \
-            if [ -z "${expected}" ]; then \
-                echo "No pinned SHA-256 for ${name}; regenerate calibration.sha256" >&2; \
-                exit 1; \
-            fi; \
-            echo "Fetching ${base_url}/${name}"; \
-            curl -fsSL -o "${downloads}/${name}" "${base_url}/${name}"; \
-            echo "${expected}  ${downloads}/${name}" | sha256sum -c - > /dev/null \
-                || { echo "SHA-256 mismatch for ${name}" >&2; exit 1; }; \
-            parts="${parts} ${downloads}/${name}"; \
-        done; \
-        cat ${parts} | tar -xz -C "${staging}"; \
-        rm -rf "${downloads}"; \
-        if [ -d "${staging}/calibration/${mission}" ]; then \
-            mv "${staging}/calibration/${mission}" "${VISOR_CALIB}/${mission}"; \
-        else \
-            mkdir -p "${VISOR_CALIB}/${mission}"; \
-            mv "${staging}"/* "${VISOR_CALIB}/${mission}/"; \
-        fi; \
-        rm -rf "${staging}"; \
-        echo "${mission}: $(du -sh "${VISOR_CALIB}/${mission}" | cut -f1) extracted"; \
-    done; \
-    chmod -R a+rX "${VISOR_CALIB}"
-
-# Fail the build rather than publish an image whose calibration the tools
-# would not find
-RUN set -eu; \
-    for mission in ${VISOR_MISSIONS}; do \
-        test -d "${VISOR_CALIB}/${mission}/camera_models" \
-            || { echo "No camera models for ${mission}" >&2; exit 1; }; \
-        case ":${MARS_CONFIG_PATH}:" in \
-            *":${VISOR_CALIB}/${mission}:"*) ;; \
-            *) echo "${mission} is not on MARS_CONFIG_PATH" >&2; exit 1;; \
-        esac; \
-    done; \
-    echo "VISOR calibration bundled: ${VISOR_MISSIONS} ($(du -sh "${VISOR_CALIB}" | cut -f1))"
+# One layer: the installer downloads, verifies, extracts and deletes each
+# archive, then asserts the result is on MARS_CONFIG_PATH.
+RUN /usr/local/libexec/install-visor-calibration.sh ${VISOR_MISSIONS}

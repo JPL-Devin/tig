@@ -98,6 +98,18 @@ def test_path_translation_can_be_disabled(host, engine, monkeypatch):
     assert command == ["vicar", "INP=/data/in.img"]
 
 
+def test_authorizes_the_display_before_the_command(host, engine, monkeypatch):
+    """The warm path is where a GUI tool meets an X server it never told
+    about itself: the container it reuses was authorized for an older one."""
+    order = []
+    monkeypatch.setattr(fast, "ensure_x11_ready", lambda: order.append("xhost"))
+    engine.exec_command.side_effect = lambda *a, **k: order.append("exec") or 0
+
+    fast.run(["xvd", "in.img"])
+
+    assert order == ["xhost", "exec"]
+
+
 def test_claims_the_container_while_it_runs(host, engine):
     claimed = []
     engine.exec_command.side_effect = lambda *a, **k: claimed.append(

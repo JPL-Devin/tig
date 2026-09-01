@@ -12,9 +12,14 @@ builder/vicar-build        vimake + make for one unit, run inside the builder im
 build-opensource-image.sh  Local build, mirrors CI
 build-builder-image.sh     Local build of the builder image (not published)
 test-docker-image.sh       Smoke tests, mirrors CI
+test-release-regression.sh Release-only visual regression on real VISOR data
 visor/Dockerfile           VISOR calibration variants, built FROM the base image
+visor/install-visor-calibration.sh  Calibration download/verify/extract, shared by both variants
 build-visor-image.sh       Local variant build, mirrors CI
 test-visor-image.sh        Variant smoke tests, mirrors CI
+fullfeatured/Dockerfile    Batteries-included variant (base image + M20 calibration)
+build-fullfeatured-image.sh Local fullfeatured build, mirrors CI
+test-fullfeatured-image.sh  Fullfeatured smoke tests, mirrors CI
 ```
 
 ## Using the published image
@@ -48,15 +53,92 @@ Build time is 5-10 minutes, mostly download.
 ./test-docker-image.sh terrain-intelligence-generator:opensource
 ```
 
+This is a smoke test of the container, not of terrain processing. Its 15 tests
+check that:
+
+- the container starts, the image layout and the VICAR environment variables are
+  as expected, and the wrappers under `/usr/local/bin` have the expected form;
+- seven command names are present and executable — `gen`, `list`, `copy`,
+  `stretch`, `vicario`, `marsmap`, `marsmos` — plus `marsautotie` and
+  `marscor3`, i.e. four of the 74 `mars*` tools;
+- `gen`, `list`, `copy` and `stretch` actually run;
+- `vicario` converts a VICAR image to PNG and to JPEG;
+- VISOR calibration data is *not* bundled in the base image;
+- the `docker exec` pattern works, files persist in the container, and
+  directories are flattened as the wrappers expect;
+- the wrapper and `mars*` counts are printed for the record (546 entries, 74 of
+  them `mars*`) without being asserted;
+- MPI-linked MARS programs (`marsmap`, `marscor2`, `marsint`, `marsremos`)
+  start far enough to reach TAE argument checking instead of dying on a signal.
+
+No MARS terrain program is ever executed on data: nothing here produces a
+disparity map, point cloud, mesh or mosaic. Those paths are covered by the
+release visual regression below.
+
 These are the same checks CI runs in
 [`build-publish-terrain-intelligence-generator.yml`](../.github/workflows/build-publish-terrain-intelligence-generator.yml),
 which builds, tests and publishes to GHCR on pushes to `main`/`develop` and on
 version tags.
 
+### Release visual regression
+
+`test-release-regression.sh` is the release gate: it runs the shipped demo
+pipelines on real MSL Navcam frames, asserts on the content of every product,
+and writes a `report.md` with the generated PNGs embedded, so a release can be
+signed off by looking at the imagery.
+
+```bash
+./test-release-regression.sh                        # published image, ~/visor_data
+./test-release-regression.sh <image-tag> --download --out-dir ./rr
+```
+
+Data is the pinned public VICAR 5.0 VISOR sample data plus the MSL calibration
+(740 MB + 380 MB compressed, 1.8 GB on disk); `--download` fetches both into the
+data root, so it cannot be combined with a custom `--calibration`. Missing
+data or calibration is a hard failure carrying the exact `curl` command to fix
+it, never a silent skip. Runtime is ~7 minutes, ~6 of them the full-frame
+`marscorr`.
+
+| Stage | Pipeline | Assertion |
+| --- | --- | --- |
+| `radiometric-correction` | `marsrad` frames from the mosaic run | one corrected frame per input, DN scale changed, contrast retained |
+| `cylindrical-mosaic` | `demo-panorama-mosaic.sh --auto-extent` | mosaic dimensions and a non-degenerate histogram |
+| `polar-mosaic` | `demo-panorama-mosaic.sh --projection polar` | square projection above a size floor, non-degenerate histogram |
+| `stereo-xyz` | `marscorr` -> `marscor3` -> `marsxyz` | 2-band disparity with real spread, valid XYZ point count, 3-band cloud |
+| `mesh` | `demo-mesh-generation-with-xyz.sh --xyz` | vertex and face counts, every coordinate finite and within 1e6 m |
+| `surface-characteristics` | `demo-surface-characteristics.sh` | products share the XYZ grid, slope in degrees, roughness a small height that actually varies (a raster of the 0.1 m "could not compute" fill fails), both normals fields written |
+| `co-registration` | `demo-co-registration.sh` plus a difference raster | tiepoints kept, mean pixel error improved and under tolerance, non-zero difference raster |
+
+Bounds are floors and ranges taken from an observed run and commented with the
+value seen, not golden images: VICAR residuals do not reproduce bit for bit
+between runs, so an exact-match comparison would be flaky.
+
+Not demonstrated by the suite, and reported as UNVERIFIED in its report rather
+than omitted:
+
+- **change-monitoring** — needs `demo-change-monitoring.sh`; the stage runs
+  automatically once that demo is in the tree.
+- **the demos' built-in stereo path** — `demo-mesh-generation-with-xyz.sh
+  --stereo-left/--stereo-right` relies on `marscorr`'s default seed, which
+  reports "No valid seed points found" on these Navcam frames. The suite seeds
+  the frame centre itself and feeds the resulting cloud to the demo's `--xyz`
+  path.
+- **M20 frames** — the suite is MSL-only, because M20 calibration is 2.7 GB
+  across two release assets.
+
+CI runs
+[`release-visual-regression.yml`](../.github/workflows/release-visual-regression.yml)
+from the publish workflow's `create-release` job on a `v*` tag (a release cut
+with `GITHUB_TOKEN` raises no `release` event), on a published release, and on
+`workflow_dispatch` — never on pull requests
+or ordinary pushes — and uploads `report.md` and every PNG as an artifact. On a
+release it tests the image tagged with that release's version, warning and
+falling back to `:opensource` when the release published no image.
+
 ## What is in the image
 
 - VICAR core (p2 programs), TAE, MARS terrain tools and supporting libraries
-- ~540 command wrappers in `/usr/local/bin`
+- 546 command wrappers in `/usr/local/bin` (74 of them `mars*`)
 - Oracle Linux 8, Python 3.9, Java 8 runtime, X11 libraries, libtiff/libpng/libjpeg
 
 Environment set by the image:
@@ -116,6 +198,8 @@ On `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator`:
 - `:main`, `:develop` — branch builds
 - `:v*` — version tags
 - `:visor-<mission>` — base image plus one mission's VISOR calibration (below)
+- `:fullfeatured` — base image plus M20 calibration, ready to run with nothing
+  mounted (below)
 
 ## Troubleshooting
 
@@ -232,6 +316,80 @@ bundled data lives in a per-mission subdirectory
 mission's files directly; `MARS_CONFIG_PATH` lists the mount point first and
 each mission directory after it, and MARS `CONFIG_PATH` entries that do not
 exist are skipped. Both layouts therefore resolve, with the mount winning.
+
+## Fullfeatured variant
+
+`:fullfeatured` is the one-image answer to "what do I pull to just run
+something?": the published base image plus M20 VISOR calibration, on
+`MARS_CONFIG_PATH`, with no download, no mount and no environment variable to
+set.
+
+```bash
+CONTAINER_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:fullfeatured \
+  tig marsrad NLF_0300_0693569889_022FDR_N0090000NCAM00501_0A0295J01.IMG out.RAD.IMG
+```
+
+| Tag | Missions bundled | Image size |
+| --- | --- | --- |
+| `:fullfeatured` | `m20` (default) | 8.75 GB |
+| `:fullfeatured-msl` | `msl` | 3.68 GB |
+
+It bundles calibration and nothing else, because nothing else is missing. Every
+program the shipped demos invoke - `marsrad`, `marsnav`, `marsmap`, `marsmos`,
+`marsbrt`, `marsxyz`, `marsmesh`, `stretch`, `vicario`, `obj2gltf`, `obj2plane`,
+`marstile` - is already in the base image, and the demo scripts run on the host
+through `tig`, not inside the image. Adding packages would only undo the
+slimming that took the base image from ~8GB to ~2GB, so no package is added.
+
+That makes `:fullfeatured` the same content as `:visor-m20` under a name that
+says what it is for, plus a mission default (`m20`) chosen because the demos and
+docs are written around M20 NavCam products. `VISOR_MISSIONS` is a
+space-separated build argument exactly as in `visor/Dockerfile`, so a
+multi-mission image needs no separate definition.
+
+The variant is opt-in. `tig`'s default image is unchanged
+(`:opensource`); select this one per invocation with `CONTAINER_IMAGE`, or
+permanently with the `image` key in `~/.config/tig/config.toml`.
+
+### Building and testing it locally
+
+```bash
+./build-fullfeatured-image.sh                        # m20, tag :fullfeatured
+./build-fullfeatured-image.sh msl                    # tag :fullfeatured-msl
+./build-fullfeatured-image.sh "m20 msl" tig:ff-both
+./test-fullfeatured-image.sh terrain-intelligence-generator:fullfeatured
+```
+
+The tests assert the bundled calibration exists for every mission in
+`VISOR_MISSIONS`, that `MARS_CONFIG_PATH` covers them, that no compressed
+archive survived into the image, that a calibration mount overrides the bundled
+data, and that every program the shipped demo scripts invoke is present. These
+are the checks CI runs in
+[`build-publish-fullfeatured.yml`](../.github/workflows/build-publish-fullfeatured.yml).
+
+### Running a demo against it
+
+MARS programs run against this image with no calibration anywhere on the host:
+`marsrad` reports the camera model it loaded from
+`/usr/local/vicar/mars_calib/<mission>/camera_models/`.
+
+The shipped `demo-*.sh` scripts work the same way, with nothing mounted:
+`find-calibration.sh` falls back to probing this image when it finds no host
+calibration, and the demos then leave `MARS_CONFIG_PATH` unset so the bundled
+data is not shadowed:
+
+```bash
+CONTAINER_IMAGE=ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:fullfeatured \
+  ./demo-panorama-mosaic.sh frames/*.IMG
+```
+
+### Overriding the bundled calibration
+
+Identical to the VISOR variants: a host calibration path is mounted read-only
+at `/usr/local/vicar/mars_calib` and hides the bundled data completely. Note
+that this hides `flat_fields/` too, which is nearly all of M20's 5.3 GB
+(`camera_models/` and `param_files/` together are 1.3 MB), so a partial host
+copy is not a way to keep the bundled radiometry.
 
 ## License
 

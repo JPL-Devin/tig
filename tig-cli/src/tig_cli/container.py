@@ -597,6 +597,10 @@ class ContainerManager:
         Returns:
             Exit code from command execution
         """
+        # Per command, not per container: the authorization belongs to the X
+        # server, which restarts far more often than the container does.
+        ensure_x11_ready()
+
         if self.disable_path_translation:
             translated_args = args
             container_cwd = os.getcwd()

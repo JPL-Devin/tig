@@ -17,18 +17,10 @@ if ! command -v tig &> /dev/null; then
   exit 1
 fi
 
-# Find calibration files using helper script
+# Source the helper here, but look up calibration after argument parsing so
+# --help is not delayed by the helper's container-image probe.
 if [ -f "$SCRIPT_DIR/find-calibration.sh" ]; then
     source "$SCRIPT_DIR/find-calibration.sh"
-    # Guard the assignment: under 'set -e' a failed lookup would otherwise end
-    # the script before the help below is printed.
-    CALIB_DIR=$(find_calibration) || true
-    if [ -z "$CALIB_DIR" ] || ! verify_calibration "$CALIB_DIR"; then
-        echo "ERROR: MARS calibration not found."
-        echo ""
-        print_calibration_help
-        exit 1
-    fi
 else
     # Fallback to default location if helper not found
     CALIB_DIR="$(pwd)/terrain-intelligence-generator/docker/mars_calibration_m20"
@@ -113,17 +105,36 @@ if [ -n "$STEREO_RIGHT" ] && [ -z "$STEREO_LEFT" ]; then
 fi
 
 # Verify calibration exists
-echo "Using calibration from: $CALIB_DIR"
-if [ ! -d "$CALIB_DIR" ]; then
-  echo "ERROR: Calibration directory not accessible"
-  exit 1
+if declare -f calibration_setup > /dev/null; then
+  # Guard the call: under 'set -e' a failed lookup would otherwise end the
+  # script before the help below is printed.
+  calibration_setup || true
+  if [ -z "$CALIB_DIR" ] && [ -z "$CALIB_IN_IMAGE" ]; then
+    echo "ERROR: MARS calibration not found."
+    echo ""
+    print_calibration_help
+    exit 1
+  fi
 fi
 
-# tig mounts this read-only at /usr/local/vicar/mars_calib and points the MARS
-# programs at it. Resolve it now: tig runs from the workspace directory below,
-# where a relative calibration path would no longer resolve.
-CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
-export MARS_CONFIG_PATH="$CALIB_DIR"
+if [ -n "${CALIB_IN_IMAGE:-}" ]; then
+  # Bundled in the image: nothing to mount, and MARS_CONFIG_PATH must stay
+  # unset, since it is read as a host path to mount.
+  echo "Using calibration ${CALIB_IN_IMAGE_DESC:-already in the container}: $CALIB_IN_IMAGE"
+  unset MARS_CONFIG_PATH
+else
+  echo "Using calibration from: $CALIB_DIR"
+  if [ ! -d "$CALIB_DIR" ]; then
+    echo "ERROR: Calibration directory not accessible"
+    exit 1
+  fi
+
+  # tig mounts this read-only at /usr/local/vicar/mars_calib and points the MARS
+  # programs at it. Resolve it now: tig runs from the workspace directory below,
+  # where a relative calibration path would no longer resolve.
+  CALIB_DIR="$(cd "$CALIB_DIR" && pwd)"
+  export MARS_CONFIG_PATH="$CALIB_DIR"
+fi
 
 # Resolve inputs before changing directory, so relative paths keep working
 abspath() {

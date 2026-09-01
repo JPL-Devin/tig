@@ -1,6 +1,6 @@
 # Getting Started with TIG
 
-Quick setup guide for TIG - a VICAR image processing environment with ~550 commands. This guide demonstrates the flagship stereo terrain reconstruction workflow.
+Quick setup guide for TIG - a VICAR image processing environment with 546 commands. This guide demonstrates the flagship stereo terrain reconstruction workflow.
 
 ## Prerequisites
 
@@ -8,6 +8,9 @@ Quick setup guide for TIG - a VICAR image processing environment with ~550 comma
 - **Python 3.9+**
 - **8GB RAM** minimum (16GB recommended)
 - **M2020 stereo images** (NavCam or Mastcam-Z)
+
+On macOS the runtime is a virtual machine and the GUI tools need XQuartz, so
+follow **[Installing on macOS](install-macos.md)** instead of the steps below.
 
 ## Installation
 
@@ -20,7 +23,7 @@ tig gen test.vic 64 64      # pulls the image on first use
 your current directory and home directory just work:
 
 ```bash
-tig label image.vic
+tig label -list inp=image.vic
 tig vicario image.vic image.png
 ```
 
@@ -122,7 +125,7 @@ ERROR: MARS calibration not found
 
 ### General Image Processing
 - **[Vicario Reference](reference/vicario.md)** - Image format conversion
-- **[tig-cli](../tig-cli/README.md)** - Running any of the ~550 VICAR commands, config, X11, shims
+- **[tig-cli](../tig-cli/README.md)** - Running any of the 546 VICAR commands, config, X11, shims
 
 ## Configuration
 
