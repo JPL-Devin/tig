@@ -64,7 +64,7 @@ Each program's full output is kept in `marschkovl.log`, `marsautotie.log`,
 | `pointing.nav` | XML navigation table, corrected pointing per frame, tagged with solution id `COREG` | non-empty XML mentioning `COREG`; `marsnav.log` shows `Final solution mean pixel error` well below `Commanded mean pixel error` (order 1-3 px for a well-tied set) |
 | `tiepoints.tpt` | All tiepoints from marsautotie | `grep -c '<tie ' tiepoints.tpt` > 0; more than a handful per overlapping pair |
 | `tiepoints_kept.tpt` | Tiepoints surviving `-remove` | most of `tiepoints.tpt` kept; losing most means the matcher, not the solver, failed |
-| `overlap_left.lis`, `overlap_right.lis` | Parallel lists of accepted overlapping pairs | non-empty; `marschkovl.log` prints the % for every pair, including rejected ones |
+| `overlap_left.lis`, `overlap_right.lis` | Parallel lists of pairs at or above `--overlap` | informational only - `marsautotie` ties every pair in `frames.lis` regardless. `marschkovl.log` prints the % for every pair; the MSL sample NCAM00293 frames sit at 31-33 %, so at the default 40 the lists are empty yet 25 tiepoints and a 6.0 -> 2.7 px solve still result |
 | `pointing_nav2.nav`, `tiepoints_nav2.tpt` | Bundle-adjusted alternative (`--nav2`) | `marsnav2.log` reports no disconnected image groups |
 | `frames.lis` | Input list, container paths | |
 
@@ -88,9 +88,10 @@ epochs, followed by projection and differencing.
 
 ## Troubleshooting
 
-- `marschkovl` accepts no pairs: frames do not overlap or are from different
-  sites; lower `--overlap` only if the printed percentages are just under the
-  threshold.
+- `marschkovl` accepts no pairs: not fatal by itself (see above). Frames truly
+  do not overlap or are from different sites only if `marschkovl.log` shows
+  0 % or `pointing test failed` for every pair; otherwise lower `--overlap` if
+  you want the lists populated.
 - `marsautotie` produces 0 tiepoints: overlap exists but scenes are featureless
   or initial pointing error exceeds `search`; try `--density 25`, or pass
   `surface=` / `navtable=` by hand.

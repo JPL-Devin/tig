@@ -43,9 +43,28 @@ export MARS_CONFIG_PATH=~/.mars_calib/m20
 # polar (nadir in the middle); --up-az puts that azimuth at the top
 ./demo-panorama-mosaic.sh --projection polar --top-el 30 frames/*.IMG
 
-# vertical / overhead, metres about the site, north up - required for MMGIS tiles
+# vertical / overhead, metres in the SITE frame, north up - required for MMGIS tiles
 ./demo-panorama-mosaic.sh --projection vertical \
   --min-x -15 --max-x 15 --min-y -15 --max-y 15 --vert-scale 0.03 frames/*.IMG
+```
+
+**Vertical extents are SITE-frame metres, not metres from the rover.** Read the
+rover's SITE position from a frame label (`ORIGIN_OFFSET_VECTOR` of the
+`ROVER_NAV_FRAME` entry, or the `Projection origin = (x, y, z)` line a
+cylindrical run prints) and centre `--min/max-x/y` on its x, y. The MSL sample
+NCAM00293 frames sit at (-99, 61, -18): `--min-x -129 --max-x -69 --min-y 31
+--max-y 91 --vert-scale 0.05` gives a 1200x1200 60 m plan view; the README's
+`-30..30` window is empty for them. The script also leaves the projection
+plane at SITE z = 0, so when the rover's z is not ~0 (18 m above it here)
+everything is smeared outward by `z / tan(elevation)`. Re-run the final stage
+by hand with the plane through the rover instead (same frames and gains):
+
+```bash
+cd workspace
+tig marsmap inp=panorama_frames.txt out=panorama.img -norad -nogrid projection=vertical \
+  minx=-129 maxx=-69 miny=31 maxy=91 vert_scale=0.05 surf_coord=ROVER brtcorr=panorama_brtcorr.xml
+tig stretch inp=panorama.img out=panorama_stretched.img -astretch percent=2 dnmin=0 dnmax=255
+tig vicario panorama_stretched.img panorama.png
 ```
 
 Options that matter most: `--left-az/--right-az/--top-el/--bottom-el` (extent
@@ -101,6 +120,9 @@ Downstream: `tig-export-to-mmgis` needs a **vertical**-projection
   extent.
 - Mostly black PNG at the right size: the frames cover a small part of the
   0-360 x el canvas. Use `--auto-extent` or explicit `--left-az/--right-az`.
+- Vertical mosaic all zero (`tig maxmin inp=panorama.img` max 0) or the rover
+  sits at an edge: extents not centred on the rover's SITE x, y and/or
+  projection plane at the wrong height - see the vertical note above.
 - Polar mosaic has a hole in the centre: frames do not look at the nadir; that
   is correct behaviour.
 - Mastcam-Z: run with `--auto-extent --zoom 0.5`. Label `INSTRUMENT_AZIMUTH`

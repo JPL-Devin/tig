@@ -23,11 +23,11 @@ must be the same acquisition (same sclk and sequence in the filename, e.g.
 ## Run
 
 ```bash
-# full stereo pipeline (MSL sample pair, msl calibration)
-export MARS_CONFIG_PATH=~/.mars_calib/msl
+# full stereo pipeline (M20 pair, m20 calibration)
+export MARS_CONFIG_PATH=~/.mars_calib/m20
 ./demo-mesh-generation-with-xyz.sh \
-  --stereo-left  ~/visor_data/sample_data/StereoCorrelation/NLB_712299404EDR_F0961766NCAM00353M1.IMG \
-  --stereo-right ~/visor_data/sample_data/StereoCorrelation/NRB_712299404EDR_F0961766NCAM00353M1.IMG
+  --stereo-left  NLF_0650_0724654097_444EDR_N0320000NCAM08111_01_295J01.IMG \
+  --stereo-right NRF_0650_0724654097_444EDR_N0320000NCAM08111_01_295J01.IMG
 
 # quick mode on an existing cloud
 ./demo-mesh-generation-with-xyz.sh --xyz pointcloud.IMG --texture image.IMG
@@ -37,6 +37,27 @@ Without `--texture`, stereo mode textures with the **right** image; quick mode
 requires `--texture` (or `--stereo-left`, which is then used as the texture).
 Non-interactive shells that have no calibration must set
 `TIG_FETCH_CALIBRATION=1` (or fetch it beforehand).
+
+**`marscorr` needs a seed inside its search reach.** `marscorr` uses no camera
+models; it grows the disparity map from a seed tiepoint (`seed=(l,s,l',s')`,
+default `(124,127,126,108)`, searched over `amax(2)`=81 px). Close-range pairs
+such as the MSL sample `StereoCorrelation/NLB_712299404EDR_F0961766NCAM00353M1`
+/ `NRB_...` (~180 px disparity mid-frame) exit the script at stage 1 with
+`Correlation failure for seed #0 patch / No valid seed points found!`. The
+script has no seed option, so run the stages by hand from `workspace/` with a
+measured seed (pick a textured rock and find the matching pixel in the right
+eye; the region grows from there, so one good seed is enough):
+
+```bash
+export MARS_CONFIG_PATH=~/.mars_calib/msl
+cd workspace
+cp ~/visor_data/sample_data/StereoCorrelation/NLB_712299404EDR_F0961766NCAM00353M1.IMG left.vic
+cp ~/visor_data/sample_data/StereoCorrelation/NRB_712299404EDR_F0961766NCAM00353M1.IMG right.vic
+cp right.vic texture.img
+tig marscorr \( left.vic right.vic \) disparity_init.img template=15 search=51 quality=0.2 \
+  seed=\(300,512,302,328\)                       # ~4 min, ~876k tiepoints
+# then the marscor3 ... vicario lines below unchanged -> 324k-triangle terrain.obj
+```
 
 What the script runs, for tuning or re-running a single stage from inside
 `workspace/`:
@@ -60,7 +81,7 @@ tig vicario texture.img texture.png
 
 | File | What | Sanity check |
 | --- | --- | --- |
-| `terrain.obj` | Mesh with UVs, ~100-300 MB, 0.7-1.2 M vertices | `grep -c '^v ' terrain.obj` > 100000; `grep -c '^f '` > 0 |
+| `terrain.obj` | Mesh with UVs; 40-300 MB, 0.2-1.2 M vertices depending on scene range | `grep -c '^v ' terrain.obj` > 100000; `grep -c '^f '` > 0 |
 | `terrain.mtl` | Material referencing `texture.png` | `grep map_Kd terrain.mtl` |
 | `texture.png` | Texture (input image size) | `file texture.png` shows PNG with the frame's dimensions |
 | `pointcloud.xyz`, `pointcloud_filtered.xyz` | 3-band REAL XYZ (stereo mode); filtered = rover hardware removed | `tig label -list pointcloud_filtered.xyz` shows `NB=3`, `FORMAT='REAL'` |
@@ -79,6 +100,10 @@ Downstream:
   `marsmesh`: the `--xyz` cloud lacks the baseline (typical of MSL sample XYZ).
   Use the stereo pipeline instead, or use the cloud only for surface
   characteristics.
+- `ERROR: marscorr failed to generate disparity_init.img` right after
+  `Running initial correlation`: `No valid seed points found!` - the default
+  seed is out of reach for this pair; run `marscorr` by hand with `seed=` as
+  shown above (or `seedfile=` from `marstie`), then finish the chain manually.
 - `marscorr`/`marsxyz` fail with a camera-model error: calibration is for the
   wrong mission or `MARS_CONFIG_PATH` is a wrapper directory (needs
   `camera_models/` directly inside).

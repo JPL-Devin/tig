@@ -18,14 +18,21 @@ also needed.
 ## 1. Inputs
 
 - The mosaic label must be `MAP_PROJECTION_TYPE='VERTICAL'`; the export refuses
-  cylindrical/polar mosaics. Generate one with e.g.
-  `./demo-panorama-mosaic.sh --projection vertical --min-x -30 --max-x 30 --min-y -30 --max-y 30 frames/*.IMG`.
+  cylindrical/polar mosaics. Follow the vertical section of
+  `tig-generate-panorama-mosaic`: extents are SITE-frame metres centred on the
+  rover's SITE x, y (not `-30..30` unless the rover is at the site origin), and
+  the projection plane must go through the rover (`surf_coord=ROVER`) or the
+  imagery is smeared outward.
 - The mesh needs `texture.png` beside `terrain.obj` (or `--texture FILE`).
 - **Site coordinates are mandatory and not in any TIG product**: `marsmap` and
   `marsmesh` write metres in the rover `SITE_FRAME` (+X north, +Y east, +Z
-  down). Get `--site-lon/--site-lat` from the mission's localization products
-  (PDS `RVER`/localization tables, or MMGIS rover-position layers). Only one of
-  `--mosaic`/`--mesh` is required.
+  down). The export adds the label's `X_AXIS_*`/`Y_AXIS_*` extents (and the
+  mesh vertices) to `--site-lon/--site-lat`, so those must be the planetary
+  position of the **SITE frame origin**, not of the rover - if you only know
+  the rover's lon/lat, subtract its `ROVER_NAV_FRAME` `ORIGIN_OFFSET_VECTOR`
+  (metres north, east) first. Get positions from the mission's localization
+  products (PDS `RVER`/localization tables, or MMGIS rover-position layers).
+  Only one of `--mosaic`/`--mesh` is required.
 
 ## 2. Export layers
 
@@ -91,6 +98,10 @@ mesh in **Globe** only.
   long-term token (`period` is in **milliseconds**, e.g. `86400000`).
 - Deleting a mission in Configure renames `Missions/<mission>` to
   `<mission>_deleted_`; rename back or re-export before re-registering.
+- `gdal2tiles.py` prints an `AttributeError: _ARRAY_API not found` traceback
+  (Ubuntu `python3-gdal` built against NumPy 1.x with NumPy 2 installed): it
+  is a failed optional import, not a failure - tiles are still written and the
+  script exits 0; confirm with `find Layers/<name> -name '*.png' | wc -l`.
 - No GPU: Chrome needs `--use-angle=swiftshader-webgl` for the Globe.
 - Only the MSL path has been run end to end; the export is not
   mission-specific but M20 products were not exercised.

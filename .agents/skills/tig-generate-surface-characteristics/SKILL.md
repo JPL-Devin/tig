@@ -65,7 +65,7 @@ comparable between runs.
 
 | File | Meaning | PNG range | Sanity check |
 | --- | --- | --- | --- |
-| `slope.img/.png` | Slope, degrees (0 = level) | 0-30 | `tig hist slope.img` or `maxmin`: most valid pixels < 30; stddev ~10-15 deg on a NavCam scene |
+| `slope.img/.png` | Slope, degrees (0 = level) | 0-30 | `tig hist slope.img -nohist`: non-zero MAX. DN and a mean of roughly 5-25 deg (zeros included); the MSL sample outcrop cloud from `tig-generate-terrain-mesh` gives mean 13.6, stddev 17 |
 | `heading.img/.png` | Azimuth the slope faces, degrees | -180..180 | |
 | `ntilt.img/.png` | North-facing tilt component, degrees | -30..30 | |
 | `solar.img/.png` | Relative solar energy from tilt (`--solar-angle`) | 0-1 | |
