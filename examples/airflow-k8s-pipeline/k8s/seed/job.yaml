@@ -56,7 +56,7 @@ data:
     mc mb --ignore-existing "minio/$BUCKET"
 
     echo "=== Subscribing bucket to RabbitMQ (ObjectCreated, *.VIC) ==="
-    mc event remove "minio/$BUCKET" "$NOTIFY_ARN" --force 2>/dev/null || true
+    mc event remove "minio/$BUCKET" "$NOTIFY_ARN" --event put --suffix .VIC --force 2>/dev/null || true
     mc event add "minio/$BUCKET" "$NOTIFY_ARN" --event put --suffix .VIC
     mc event list "minio/$BUCKET"
 
