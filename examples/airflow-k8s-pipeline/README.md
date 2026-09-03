@@ -96,7 +96,18 @@ sample-data/
 
 #### Option B: Download M2020 archive data
 
-M2020 NavCam products are archived at the [PDS Geosciences Node](https://pds-geosciences.wustl.edu/missions/mars2020/); the [MMGIS layer index](https://mars.nasa.gov/mmgis-maps/M20/Layers/json/) lists per-sol product locations. Filter by: NCAM, FDR product type, stereo pairs (matching NLM/NRM basenames).
+The pair used by the seed job (sol 1835) is in the PDS Imaging Node archive, release r16 of the `mars2020_navcam_ops_calibrated` bundle. The `.IMG` files carry a VICAR label, so they are saved as `.VIC`:
+
+```bash
+mkdir -p sample-data
+B=https://pds-imaging.jpl.nasa.gov/archive/m20/r16/mars2020_navcam_ops_calibrated/data/sol/01835/ids/fdr/ncam
+for f in NLM_1835_0829848458_777FDR_N0874924NCAM00230_0A02LLJ01 NRM_1835_0829848458_777FDR_N0874924NCAM00230_0A02LLJ01; do
+  curl -L -o sample-data/$f.VIC "$B/$f.IMG"
+done
+head -c 40 sample-data/NLM_*.VIC   # must start with ODL_VERSION_ID / LBLSIZE, not <html>
+```
+
+To find other pairs, query the [PDS Search API](https://pds.nasa.gov/api/search/1/products?q=(lid%20like%20%22urn:nasa:pds:mars2020_navcam_ops_calibrated:data:nlm_1835*fdr*%22)&fields=ops:Data_File_Info.ops:file_ref) by LID (`urn:nasa:pds:mars2020_navcam_ops_calibrated:data:n[lr]m_<sol>_<sclk>_<ms>fdr_...`) — the `ops:Data_File_Info.ops:file_ref` field is the download URL. The `planetarydata.jpl.nasa.gov` browse tree only exposes early releases and returns an HTML landing page for missing paths.
 
 ### 7. Start required minikube mounts
 
