@@ -61,7 +61,7 @@ first, or use `minikube start --cpus=8`. Poll task states cheaply with
 `kubectl exec -n tig-airflow airflow-postgresql-0 -- sh -c 'PGPASSWORD=postgres psql -U postgres -d postgres -tA -c "select run_id,task_id,state from task_instance order by 1,2"'`.
 
 ## Seed job re-apply
-Re-applying `k8s/seed/job.yaml` (`kubectl delete job ids-seed; kubectl apply`) is the documented way to
+Re-applying `k8s/seed/job.yaml` (`kubectl delete job ids-seed -n tig-airflow; kubectl apply -f k8s/seed/job.yaml`) is the documented way to
 re-upload. Before d538e00 the `mc event remove ARN --force` line did not match the suffix-filtered rule
 ("no notification configuration matched", swallowed by 2>/dev/null) so `mc event add` failed with
 "overlapping suffixes" and the pod crashlooped. If you see that, the rule must be removed with the same
