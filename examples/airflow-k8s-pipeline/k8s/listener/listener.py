@@ -33,8 +33,8 @@ PROCESS_MAP = {
     ]
 }
 
-# Stereo pair buffer: {frame_id: {"left": key, "right": key, "timestamp": datetime}}
-stereo_buffer = defaultdict(lambda: {"left": None, "right": None, "timestamp": None})
+# Stereo pair buffer: {frame_id: {"left": key, "right": key, "timestamp": datetime, "run_id": str}}
+stereo_buffer = defaultdict(lambda: {"left": None, "right": None, "timestamp": None, "run_id": None})
 
 
 def extract_frame_id(s3_key):
@@ -86,6 +86,10 @@ def trigger_dag(dag_id, run_id, conf):
 
     try:
         resp = requests.post(url, json=payload, auth=auth, timeout=10)
+        if resp.status_code == 409:
+            # Run already exists: an earlier attempt succeeded but its response was lost
+            print(f"✓ DAG {dag_id} run_id={run_id} already exists")
+            return True
         resp.raise_for_status()
         print(f"✓ Triggered DAG {dag_id}, run_id={run_id}")
         return True
@@ -121,7 +125,7 @@ def parse_records(body):
             (record["s3"]["bucket"]["name"], unquote_plus(record["s3"]["object"]["key"]))
             for record in s3_event.get("Records", [])
         ]
-    except (ValueError, KeyError, TypeError) as e:
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise MalformedEvent(f"{type(e).__name__}: {e}") from e
 
 
@@ -157,7 +161,10 @@ def process_event(body):
         pair[eye] = key
 
         if pair["left"] and pair["right"]:
-            run_id = f"manual__{frame_id}__{uuid.uuid4().hex[:8]}"
+            # Fixed per pair so a retried trigger is idempotent
+            if not pair["run_id"]:
+                pair["run_id"] = f"manual__{frame_id}__{uuid.uuid4().hex[:8]}"
+            run_id = pair["run_id"]
             conf = {
                 "bucket": bucket,
                 "left_key": pair["left"],
