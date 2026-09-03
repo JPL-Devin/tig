@@ -152,12 +152,12 @@ helm repo add apache-airflow https://airflow.apache.org
 helm repo update
 
 # Install Airflow (chart 1.11.0 = Airflow 2.7.1). Do not pass --wait: the DB
-# migrations Job is a post-install hook, so --wait blocks until it times out.
+# migrations Job is a post-install hook, so --wait deadlocks until it times out.
+# helm install itself blocks until the migrations hook has completed.
 helm install airflow apache-airflow/airflow --version 1.11.0 \
   -f k8s/airflow/values.yaml --namespace tig-airflow
 
-# Wait for migrations + webserver
-kubectl wait --for=condition=complete job/airflow-run-airflow-migrations -n tig-airflow --timeout=600s
+# Wait for webserver
 kubectl wait --for=condition=ready pod -l component=webserver -n tig-airflow --timeout=600s
 ```
 
