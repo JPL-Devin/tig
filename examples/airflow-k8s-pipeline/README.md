@@ -314,7 +314,8 @@ Eight tasks, two per stage:
 
 - **Object store:** MinIO speaks the S3 API, so workers keep using the AWS CLI with `--endpoint-url` and the MinIO root credentials (`minioadmin`/`minioadmin`, demo only). `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` is kept so newer AWS CLI releases do not send trailing checksums the store may reject
 - **Event bridge:** MinIO's built-in AMQP notification target (`MINIO_NOTIFY_AMQP_*_RABBITMQ` env vars on the MinIO pod) publishes S3-format `Records[]` JSON straight to the `ids-events` exchange; there is no SNS/SQS layer. Object keys arrive URL-encoded and the listener decodes them
-- **Queue semantics:** the listener uses manual acks with `prefetch_count=10`; a message is acked only after its record is processed (or a DAG trigger succeeds), otherwise it is nacked and requeued
+- **Queue semantics:** the listener uses manual acks with `prefetch_count=10`. An event is acked once its record is buffered or its DAG trigger succeeds; if Airflow rejects the trigger the event is nacked and requeued after `RETRY_DELAY` (the completed pair stays buffered and is not expired, so the redelivery re-triggers it). Unparseable bodies are rejected without requeue so a poison message cannot loop
+- **Credentials:** `minioadmin`/`minioadmin`, `guest`/`guest` and Airflow `admin`/`admin` are hardcoded demo values on a single-node minikube; for anything shared, move them into Kubernetes Secrets, create a scoped MinIO user/policy for the workers, and a non-admin RabbitMQ user for the listener
 - **VICAR exit codes:** Several tools exit non-zero on success. Wrappers use file-existence checks (`... || true` then verify output)
 - **Calibration:** Wrappers set `MARS_CONFIG_PATH=/usr/local/vicar/mars_calib`; DAG mounts calib hostPath read-only
 - **Helm chart pin:** Chart 1.11.0 (Airflow 2.7.1). Newer charts ship Airflow 3.x, breaking listener `/api/v1` usage

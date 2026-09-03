@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from urllib.parse import unquote_plus
+from urllib.parse import unquote_plus, urlsplit
 
 import pika
 import requests
@@ -23,6 +23,7 @@ AIRFLOW_API_URL = os.getenv("AIRFLOW_API_URL", "http://airflow-webserver.tig-air
 AIRFLOW_USERNAME = os.getenv("AIRFLOW_USERNAME", "admin")
 AIRFLOW_PASSWORD = os.getenv("AIRFLOW_PASSWORD", "admin")
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
+RETRY_DELAY = int(os.getenv("RETRY_DELAY", "5"))  # backoff before requeueing after a failed DAG trigger
 STEREO_PAIR_TIMEOUT = int(os.getenv("STEREO_PAIR_TIMEOUT", "300"))  # 5 minutes
 
 # Process map (subset for NCAM FDR → terrain mesh)
@@ -66,6 +67,14 @@ def match_process(s3_key):
     return None
 
 
+def redact_url(url):
+    """Hide the password component of a URL for logging"""
+    parts = urlsplit(url)
+    if parts.password is None:
+        return url
+    return url.replace(f":{parts.password}@", ":***@", 1)
+
+
 def trigger_dag(dag_id, run_id, conf):
     """Trigger Airflow DAG via REST API"""
     url = f"{AIRFLOW_API_URL}/dags/{dag_id}/dagRuns"
@@ -86,10 +95,12 @@ def trigger_dag(dag_id, run_id, conf):
 
 
 def cleanup_expired_pairs():
-    """Remove stereo pairs older than STEREO_PAIR_TIMEOUT"""
+    """Remove incomplete stereo pairs older than STEREO_PAIR_TIMEOUT"""
     now = datetime.utcnow()
     expired = []
     for frame_id, pair in stereo_buffer.items():
+        if pair["left"] and pair["right"]:
+            continue  # complete pair awaiting a DAG-trigger retry
         if pair["timestamp"] and (now - pair["timestamp"]).total_seconds() > STEREO_PAIR_TIMEOUT:
             expired.append(frame_id)
 
@@ -98,74 +109,92 @@ def cleanup_expired_pairs():
         print(f"⚠ Stereo pair timeout: {frame_id}, left={pair['left']}, right={pair['right']}")
 
 
-def process_event(body):
-    """Process one MinIO bucket-notification event (S3-compatible record format)"""
+class MalformedEvent(Exception):
+    """Event that can never be processed (bad JSON / missing fields)"""
+
+
+def parse_records(body):
+    """MinIO event body -> [(bucket, key)]; keys arrive URL-encoded"""
     try:
         s3_event = json.loads(body)
+        return [
+            (record["s3"]["bucket"]["name"], unquote_plus(record["s3"]["object"]["key"]))
+            for record in s3_event.get("Records", [])
+        ]
+    except (ValueError, KeyError, TypeError) as e:
+        raise MalformedEvent(f"{type(e).__name__}: {e}") from e
 
-        # MinIO records URL-encode the object key
-        for record in s3_event.get("Records", []):
-            bucket = record["s3"]["bucket"]["name"]
-            key = unquote_plus(record["s3"]["object"]["key"])
 
-            print(f"Received: s3://{bucket}/{key}")
+def process_event(body):
+    """Process one MinIO bucket-notification event.
 
-            dag_id = match_process(key)
-            if not dag_id:
-                print(f"  No process match for {key}, skipping")
-                continue
+    Returns True when the event is fully handled, False when a completed pair
+    could not be handed to Airflow (transient; caller requeues). Raises
+    MalformedEvent for bodies that can never be processed.
+    """
+    for bucket, key in parse_records(body):
+        print(f"Received: s3://{bucket}/{key}")
 
-            print(f"  Matched process: {dag_id}")
+        dag_id = match_process(key)
+        if not dag_id:
+            print(f"  No process match for {key}, skipping")
+            continue
 
-            frame_id = extract_frame_id(key)
-            eye = extract_eye(key)
+        print(f"  Matched process: {dag_id}")
 
-            if not frame_id or not eye:
-                print(f"  Failed to extract frame_id/eye from {key}, skipping")
-                continue
+        frame_id = extract_frame_id(key)
+        eye = extract_eye(key)
 
-            print(f"  Frame: {frame_id}, Eye: {eye}")
+        if not frame_id or not eye:
+            print(f"  Failed to extract frame_id/eye from {key}, skipping")
+            continue
 
-            pair = stereo_buffer[frame_id]
-            if not pair["timestamp"]:
-                pair["timestamp"] = datetime.utcnow()
-            pair[eye] = key
+        print(f"  Frame: {frame_id}, Eye: {eye}")
 
-            if pair["left"] and pair["right"]:
-                run_id = f"manual__{frame_id}__{uuid.uuid4().hex[:8]}"
-                conf = {
-                    "bucket": bucket,
-                    "left_key": pair["left"],
-                    "right_key": pair["right"],
-                    "run_id": run_id,
-                }
+        pair = stereo_buffer[frame_id]
+        if not pair["timestamp"]:
+            pair["timestamp"] = datetime.utcnow()
+        pair[eye] = key
 
-                print(f"  Stereo pair complete: {frame_id}")
-                print(f"    Left: {pair['left']}")
-                print(f"    Right: {pair['right']}")
+        if pair["left"] and pair["right"]:
+            run_id = f"manual__{frame_id}__{uuid.uuid4().hex[:8]}"
+            conf = {
+                "bucket": bucket,
+                "left_key": pair["left"],
+                "right_key": pair["right"],
+                "run_id": run_id,
+            }
 
-                if trigger_dag(dag_id, run_id, conf):
-                    stereo_buffer.pop(frame_id)
-                    return True
-            else:
-                missing = "right" if pair["left"] else "left"
-                print(f"  Waiting for {missing} eye (timeout in {STEREO_PAIR_TIMEOUT}s)")
+            print(f"  Stereo pair complete: {frame_id}")
+            print(f"    Left: {pair['left']}")
+            print(f"    Right: {pair['right']}")
 
-        return True
+            if not trigger_dag(dag_id, run_id, conf):
+                # Pair stays buffered; the redelivered event re-triggers it
+                return False
+            stereo_buffer.pop(frame_id)
+        else:
+            missing = "right" if pair["left"] else "left"
+            print(f"  Waiting for {missing} eye (timeout in {STEREO_PAIR_TIMEOUT}s)")
 
-    except Exception as e:
-        print(f"✗ Error processing event: {e}")
-        return False
+    return True
 
 
 def on_message(channel, method, properties, body):
     print(f"[{datetime.utcnow().isoformat()}] Received message (delivery_tag={method.delivery_tag})")
     cleanup_expired_pairs()
-    if process_event(body):
+    try:
+        handled = process_event(body)
+    except MalformedEvent as e:
+        # Poison message: drop (or dead-letter, if the queue has a DLX)
+        print(f"✗ Malformed event, rejecting: {e}")
+        channel.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+        return
+    if handled:
         channel.basic_ack(delivery_tag=method.delivery_tag)
         print("  Message acked")
     else:
-        # Requeue once; a poison message goes back to the queue tail
+        time.sleep(RETRY_DELAY)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
         print("  Message nacked (requeued)")
 
@@ -189,7 +218,7 @@ def consume():
 
 def main():
     print("=== IDS Pipeline Listener ===")
-    print(f"AMQP: {AMQP_URL}")
+    print(f"AMQP: {redact_url(AMQP_URL)}")
     print(f"Exchange: {AMQP_EXCHANGE}")
     print(f"Queue: {AMQP_QUEUE}")
     print(f"Airflow API: {AIRFLOW_API_URL}")
