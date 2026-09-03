@@ -188,6 +188,7 @@ with DAG(
     schedule_interval=None,  # triggered by listener
     start_date=datetime(2026, 7, 20),
     catchup=False,
+    max_active_runs=1,  # correlate_* need 2 CPU each; overlapping runs starve on a 4-CPU minikube
     is_paused_upon_creation=False,
     user_defined_macros={
         "fdr_to_ras_base": fdr_to_ras_base,
