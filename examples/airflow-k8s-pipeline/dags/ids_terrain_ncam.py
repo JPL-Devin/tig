@@ -24,7 +24,7 @@ from kubernetes.client import models as k8s
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-S3_ENDPOINT = "http://localstack.tig-airflow.svc.cluster.local:4566"
+S3_ENDPOINT = "http://minio.tig-airflow.svc.cluster.local:9000"
 BUCKET = "ids-pipeline"
 VICAR_IMAGE = "tig-worker:latest"  # TIG :opensource base + AWS CLI v2 (k8s/worker/Dockerfile)
 
@@ -105,8 +105,8 @@ pod_volumes = [wrapper_volume, calib_volume]
 pod_volume_mounts = [wrapper_mount, calib_mount]
 
 env_vars = [
-    k8s.V1EnvVar(name="AWS_ACCESS_KEY_ID", value="test"),
-    k8s.V1EnvVar(name="AWS_SECRET_ACCESS_KEY", value="test"),
+    k8s.V1EnvVar(name="AWS_ACCESS_KEY_ID", value="minioadmin"),
+    k8s.V1EnvVar(name="AWS_SECRET_ACCESS_KEY", value="minioadmin"),
     k8s.V1EnvVar(name="AWS_DEFAULT_REGION", value="us-west-2"),
     k8s.V1EnvVar(name="AWS_REQUEST_CHECKSUM_CALCULATION", value="when_required"),
 ]

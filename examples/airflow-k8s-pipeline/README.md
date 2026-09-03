@@ -1,21 +1,22 @@
 # Airflow + Kubernetes VICAR Pipeline Example
 
-Apache Airflow + Kubernetes pipeline for event-driven VICAR terrain mesh generation. Demonstrates orchestrating stereo image processing (radiometric correction → correlation → XYZ → mesh) using ephemeral Kubernetes pods with fast worker spin-up.
+Apache Airflow + Kubernetes pipeline for event-driven VICAR terrain mesh generation. Demonstrates orchestrating stereo image processing (radiometric correction → correlation → XYZ → mesh) using ephemeral Kubernetes pods with fast worker spin-up. Everything runs inside minikube from open-source images — no cloud account or AWS emulator needed.
 
 ## Architecture
 
 **Components:**
-- **LocalStack:** S3+SNS+SQS simulation in minikube
-- **Seed Job:** Creates S3→SNS→SQS wiring, uploads stereo image pairs
-- **Listener (Python):** Polls SQS, buffers stereo pairs, triggers Airflow DAGs
+- **RabbitMQ:** AMQP broker; exchange `ids-events` → queue `ids-fdr-queue` (pre-declared from a definitions file)
+- **MinIO:** S3-compatible object store; bucket notifications publish ObjectCreated events to RabbitMQ
+- **Seed Job (`mc`):** Creates the bucket, subscribes it to the RabbitMQ target, uploads stereo image pairs
+- **Listener (Python/pika):** Consumes the queue, buffers stereo pairs, triggers Airflow DAGs
 - **Airflow (Helm):** KubernetesExecutor, orchestrates VICAR tasks as ephemeral pods
-- **VICAR pods (tig-worker):** Download from S3 → run VICAR → upload to S3 → exit
-- **Storage:** S3 round-trip per task (stateless pods)
+- **VICAR pods (tig-worker):** Download from MinIO → run VICAR → upload to MinIO → exit
+- **Storage:** S3-API round-trip per task (stateless pods)
 
 **Data Flow:**
-1. Seed uploads stereo FDR pairs to LocalStack S3
-2. S3 ObjectCreated → SNS → SQS (`.VIC` filter)
-3. Listener polls SQS, buffers stereo pairs by frame id, triggers DAG once both L+R arrive
+1. Seed uploads stereo FDR pairs to MinIO
+2. MinIO ObjectCreated (`.VIC` suffix filter) → AMQP publish → RabbitMQ `ids-events` → `ids-fdr-queue`
+3. Listener consumes the queue, buffers stereo pairs by frame id, triggers DAG once both L+R arrive
 4. Airflow launches the 8-task `ids_terrain_ncam` DAG: `rad_left/right` → `correlate_left/right` → `xyz_left/right` → `mesh_left/right`
 5. Each task = ephemeral tig-worker pod (download → VICAR → upload)
 6. Final outputs: `.obj/.mtl/.png` under the ODS prefix `s3://ids-pipeline/output/sol/<NNNNN>/ids/rdr/ncam/` (sol 1835 → `output/sol/01835/ids/rdr/ncam/`)
@@ -25,7 +26,7 @@ Apache Airflow + Kubernetes pipeline for event-driven VICAR terrain mesh generat
 - **minikube** (v1.30+, Kubernetes 1.27+)
 - **kubectl**
 - **Helm 3**
-- **Docker** (for building listener + worker images)
+- **Docker or Podman** (for building listener + worker images)
 - **TIG base image:** `ghcr.io/nasa-ammos/tig/terrain-intelligence-generator:opensource`
 - **Calibration data:** VISOR M20 calibration (see [Calibration Setup](#5-calibration-setup))
 - **Sample data:** Stereo FDR image pairs (see [Sample Data](#6-sample-data))
@@ -46,6 +47,8 @@ kubectl create namespace tig-airflow
 ```
 
 ### 3. Build listener image
+
+(`docker` below can be replaced with `podman`; if the image is built outside minikube's daemon, load it with `minikube image load <tag>` as in step 4.)
 
 ```bash
 cd k8s/listener
@@ -110,12 +113,19 @@ minikube mount /path/to/visor_data/calibration/m20:/mnt/calib &
 minikube mount /path/to/sample-data:/mnt/sample-data &
 ```
 
-### 8. Deploy LocalStack
+### 8. Deploy RabbitMQ and MinIO
+
+MinIO validates its AMQP notification target at startup, so RabbitMQ goes first (the MinIO pod has an init container that waits for it):
 
 ```bash
-kubectl apply -f k8s/localstack/deployment.yaml
-kubectl wait --for=condition=ready pod -l app=localstack -n tig-airflow --timeout=120s
+kubectl apply -f k8s/rabbitmq/deployment.yaml
+kubectl wait --for=condition=ready pod -l app=rabbitmq -n tig-airflow --timeout=180s
+
+kubectl apply -f k8s/minio/deployment.yaml
+kubectl wait --for=condition=ready pod -l app=minio -n tig-airflow --timeout=180s
 ```
+
+The RabbitMQ definitions ConfigMap pre-declares the `ids-events` fanout exchange, the durable `ids-fdr-queue`, and their binding, so events published before the listener starts are retained.
 
 ### 9. Deploy Airflow
 
@@ -163,9 +173,15 @@ kubectl logs job/ids-seed -n tig-airflow
 
 **Expected output:**
 - Bucket `ids-pipeline` created
-- SNS topic `ids-fdr-events` created
-- SQS queue `ids-fdr-queue` created, subscribed to topic
+- Bucket event `arn:minio:sqs::RABBITMQ:amqp` added for `s3:ObjectCreated:*` with suffix `.VIC`
 - Files uploaded to `s3://ids-pipeline/global_cache/<sol>/<instrument>/`
+
+MinIO publishes one event per upload to the `ids-events` exchange; they sit in `ids-fdr-queue` until the listener consumes them. Inspect the queue at any time via the management UI:
+
+```bash
+kubectl port-forward svc/rabbitmq 15672:15672 -n tig-airflow
+# Open http://localhost:15672 (guest/guest) → Queues → ids-fdr-queue
+```
 
 ### 12. Deploy listener
 
@@ -179,6 +195,7 @@ kubectl logs -f deployment/ids-listener -n tig-airflow
 ```
 === IDS Pipeline Listener ===
 ...
+Consuming from queue ids-fdr-queue (exchange ids-events)
 Received: s3://ids-pipeline/global_cache/.../NLM_...FDR_...VIC
   Matched process: ids_terrain_ncam
   Frame: ..., Eye: left
@@ -205,16 +222,27 @@ kubectl logs -l dag_id=ids_terrain_ncam --tail=100 --prefix --all-containers
 ### 14. Verify outputs
 
 ```bash
-# Port-forward LocalStack
-kubectl port-forward svc/localstack 4566:4566 -n tig-airflow
+# Port-forward MinIO (9000 = S3 API, 9001 = web console)
+kubectl port-forward svc/minio 9000:9000 9001:9001 -n tig-airflow
 
 # List outputs (ODS layout: output/sol/<NNNNN>/ids/rdr/ncam/)
-export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-west-2
-aws --endpoint-url=http://localhost:4566 s3 ls s3://ids-pipeline/output/ --recursive
+export AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin AWS_DEFAULT_REGION=us-west-2
+aws --endpoint-url=http://localhost:9000 s3 ls s3://ids-pipeline/output/ --recursive
 
 # Download (seeded sol 1835)
-aws --endpoint-url=http://localhost:4566 s3 cp \
+aws --endpoint-url=http://localhost:9000 s3 cp \
   s3://ids-pipeline/output/sol/01835/ids/rdr/ncam/ ./outputs/ --recursive
+```
+
+Or browse the bucket at http://localhost:9001 (minioadmin/minioadmin).
+
+### 15. Re-trigger by dropping a file
+
+The pipeline is purely event-driven: uploading a new stereo pair anywhere under `global_cache/<sol>/ncam/` fires the DAG again with no seed job involved.
+
+```bash
+aws --endpoint-url=http://localhost:9000 s3 cp NLM_<...>FDR_<...>.VIC s3://ids-pipeline/global_cache/<sol>/ncam/
+aws --endpoint-url=http://localhost:9000 s3 cp NRM_<...>FDR_<...>.VIC s3://ids-pipeline/global_cache/<sol>/ncam/
 ```
 
 ## Project Structure
@@ -225,13 +253,15 @@ aws --endpoint-url=http://localhost:4566 s3 cp \
 ├── dags/
 │   └── ids_terrain_ncam.py      # DAG: rad → correlate → xyz → mesh
 ├── k8s/
-│   ├── localstack/
-│   │   └── deployment.yaml      # S3+SNS+SQS pod
+│   ├── rabbitmq/
+│   │   └── deployment.yaml      # AMQP broker + pre-declared exchange/queue
+│   ├── minio/
+│   │   └── deployment.yaml      # S3-compatible store, notifications -> RabbitMQ
 │   ├── seed/
 │   │   └── job.yaml             # Setup job (embeds seed.sh in a ConfigMap)
 │   ├── listener/
 │   │   ├── Dockerfile
-│   │   ├── listener.py          # SQS poller + Airflow trigger
+│   │   ├── listener.py          # RabbitMQ consumer + Airflow trigger
 │   │   └── deployment.yaml
 │   ├── worker/
 │   │   └── Dockerfile           # tig-worker (TIG base + AWS CLI)
@@ -268,13 +298,23 @@ Eight tasks, two per stage:
 - Check: `kubectl logs <pod-name>`
 - Common issues: S3 endpoint unreachable, input not found, calibration mount missing
 
+**MinIO pod stuck in Init:**
+- Its init container waits for `rabbitmq:5672`; check `kubectl get pod -l app=rabbitmq -n tig-airflow`
+
+**Events not reaching the listener:**
+- Confirm the bucket subscription: `kubectl logs job/ids-seed -n tig-airflow` should show `arn:minio:sqs::RABBITMQ:amqp`
+- Check the queue depth in the RabbitMQ management UI (step 11); if messages pile up, the listener is not consuming — check `kubectl logs deployment/ids-listener -n tig-airflow`
+- Only `.VIC` uploads generate events (suffix filter in `seed.sh`)
+
 **DAG not visible:**
 - Check DAG mount: `kubectl exec -it deployment/airflow-scheduler -- ls /opt/airflow/dags`
 - Verify minikube mount running: `minikube mount $(pwd)/dags:/mnt/dags`
 
 ## Implementation Notes
 
-- **AWS CLI checksum:** Set `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` to avoid LocalStack 3.0 `InvalidRequest` on PUT (wrappers + DAG have this)
+- **Object store:** MinIO speaks the S3 API, so workers keep using the AWS CLI with `--endpoint-url` and the MinIO root credentials (`minioadmin`/`minioadmin`, demo only). `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` is kept so newer AWS CLI releases do not send trailing checksums the store may reject
+- **Event bridge:** MinIO's built-in AMQP notification target (`MINIO_NOTIFY_AMQP_*_RABBITMQ` env vars on the MinIO pod) publishes S3-format `Records[]` JSON straight to the `ids-events` exchange; there is no SNS/SQS layer. Object keys arrive URL-encoded and the listener decodes them
+- **Queue semantics:** the listener uses manual acks with `prefetch_count=10`; a message is acked only after its record is processed (or a DAG trigger succeeds), otherwise it is nacked and requeued
 - **VICAR exit codes:** Several tools exit non-zero on success. Wrappers use file-existence checks (`... || true` then verify output)
 - **Calibration:** Wrappers set `MARS_CONFIG_PATH=/usr/local/vicar/mars_calib`; DAG mounts calib hostPath read-only
 - **Helm chart pin:** Chart 1.11.0 (Airflow 2.7.1). Newer charts ship Airflow 3.x, breaking listener `/api/v1` usage
