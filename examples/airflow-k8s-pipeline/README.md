@@ -113,6 +113,10 @@ minikube mount /path/to/visor_data/calibration/m20:/mnt/calib &
 minikube mount /path/to/sample-data:/mnt/sample-data &
 ```
 
+If `minikube mount` fails with `HOST_UNSUPPORTED` (no 9p support on the host), copy the
+directories into the node instead, e.g. `docker cp /path/to/sample-data minikube:/mnt/sample-data`
+(or `minikube cp` per file).
+
 ### 8. Deploy RabbitMQ and MinIO
 
 MinIO validates its AMQP notification target at startup, so RabbitMQ goes first (the MinIO pod has an init container that waits for it):
@@ -137,7 +141,7 @@ minikube mount $(pwd)/airflow-logs:/mnt/airflow-logs --uid 50000 --gid 0 &
 
 # Create ReadWriteMany hostPath PV + PVC
 kubectl apply -f k8s/airflow/logs-pv.yaml
-kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/airflow-logs-host --timeout=60s
+kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/tig-airflow-logs-host -n tig-airflow --timeout=60s
 
 # Create static webserver secret (prevents restart/logout churn)
 kubectl create secret generic ids-webserver-secret-key --namespace tig-airflow \
@@ -147,12 +151,14 @@ kubectl create secret generic ids-webserver-secret-key --namespace tig-airflow \
 helm repo add apache-airflow https://airflow.apache.org
 helm repo update
 
-# Install Airflow (chart 1.11.0 = Airflow 2.7.1)
+# Install Airflow (chart 1.11.0 = Airflow 2.7.1). Do not pass --wait: the DB
+# migrations Job is a post-install hook, so --wait blocks until it times out.
 helm install airflow apache-airflow/airflow --version 1.11.0 \
-  -f k8s/airflow/values.yaml --namespace tig-airflow --wait --timeout=12m
+  -f k8s/airflow/values.yaml --namespace tig-airflow
 
-# Wait for webserver
-kubectl wait --for=condition=ready pod -l component=webserver -n tig-airflow --timeout=300s
+# Wait for migrations + webserver
+kubectl wait --for=condition=complete job/airflow-run-airflow-migrations -n tig-airflow --timeout=600s
+kubectl wait --for=condition=ready pod -l component=webserver -n tig-airflow --timeout=600s
 ```
 
 ### 10. Deploy wrapper scripts ConfigMap
