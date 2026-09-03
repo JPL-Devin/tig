@@ -34,7 +34,8 @@ export MARS_CONFIG_PATH=~/.mars_calib/m20
 ```
 
 Without `--texture`, stereo mode textures with the **right** image; quick mode
-requires `--texture` (or `--stereo-left`, which is then used as the texture).
+requires `--texture` (the script rejects `--stereo-left` without
+`--stereo-right`, so it is not a texture-only alternative).
 Non-interactive shells that have no calibration must set
 `TIG_FETCH_CALIBRATION=1` (or fetch it beforehand).
 
