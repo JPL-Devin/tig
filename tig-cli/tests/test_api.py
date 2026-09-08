@@ -409,7 +409,7 @@ def test_an_interrupt_terminates_the_tool_and_propagates(home, workdir, no_x11):
     kill_argv = calls[1]
     assert kill_argv[:5] == ["/usr/bin/docker", "exec", tig.container_name, "sh", "-c"]
     assert exec_id in kill_argv[5]
-    assert "kill -15 " in kill_argv[5]
+    assert "kill -9 " in kill_argv[5]
 
 
 def test_a_failed_kill_does_not_hide_the_timeout(home, workdir, no_x11):

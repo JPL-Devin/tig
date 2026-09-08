@@ -337,7 +337,7 @@ class Tig:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as e:
-            self._kill(exec_id, signal.SIGKILL)
+            self._kill(exec_id)
             raise VicarTimeout(
                 tool, timeout or 0.0, _decode(e.stdout), _decode(e.stderr)
             ) from None
@@ -345,7 +345,7 @@ class Tig:
             raise TigError(f"Failed to run {manager.runtime.name}: {e}") from e
         except BaseException:
             # Ctrl-C or a cancelled thread: the client is gone, the tool is not.
-            self._kill(exec_id, signal.SIGTERM)
+            self._kill(exec_id)
             raise
 
         outputs = [
@@ -361,13 +361,13 @@ class Tig:
         )
         return result.check() if check else result
 
-    def _kill(self, exec_id: str, signum: int) -> None:
-        """Signal a run's processes in the container after its client is gone."""
+    def _kill(self, exec_id: str) -> None:
+        """Kill a run's processes in the container after its client is gone."""
         try:
             subprocess.run(
                 self.manager.runtime.args(
                     "exec", self.manager.container_name,
-                    "sh", "-c", kill_tree_command(exec_id, signum),
+                    "sh", "-c", kill_tree_command(exec_id, signal.SIGKILL),
                 ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
