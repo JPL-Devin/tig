@@ -183,7 +183,9 @@ See [QUICKSTART.md](QUICKSTART.md) for the fuller tour.
 
 The command-line client. Runs any VICAR tool in the container, translating host
 paths, reusing one warm container, mounting calibration data, and forwarding X11
-so GUI tools such as `xvd` display on your desktop.
+so GUI tools such as `xvd` display on your desktop. Also a Python API
+(`from tig_cli import Tig`) that runs the same tools in the same container and
+returns their output and the files they wrote.
 
 📁 `tig-cli/` · 📦 [`pip install tig-cli`](https://pypi.org/project/tig-cli/) · 📖 [README](tig-cli/README.md)
 
