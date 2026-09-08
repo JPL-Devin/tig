@@ -157,6 +157,27 @@ def test_arguments_override_the_config(home, workdir):
     assert tig.image == "arg-image:2"
 
 
+def test_false_and_empty_overrides_beat_the_config(home, workdir, monkeypatch):
+    monkeypatch.setenv("TIG_DISABLE_PATH_TRANSLATION", "1")
+    config = Config(writable_paths=["/data"], disable_path_translation=True)
+    tig = Tig(
+        workdir=workdir, config=config, runtime=FakeRuntime(),
+        writable_paths=[], disable_path_translation=False,
+    )
+    assert not tig.manager.disable_path_translation
+    assert "/data" not in tig.writable_paths
+
+
+def test_writable_paths_replace_the_configured_ones(home, workdir):
+    config = Config(writable_paths=["/data"])
+    tig = Tig(
+        workdir=workdir, config=config, runtime=FakeRuntime(),
+        writable_paths=[Path("/results")],
+    )
+    assert "/results" in tig.writable_paths
+    assert "/data" not in tig.writable_paths
+
+
 def test_config_may_be_a_file(home, workdir, tmp_path):
     path = tmp_path / "tig.toml"
     path.write_text('image = "file-image:3"\n')
@@ -294,6 +315,13 @@ def test_environment_layers_handle_then_run(home, workdir, no_x11):
     assert (env["A"], env["B"], env["C"]) == ("handle", "run", "run")
 
 
+def test_the_exec_id_cannot_be_overridden(home, workdir, no_x11):
+    fake = FakeExec()
+    tig = make_tig(workdir, env={EXEC_ID_ENV: "handle"})
+    run_with(fake, tig, "gen", env={EXEC_ID_ENV: "run"})
+    assert len(fake.env()[EXEC_ID_ENV]) == 32
+
+
 def test_stdin_is_closed_unless_given(home, workdir, no_x11):
     fake = FakeExec()
     run_with(fake, make_tig(workdir), "gen")
@@ -360,6 +388,28 @@ def test_timeout_is_passed_and_kills_the_tool(home, workdir, no_x11):
     assert exec_id in kill_argv[5]
     assert "-9" in kill_argv[5] or "KILL" in kill_argv[5]
     assert kill_kwargs["timeout"] == api.KILL_TIMEOUT
+
+
+def test_an_interrupt_terminates_the_tool_and_propagates(home, workdir, no_x11):
+    tig = make_tig(workdir)
+    calls = []
+
+    def fake(argv, **kwargs):
+        calls.append(list(argv))
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    with pytest.raises(KeyboardInterrupt):
+        run_with(fake, tig, "marsmap", "in.vic")
+
+    exec_id = dict(
+        a.split("=", 1) for a in calls[0] if a.startswith(EXEC_ID_ENV)
+    )[EXEC_ID_ENV]
+    kill_argv = calls[1]
+    assert kill_argv[:5] == ["/usr/bin/docker", "exec", tig.container_name, "sh", "-c"]
+    assert exec_id in kill_argv[5]
+    assert "kill -15 " in kill_argv[5]
 
 
 def test_a_failed_kill_does_not_hide_the_timeout(home, workdir, no_x11):

@@ -148,7 +148,7 @@ class Tig:
         image: Container image to run.
         calibration_path: Host directory with MARS/VISOR calibration files.
         writable_paths: Host directories to mount read-write, besides the
-            home directory and ``workdir``.
+            home directory and ``workdir``; replaces the configured ones.
         workdir: Where programs run, and what relative paths are relative
             to. Defaults to the current directory.
         config: A :class:`~tig_cli.config.Config`, or the path of one config
@@ -181,11 +181,14 @@ class Tig:
                 config = load_config()
             elif not isinstance(config, Config):
                 config = load_config(Path(config))
-            extra = [os.fspath(path) for path in writable_paths] if writable_paths else None
-            self.writable_paths = resolve_writable_paths(config, extra)
-            translate_off = resolve_disable_path_translation(
-                config, bool(disable_path_translation)
-            )
+            if writable_paths is None:
+                self.writable_paths = resolve_writable_paths(config)
+            else:
+                self.writable_paths = [os.fspath(path) for path in writable_paths]
+            if disable_path_translation is None:
+                translate_off = resolve_disable_path_translation(config)
+            else:
+                translate_off = disable_path_translation
             label_disable = resolve_selinux_label_disable(config, selinux_label_disable)
         except ConfigError as e:
             raise TigError(str(e)) from e
@@ -313,9 +316,9 @@ class Tig:
         exec_id = uuid.uuid4().hex
         environment = {
             "DISPLAY": container_display(manager.runtime.name),
-            EXEC_ID_ENV: exec_id,
             **self.env,
             **(env or {}),
+            EXEC_ID_ENV: exec_id,
         }
         exec_args = ["exec", "-w", container_workdir]
         if stdin is not None:
@@ -334,12 +337,16 @@ class Tig:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as e:
-            self._kill(exec_id)
+            self._kill(exec_id, signal.SIGKILL)
             raise VicarTimeout(
                 tool, timeout or 0.0, _decode(e.stdout), _decode(e.stderr)
             ) from None
         except OSError as e:
             raise TigError(f"Failed to run {manager.runtime.name}: {e}") from e
+        except BaseException:
+            # Ctrl-C or a cancelled thread: the client is gone, the tool is not.
+            self._kill(exec_id, signal.SIGTERM)
+            raise
 
         outputs = [
             path for path in candidates if _fingerprint(path) not in (None, before[path])
@@ -354,13 +361,13 @@ class Tig:
         )
         return result.check() if check else result
 
-    def _kill(self, exec_id: str) -> None:
-        """Stop a run's processes in the container after its client is gone."""
+    def _kill(self, exec_id: str, signum: int) -> None:
+        """Signal a run's processes in the container after its client is gone."""
         try:
             subprocess.run(
                 self.manager.runtime.args(
                     "exec", self.manager.container_name,
-                    "sh", "-c", kill_tree_command(exec_id, signal.SIGKILL),
+                    "sh", "-c", kill_tree_command(exec_id, signum),
                 ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
