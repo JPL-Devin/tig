@@ -84,6 +84,50 @@ tool untouched:
 tig --writable-path /data/results marsmap INP=/data/in.vic OUT=/data/results/out.vic
 ```
 
+## Python API
+
+The same thing from Python, with the tool's output captured instead of
+written to your terminal:
+
+```python
+from tig_cli import Tig
+
+with Tig() as tig:
+    result = tig.run("gen", "test.vic", 64, 64)
+    result.exit_code        # 0
+    result.stdout           # 'Beginning VICAR task GEN\n...'
+    result.outputs          # [PosixPath('/home/you/work/test.vic')]
+
+    listing = tig.run("label", "-list", inp="test.vic").check()
+    tig.run("marsxyz", inp=["left.vic", "right.vic"], out="xyz.vic", check=True)
+    tig.vicario("test.vic", "test.png")      # tig.<tool>(...) is tig.run("<tool>", ...)
+```
+
+Positional arguments and `keyword=value` parameters are passed as on the command
+line; keyword arguments become parameters, and a list becomes a parenthesized
+value list such as `inp=(left.vic,right.vic)`. `Path` objects are accepted
+anywhere a path is.
+
+`run()` returns a `Result` with `exit_code`, `stdout`, `stderr`, `ok`, and
+`outputs`: the files named in the arguments that the run created or changed,
+as host paths. The container writes straight onto the host filesystem, so those
+files are in place as soon as `run()` returns - there is nothing to copy back.
+Files a tool names itself (a `.mtl` beside an `.obj`) are not listed, but are in
+the working directory all the same.
+
+A non-zero exit is reported, not raised, because VICAR programs often exit
+non-zero on success; pass `check=True` or call `result.check()` to get a
+`VicarError` instead. `stdin=`, `env=`, `timeout=` (raises `VicarTimeout` and
+kills the program in the container) and a per-run `workdir=` are also available.
+
+`Tig()` takes the same settings as the command-line options - `image`,
+`calibration_path`, `writable_paths`, `config`, `disable_path_translation`,
+`selinux_label_disable` - and a `workdir` that relative paths are relative to
+(the current directory by default). Anything not given comes from the config
+files and environment variables described below, so a script and a shell see the
+same setup and share the same container. `tig.tools()` lists the programs the
+image provides; `tig.shutdown()` removes the container, as `tig --shutdown` does.
+
 ## Configuration
 
 Settings can come from TOML config files, environment variables, or command-line
